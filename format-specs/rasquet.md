@@ -232,7 +232,7 @@ Rasquet files MUST use `.parquet` as the file extension. This ensures compatibil
 
 If a [media type](https://en.wikipedia.org/wiki/Media_type) (formerly: MIME type) is used, a Rasquet file MUST use [application/vnd.apache.parquet](https://www.iana.org/assignments/media-types/application/vnd.apache.parquet) as the media type.
 
-## Cloud Optimized GeoTIFF Conversion
+## COG to Rasquet Conversion
 
 While Rasquet files can be created from scratch following this specification, the format was designed to efficiently store [Cloud Optimized GeoTIFF (COG)](https://www.cogeo.org/) data in a columnar format. When converting from COG to Rasquet, the source file MUST meet these requirements:
 
