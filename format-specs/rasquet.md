@@ -10,7 +10,7 @@ The format organizes raster data in the following way:
 
 1. The raster is divided into regular tiles (blocks). The block size MUST be divisible by 16. Common block sizes are 256x256 and 512x512.
 2. [QUADBIN](#tiling-scheme) spatial indexing is used to identify and locate tiles. Each tile is assigned a QUADBIN cell ID based on its spatial location. Example: if QUADBIN level is 13 at pixel resolution and the block size is 256x256, the QUADBIN level of the block is 5.
-3. Tile data is stored in a columnar structure for efficient access.
+3. Tile data is stored in a columnar structure for efficient access. Each tile is stored as a row in the file. The data within the bands in the tile is stored as separated columns, and pixels for the band is stored as binary encoded Numpy arrays, optionally zlib compressed.
 4. Overview pyramids can be optionally preserved for multi-resolution queries. Overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...).
 5. Empty tiles (containing only NoData values) are optionally excluded to save space.
 6. Rich metadata, containing statistics and other information, is included for data discovery and analysis.
@@ -26,9 +26,7 @@ A Rasquet file must contain:
 Required columns:
 - `block`: QUADBIN cell identifier (uint64) that represents the spatial location of the tile.
 - One or more band columns (bytes) containing the actual raster data for each band. The name of the column MUST be the name of the band and band names are defined in the metadata. A common way to define band names is to use the following convention: `band_<band_index>`.
-
-### Metadata
-In the File Metadata of Apache Parquet is included the raster metadata in a property named `rasquet`. See [Metadata Specification](#metadata-specification) for details.
+- `metadata`: String column containing the raster metadata in JSON format. This column MUST only have one row where `block = 0`. All other rows in this column MUST be NULL.
 
 ## Column Specifications
 
@@ -37,13 +35,20 @@ In the File Metadata of Apache Parquet is included the raster metadata in a prop
 #### block Column
 - Type: uint64
 - Description: QUADBIN cell identifier that encodes the tile's spatial location and zoom level.
+- Special value: `block = 0` is reserved for the metadata row.
 
 #### Band Columns
 - Type: bytes
 - Naming convention: Configurable band names, optionally following the convention `band_<band_index>` (e.g., "band_1", "band_2", etc.).
 - Content: Raw binary data of the raster tile.
-- Format: Row-major order flattened array.
+- Format: Binary-encoded array of pixel values stored in row-major order (pixels are stored row by row from top to bottom, and within each row from left to right). The encoded array is represented as a flat binary array of the pixel values.
 - Optional compression: Can be zlib compressed.
+
+#### Metadata Column
+- Type: string
+- Content: JSON string containing raster metadata.
+- Special handling: Only populated in the row where `block = 0`, NULL in all other rows.
+- Format: See [Metadata Specification](#metadata-specification) for the JSON structure.
 
 ## Tiling Scheme
 
@@ -66,7 +71,7 @@ The file creation process includes:
 
 ## Metadata Specification
 
-The metadata is stored in `rasquet` property of the Apache Parquet File Metadata. It contains a JSON object with the following structure:
+The metadata is stored as a JSON string in the `metadata` column where `block = 0`. The JSON object has the following structure:
 
 ```json
 {
@@ -156,6 +161,8 @@ The metadata is stored in `rasquet` property of the Apache Parquet File Metadata
   - `num_pixels`: Integer total count of pixels in the full resolution raster.
 
 ### Examples of Common Use Cases
+
+TODO: fix these incomplete examples
 
 1. **Single-band Byte Raster (e.g., Land Classification)**
 ```json
