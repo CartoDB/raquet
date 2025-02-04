@@ -10,9 +10,9 @@ The format organizes raster data in the following way:
 
 1. The raster is divided into regular tiles (blocks). The block size MUST be divisible by 16. Common block sizes are 256x256 and 512x512.
 2. [QUADBIN](#tiling-scheme) spatial indexing is used to identify and locate tiles. Each tile is assigned a QUADBIN cell ID based on its spatial location. Example: if QUADBIN level is 13 at pixel resolution and the block size is 256x256, the QUADBIN level of the block is 5.
-3. Tile data is stored in a columnar structure for efficient access. Each tile is stored as a row in the file. The data within the bands in the tile is stored as separated columns, and pixels for the band is stored as binary encoded Numpy arrays, optionally zlib compressed.
+3. Tile data is stored in a columnar structure for efficient access. Each tile is stored as a row in the file. The data within the bands in the tile is stored as separated columns, and pixels for the band is stored as binary encoded arrays, optionally zlib compressed.
 4. Overview pyramids can be optionally preserved for multi-resolution queries. Overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...).
-5. Empty tiles (containing only NoData values) are optionally excluded to save space.
+5. Empty tiles (containing only NoData values) may be excluded to save space.
 6. Rich metadata, containing statistics and other information, is included for data discovery and analysis.
 
 This organization enables efficient spatial queries, band selection, and resolution-based filtering while maintaining compatibility with standard Parquet tools and workflows.
@@ -33,7 +33,7 @@ Required columns:
 ### Required Columns
 
 #### block Column
-- Type: uint64
+- Type: int64
 - Description: QUADBIN cell identifier that encodes the tile's spatial location and zoom level.
 - Special value: `block = 0` is reserved for the metadata row.
 
@@ -63,11 +63,12 @@ The tilling scheme is defined by the following parameters:
 ## File Creation
 
 The file creation process includes:
-1. Dividing the raster into tiles.
-2. Computing QUADBIN cell IDs for each tile.
-3. Converting tile data (pixel values) to binary format.
-4. Optional compression of tile data
-5. Writing metadata and tile data to Parquet format
+1. Reprojecting the raster to the target Coordinate Reference System, Web Mercator (EPSG:3857), at one of the [supported scales](https://learn.microsoft.com/en-us/bingmaps/articles/understanding-scale-and-resolution#calculating-resolution).
+2. Dividing the raster into tiles.
+3. Computing QUADBIN cell IDs for each tile.
+4. Converting tile data (pixel values) to binary format.
+5. Optional compression of tile data.
+6. Writing metadata and tile data to Parquet format.
 
 ## Metadata Specification
 
@@ -129,14 +130,14 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
     - When null, band data is stored uncompressed.
 
 - **Resolution Information**
-  - `block_resolution`: Integer specifying the base resolution level for QUADBIN tiling (0-26).
+  - `block_resolution`: Integer specifying the base resolution level for blocks (QUADBIN tiles). The range is 0-26.
   - `minresolution`: Integer indicating the minimum resolution level in the dataset, including overviews.
   - `maxresolution`: Integer indicating the maximum resolution level (same as block_resolution).
   - `pixel_resolution`: Integer computed as block_resolution + log4(block_size), representing the resolution level for individual pixels.
 
 - **Band Information**
   Each band entry in the `bands` array contains:
-  - `type`: String indicating the data type (e.g., "uint8", "uint16", "float32").
+  - `type`: String indicating the data type. Valid values: `uint8, int8, uint16, int16, uint32, int32, uint64, int64, float32, float64`.
   - `name`: String identifier for the band, matching the column name in the Parquet file.
   - `stats`: Object containing statistical information:
     - `min`, `max`: Numeric values representing data range.
@@ -144,13 +145,43 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
     - `sum`: Total sum of all values.
     - `sum_squares`: Sum of squares, useful for variance calculations.
     - `count`: Number of valid pixels (excluding NoData).
-    - `quantiles`: Optional object mapping resolution levels to quantile arrays.
-    - `top_values`: Optional object mapping values to their frequencies (for discrete data).
+    - `quantiles`: Optional object mapping quantiles to their values:
+      - Keys: String representation of quantile.
+      - Values: Array of quantile boundary values in ascending order
+      - Example:
+        ```json
+         {
+            "3": [10, 40],
+            "4": [10, 20, 60]
+         }
+        ```
+    - `top_values`: Optional object for discrete/categorical data:
+      - Keys: String representation of pixel values
+      - Values: Integer count of pixels with that value
+      - Example:
+        ```json
+        {
+          "0": 1000,   // 1000 pixels have value 0
+          "1": 800,    // 800 pixels have value 1
+          "2": 600     // 600 pixels have value 2
+        }
+        ```
     - `version`: String indicating the statistics computation version.
     - `approximated_stats`: Boolean indicating if statistics are approximated.
-  - `colorinterp`: Optional string indicating color interpretation (e.g., "red", "green", "blue", "alpha").
+  - `colorinterp`: Optional string indicating color interpretation. Acepted values are valid [GDAL color interpretation vañues](https://gdal.org/en/stable/user/raster_data_model.html). Examples: `"red"`, `"green"`, `"blue"`, `"alpha"`, `"palette"`.
   - `nodata`: String representation of the band-specific NoData value.
-  - `colortable`: Optional object for palette-based images.
+  - `colortable`: Optional object mapping pixel values to RGBA colors. When present:
+    - Keys: String representation of pixel values (0-255 for uint8)
+    - Values: Arrays of 4 integers [red, green, blue, alpha], each in range 0-255
+    - Used with `colorinterp: "palette"` to define color mapping
+    - Example:
+      ```json
+      {
+        "0": [0, 0, 0, 255],    // Black, fully opaque
+        "1": [255, 0, 0, 255],  // Red, fully opaque
+        "255": [0, 0, 0, 0]     // Transparent (typical NoData value)
+      }
+      ```
 
 - **Spatial Information**
   - `bounds`: Array [west, south, east, north] specifying geographic extent in WGS84 coordinates.
