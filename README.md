@@ -1,6 +1,6 @@
-# Raquet
+# RaQuet
 
-Raquet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
+RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
 
 ## Specification
 

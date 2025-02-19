@@ -1,8 +1,8 @@
-# Raquet Specification v0.1.0
+# RaQuet Specification v0.1.0
 
 ## Overview
 
-Raquet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
+RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
 
 ## Data Organization
 
@@ -19,7 +19,7 @@ This organization enables efficient spatial queries, band selection, and resolut
 
 ## File Structure
 
-A Raquet file must contain:
+A RaQuet file must contain:
 
 ### Primary Table
 
@@ -52,7 +52,7 @@ Required columns:
 
 ## Tiling Scheme
 
-Raquet uses the QUADBIN tiling scheme for spatial indexing. [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) is a hierarchical geospatial index based on the Bing Maps Tile System (Quadkey). Designed to be cluster-efficient, it stores in a 64-bit number the information to uniquely identify any of the grid cells that result from uniformly subdividing a map in Mercator projection into four squares at different resolution levels, from 0 to 26 (less than 1m² at the equator). The bit layout is inspired in the H3 design, and provides different modes to store not only cells, but edges, corners or vertices.
+RaQuet uses the QUADBIN tiling scheme for spatial indexing. [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) is a hierarchical geospatial index based on the Bing Maps Tile System (Quadkey). Designed to be cluster-efficient, it stores in a 64-bit number the information to uniquely identify any of the grid cells that result from uniformly subdividing a map in Mercator projection into four squares at different resolution levels, from 0 to 26 (less than 1m² at the equator). The bit layout is inspired in the H3 design, and provides different modes to store not only cells, but edges, corners or vertices.
 
 The tilling scheme is defined by the following parameters:
 - Each tile is identified by a QUADBIN cell ID (uint64).
@@ -264,18 +264,18 @@ TODO: fix these incomplete examples
 
 ## File Extension
 
-Raquet files MUST use `.parquet` as the file extension. This ensures compatibility with existing Parquet tools and maintains consistency with the underlying file format.
+RaQuet files MUST use `.parquet` as the file extension. This ensures compatibility with existing Parquet tools and maintains consistency with the underlying file format.
 
 ## Media Type
 
-If a [media type](https://en.wikipedia.org/wiki/Media_type) (formerly: MIME type) is used, a Raquet file MUST use [application/vnd.apache.parquet](https://www.iana.org/assignments/media-types/application/vnd.apache.parquet) as the media type.
+If a [media type](https://en.wikipedia.org/wiki/Media_type) (formerly: MIME type) is used, a RaQuet file MUST use [application/vnd.apache.parquet](https://www.iana.org/assignments/media-types/application/vnd.apache.parquet) as the media type.
 
-## COG to Raquet Conversion
+## COG to RaQuet Conversion
 
-While Raquet files can be created from scratch following this specification, the format was designed to efficiently store [Cloud Optimized GeoTIFF (COG)](https://www.cogeo.org/) data in a columnar format. When converting from COG to Raquet, the source file MUST meet these requirements:
+While RaQuet files can be created from scratch following this specification, the format was designed to efficiently store [Cloud Optimized GeoTIFF (COG)](https://www.cogeo.org/) data in a columnar format. When converting from COG to RaQuet, the source file MUST meet these requirements:
 
 1. **Tiling Scheme**: Must have `TILING_SCHEME=GoogleMapsCompatible` in the GeoTIFF tags
 2. **Overview Structure**: Overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...)
 3. **Block Size**: All bands MUST have the same block size
 
-These requirements ensure optimal conversion to Raquet's QUADBIN tiling scheme and efficient overview level handling. For other data sources, implementers MUST ensure their data is organized according to the specifications in the following sections.
+These requirements ensure optimal conversion to RaQuet's QUADBIN tiling scheme and efficient overview level handling. For other data sources, implementers MUST ensure their data is organized according to the specifications in the following sections.
