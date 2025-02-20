@@ -3,11 +3,17 @@
 
 Usage:
     raquet2geotiff.py <raquet_filename> <geotiff_filename>
+
+Required packages:
+    - GDAL <https://pypi.org/project/GDAL/>
+    - mercantile <https://pypi.org/project/mercantile/>
+    - pyarrow <https://pypi.org/project/pyarrow/>
 """
 import argparse
 import gzip
 import json
 import logging
+
 import mercantile
 import pyarrow.compute
 import pyarrow.parquet
