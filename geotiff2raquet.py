@@ -82,7 +82,7 @@ def interleave_quadkey(z: int, x: int, y: int) -> int:
     return quadkey
 
 
-def generate_tiles(rg):
+def generate_tiles(rg: RasterGeometry):
     """Generate tiles for a given zoom level
 
     Args:
@@ -106,17 +106,17 @@ def generate_tiles(rg):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def worker_process(pipe_in, pipe_out):
-    """Worker process that receives and sends data through pipes.
+def geotiff_process(geotiff_filename: str, pipe_in, pipe_out):
+    """Worker process that accesses a GeoTIFF through pipes.
 
     Args:
+        geotiff_filename: Name of GeoTIFF file to open
         pipe_in: Connection to receive data from parent
         pipe_out: Connection to send data to parent
     """
+    # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
     import osgeo.osr
-
-    geotiff_filename = pipe_in.recv()
 
     ds = osgeo.gdal.Open(geotiff_filename)
     sref = ds.GetSpatialRef()
@@ -169,11 +169,11 @@ def worker_process(pipe_in, pipe_out):
     pipe_out.close()
 
 
-def open_connection():
-    """Opens a bidirectional connection to a new process.
+def open_geotiff_in_process(geotiff_filename: str):
+    """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
     Returns:
-        Tuple of (send_pipe, receive_pipe) for bidirectional communication
+        Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
     """
     # Create bidirectional pipes
     parent_recv, child_send = multiprocessing.Pipe(duplex=False)
@@ -181,7 +181,7 @@ def open_connection():
 
     # Start worker process
     process = multiprocessing.Process(
-        target=worker_process, args=(child_recv, child_send)
+        target=geotiff_process, args=(geotiff_filename, child_recv, child_send)
     )
     process.start()
 
@@ -189,22 +189,21 @@ def open_connection():
     child_send.close()
     child_recv.close()
 
-    return parent_send, parent_recv
+    # The first message received is expected to be a RasterGeometry
+    raster_geometry = parent_recv.recv()
+    assert isinstance(raster_geometry, RasterGeometry)
+
+    return raster_geometry, parent_send, parent_recv
 
 
 def main(geotiff_filename, raquet_filename):
-    """Read GeoTIFF datasource and zoom level from a file, error if not RaQuet-compatible
+    """Read GeoTIFF datasource and write to a RaQuet file
 
     Args:
         geotiff_filename: GeoTIFF filename
-
-    Returns:
-        GeoTIFF datasource and zoom level
+        raquet_filename: RaQuet filename
     """
-    parent_send, parent_recv = open_connection()
-
-    parent_send.send(geotiff_filename)
-    raster_geometry = parent_recv.recv()
+    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
     assert raster_geometry.gt2 == 0.0 and raster_geometry.gt4 == 0.0
 
     # Create table schema based on band count
@@ -239,8 +238,8 @@ def main(geotiff_filename, raquet_filename):
         band_data = []
 
         for i in range(1, 1 + raster_geometry.bands):
-            parent_send.send((i, txoff, tyoff, txsize, tysize))
-            (data,) = parent_recv.recv()
+            pipe_send.send((i, txoff, tyoff, txsize, tysize))
+            (data,) = pipe_recv.recv()
 
             # Append data to list for this band
             band_data.append(data)
