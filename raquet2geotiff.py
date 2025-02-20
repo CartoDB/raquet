@@ -178,7 +178,7 @@ if __name__ == "__main__":
     metadata, df = main1(args.raquet_filename)
     minlon, minlat, maxlon, maxlat = metadata["bounds"]
 
-    # Import these after main1() to prevent binary conflicts on Mac
+    # Import these after main1() to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
     import osgeo.osr
 
