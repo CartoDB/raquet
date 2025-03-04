@@ -13,6 +13,7 @@ import argparse
 import gzip
 import json
 import logging
+import multiprocessing
 
 import mercantile
 import pyarrow.compute
@@ -47,37 +48,19 @@ def deinterleave_quadkey(quadkey: int) -> tuple[int, int, int]:
     return z, x, y
 
 
-def main1(raquet_filename):
-    """Read RaQuet metadata and Table from a file
+def geotiff_process(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
+    """Worker process that writes a GeoTIFF through pipes.
 
     Args:
-        raquet_filename: RaQuet filename
-
-    Returns:
-        Tuple of (metadata, table)
+        metadata: dictionary of RaQuet metadata
+        geotiff_filename: Name of GeoTIFF file to write
+        pipe_in: Connection to receive data from parent
+        pipe_out: Connection to send data to parent
     """
-    table = pyarrow.parquet.read_table(raquet_filename)
+    # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
+    import osgeo.gdal
+    import osgeo.osr
 
-    # Sort by block column
-    table = table.sort_by("block")
-    metadata = None
-
-    # Get first row where block=0 to extract metadata
-    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
-    if len(block_zero) > 0:
-        metadata = json.loads(block_zero.column("metadata")[0].as_py())
-
-    return metadata, table
-
-
-def main2(metadata, table, geotiff_filename):
-    """Create a GeoTIFF file from RaQuet metadata and PyArrow Table
-
-    Args:
-        metadata: RaQuet metadata
-        table: PyArrow Table
-        geotiff_filename: output GeoTIFF filename
-    """
     # Create projection
     srs = osgeo.osr.SpatialReference()
     srs.ImportFromEPSG(3857)
@@ -89,6 +72,7 @@ def main2(metadata, table, geotiff_filename):
     transform = osgeo.osr.CoordinateTransformation(source_srs, srs)
 
     # Transform coordinates
+    minlon, minlat, maxlon, maxlat = metadata["bounds"]
     xmin, ymin, _ = transform.TransformPoint(minlon, minlat)
     xmax, ymax, _ = transform.TransformPoint(maxlon, maxlat)
 
@@ -132,6 +116,79 @@ def main2(metadata, table, geotiff_filename):
     geotransform = (xmin, xres, 0, ymax, 0, -yres)
     raster.SetGeoTransform(geotransform)
 
+    while True:
+        try:
+            tile, block_data = pipe_in.recv()
+
+            # Get mercator corner coordinates for this tile
+            ulx, _, _, uly = mercantile.xy_bounds(tile)
+
+            # Convert mercator coordinates to pixel coordinates
+            xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
+            yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+
+            # Write to raster
+            band = raster.GetRasterBand(1)
+            if metadata.get("nodata") is not None:
+                band.SetNoDataValue(metadata["nodata"])
+            band.WriteRaster(
+                xoff,
+                yoff,
+                metadata["block_width"],
+                metadata["block_height"],
+                block_data,
+            )
+        except EOFError:
+            break
+
+    pipe_in.close()
+    pipe_out.close()
+
+
+def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
+    """Opens a bidirectional connection to a GeoTIFF reader in another process.
+
+    Returns:
+        Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
+    """
+    # Create bidirectional pipes
+    parent_recv, child_send = multiprocessing.Pipe(duplex=False)
+    child_recv, parent_send = multiprocessing.Pipe(duplex=False)
+
+    # Start worker process
+    process = multiprocessing.Process(
+        target=geotiff_process,
+        args=(metadata, geotiff_filename, child_recv, child_send),
+    )
+    process.start()
+
+    # Close child ends in parent process
+    child_send.close()
+    child_recv.close()
+
+    return parent_send, parent_recv
+
+
+def main(raquet_filename, geotiff_filename):
+    """Read RaQuet file and write to a GeoTIFF datasource
+
+    Args:
+        raquet_filename: RaQuet filename
+        geotiff_filename: GeoTIFF filename
+    """
+    table = pyarrow.parquet.read_table(raquet_filename)
+
+    # Sort by block column
+    table = table.sort_by("block")
+    metadata = None
+
+    # Get first row where block=0 to extract metadata
+    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
+    if len(block_zero) > 0:
+        metadata = json.loads(block_zero.column("metadata")[0].as_py())
+
+    pipe_send, pipe_recv = open_geotiff_in_process(metadata, geotiff_filename)
+
     # Process table one row at a time
     for i in range(len(table)):
         if i > 0 and i % 1000 == 0:
@@ -143,25 +200,12 @@ def main2(metadata, table, geotiff_filename):
         if z != metadata["maxresolution"]:
             continue
 
-        # Get mercator corner coordinates for this tile
-        ulx, _, _, uly = mercantile.xy_bounds(x, y, z)
-
-        # Convert mercator coordinates to pixel coordinates
-        xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
-        yoff = int(round((uly - geotransform[3]) / geotransform[5]))
-
         # Get band data for this row and decompress if needed
         block_data = table.column("band_1")[i].as_py()
         if metadata.get("compression") == "gzip":
             block_data = gzip.decompress(block_data)
 
-        # Write to raster
-        band = raster.GetRasterBand(1)
-        if metadata.get("nodata") is not None:
-            band.SetNoDataValue(metadata["nodata"])
-        band.WriteRaster(
-            xoff, yoff, metadata["block_width"], metadata["block_height"], block_data
-        )
+        pipe_send.send((mercantile.Tile(x, y, z), block_data))
 
 
 parser = argparse.ArgumentParser(description="Convert RaQuet file to GeoTIFF output")
@@ -175,11 +219,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
-    metadata, df = main1(args.raquet_filename)
-    minlon, minlat, maxlon, maxlat = metadata["bounds"]
-
-    # Import these after main1() to avoid https://github.com/apache/arrow/issues/44696
-    import osgeo.gdal
-    import osgeo.osr
-
-    main2(metadata, df, args.geotiff_filename)
+    main(args.raquet_filename, args.geotiff_filename)
