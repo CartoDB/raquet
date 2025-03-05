@@ -22,7 +22,7 @@ import pyarrow.compute
 import pyarrow.parquet
 
 EARTH_DIAMETER = mercantile.CE
-SCALE_PRECISION = 12
+SCALE_PRECISION = 11
 
 
 @dataclasses.dataclass
@@ -129,9 +129,9 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
     valid_scales = [round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)]
     if round(-yres, SCALE_PRECISION) not in valid_scales:
-        raise ValueError("Vertical pixel size is not a valid scale")
+        raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
     if round(xres, SCALE_PRECISION) not in valid_scales:
-        raise ValueError("Horizontal pixel size is not a valid scale")
+        raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
     zoom = valid_scales.index(round(xres, SCALE_PRECISION)) - 8
 
@@ -204,13 +204,14 @@ def main(geotiff_filename, raquet_filename):
         raquet_filename: RaQuet filename
     """
     raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
-    assert raster_geometry.gt2 == 0.0 and raster_geometry.gt4 == 0.0
+    assert raster_geometry.gt2 == 0.0 and raster_geometry.gt4 == 0.0, "Expect no skew"
+    band_names = [f"band_{i}" for i in range(1, 1 + raster_geometry.bands)]
 
     # Create table schema based on band count
     fields = [
         ("block", pyarrow.uint64()),
         ("metadata", pyarrow.string()),
-        *[(f"band_{i}", pyarrow.binary()) for i in range(1, 1 + raster_geometry.bands)],
+        *[(band_name, pyarrow.binary()) for band_name in band_names],
     ]
 
     schema = pyarrow.schema(fields)
@@ -246,19 +247,41 @@ def main(geotiff_filename, raquet_filename):
 
         # Create new row in table after processing all bands
         quadkey = interleave_quadkey(tile.z, tile.x, tile.y)
-        new_row = pyarrow.Table.from_pydict(
+        tile_row = pyarrow.Table.from_pydict(
             {
                 "block": [quadkey],
-                "metadata": [""],
-                **{
-                    f"band_{i}": [band_data[i - 1]]
-                    for i in range(1, 1 + raster_geometry.bands)
-                },
+                "metadata": [None],
+                **{band_name: [band_data[i]] for i, band_name in enumerate(band_names)},
             },
             schema=schema,
         )
 
-        table = pyarrow.concat_tables([table, new_row])
+        table = pyarrow.concat_tables([table, tile_row])
+
+    metadata_json = json.dumps(
+        {
+            "bounds": [None, None, None, None],
+            "compression": "gzip",
+            "width": raster_geometry.width,
+            "height": raster_geometry.height,
+            "minresolution": None,
+            "maxresolution": raster_geometry.zoom,
+            "block_width": None,
+            "block_height": None,
+            "bands": [{"type": None, "name": band_name} for band_name in band_names],
+        }
+    )
+
+    metadata_row = pyarrow.Table.from_pydict(
+        {
+            "block": [0],
+            "metadata": [json.dumps(metadata_json)],
+            **{band_name: [None] for band_name in band_names},
+        },
+        schema=schema,
+    )
+
+    table = pyarrow.concat_tables([table, metadata_row])
 
     # Write table to parquet file
     # print(table)
