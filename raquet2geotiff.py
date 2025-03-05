@@ -64,6 +64,8 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
         "float64": osgeo.gdal.GDT_Float64,
     }
 
+    assert len({b["type"] for b in metadata["bands"]}) == 1, "Expect just one band type"
+
     # Create empty GeoTIFF with compression
     driver = osgeo.gdal.GetDriverByName("GTiff")
     output_width, output_height = metadata["width"], metadata["height"]
@@ -71,7 +73,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
         geotiff_filename,
         output_width,
         output_height,
-        1,
+        len(metadata["bands"]),
         gdal_types[metadata["bands"][0]["type"]],
         options=[
             "COMPRESS=DEFLATE",
@@ -92,7 +94,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
 
     while True:
         try:
-            tile, block_data = pipe_in.recv()
+            tile, *block_data = pipe_in.recv()
 
             # Get mercator corner coordinates for this tile
             ulx, _, _, uly = mercantile.xy_bounds(tile)
@@ -102,16 +104,17 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
             yoff = int(round((uly - geotransform[3]) / geotransform[5]))
 
             # Write to raster
-            band = raster.GetRasterBand(1)
-            if metadata.get("nodata") is not None:
-                band.SetNoDataValue(metadata["nodata"])
-            band.WriteRaster(
-                xoff,
-                yoff,
-                metadata["block_width"],
-                metadata["block_height"],
-                block_data,
-            )
+            for i, block_datum in enumerate(block_data):
+                band = raster.GetRasterBand(i + 1)
+                if metadata.get("nodata") is not None:
+                    band.SetNoDataValue(metadata["nodata"])
+                band.WriteRaster(
+                    xoff,
+                    yoff,
+                    metadata["block_width"],
+                    metadata["block_height"],
+                    block_datum,
+                )
         except EOFError:
             break
 
@@ -162,23 +165,28 @@ def main(raquet_filename, geotiff_filename):
 
     pipe_send, pipe_recv = open_geotiff_in_process(metadata, geotiff_filename)
 
-    # Process table one row at a time
-    for i in range(len(table)):
-        if i > 0 and i % 1000 == 0:
-            logging.info(f"Processed {i} of {len(table)} blocks...")
-        block = table.column("block")[i].as_py()
-        if block == 0:
-            continue
-        x, y, z = quadbin.cell_to_tile(block)
-        if z != metadata["maxresolution"]:
-            continue
+    try:
+        # Process table one row at a time
+        for i in range(len(table)):
+            if i > 0 and i % 1000 == 0:
+                logging.info(f"Processed {i} of {len(table)} blocks...")
+            block = table.column("block")[i].as_py()
+            if block == 0:
+                continue
+            x, y, z = quadbin.cell_to_tile(block)
+            if z != metadata["maxresolution"]:
+                continue
 
-        # Get band data for this row and decompress if needed
-        block_data = table.column("band_1")[i].as_py()
-        if metadata.get("compression") == "gzip":
-            block_data = gzip.decompress(block_data)
+            # Get band data for this row and decompress if needed
+            block_data = [table.column(b["name"])[i].as_py() for b in metadata["bands"]]
+            if metadata.get("compression") == "gzip":
+                block_data = [gzip.decompress(d) for d in block_data]
 
-        pipe_send.send((mercantile.Tile(x, y, z), block_data))
+            pipe_send.send((mercantile.Tile(x, y, z), *block_data))
+    except:
+        pipe_send.close()
+        pipe_recv.close()
+        raise
 
 
 parser = argparse.ArgumentParser(description="Convert RaQuet file to GeoTIFF output")
