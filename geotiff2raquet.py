@@ -106,7 +106,7 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def geotiff_process(geotiff_filename: str, pipe_in, pipe_out):
+def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that accesses a GeoTIFF through pipes.
 
     Args:
@@ -181,7 +181,7 @@ def open_geotiff_in_process(geotiff_filename: str):
 
     # Start worker process
     process = multiprocessing.Process(
-        target=geotiff_process, args=(geotiff_filename, child_recv, child_send)
+        target=read_geotiff, args=(geotiff_filename, child_recv, child_send)
     )
     process.start()
 

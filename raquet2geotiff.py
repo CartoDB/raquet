@@ -22,7 +22,7 @@ import pyarrow.parquet
 import quadbin
 
 
-def geotiff_process(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
+def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that writes a GeoTIFF through pipes.
 
     Args:
@@ -131,8 +131,7 @@ def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
 
     # Start worker process
     process = multiprocessing.Process(
-        target=geotiff_process,
-        args=(metadata, geotiff_filename, child_recv, child_send),
+        target=write_geotiff, args=(metadata, geotiff_filename, child_recv, child_send)
     )
     process.start()
 
