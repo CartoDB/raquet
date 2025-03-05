@@ -8,6 +8,7 @@ Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
+    - quadbin <https://pypi.org/project/quadbin/>
 """
 import argparse
 import dataclasses
@@ -20,6 +21,7 @@ import multiprocessing
 import mercantile
 import pyarrow.compute
 import pyarrow.parquet
+import quadbin
 
 EARTH_DIAMETER = mercantile.CE
 SCALE_PRECISION = 11
@@ -37,49 +39,6 @@ class RasterGeometry:
     yoff: float
     gt4: float
     yres: float
-
-
-def interleave_quadkey(z: int, x: int, y: int) -> int:
-    """Convert z/x/y tile coordinates into a quadkey integer.
-
-    Args:
-        z: Zoom level
-        x: Tile X coordinate
-        y: Tile Y coordinate
-
-    Returns:
-        64-bit integer quadkey value
-    """
-    # Left shift x,y based on zoom level
-    x = x << (32 - z)
-    y = y << (32 - z)
-
-    # Interleave bits
-    x = (x | (x << 16)) & 0x0000FFFF0000FFFF
-    y = (y | (y << 16)) & 0x0000FFFF0000FFFF
-
-    x = (x | (x << 8)) & 0x00FF00FF00FF00FF
-    y = (y | (y << 8)) & 0x00FF00FF00FF00FF
-
-    x = (x | (x << 4)) & 0x0F0F0F0F0F0F0F0F
-    y = (y | (y << 4)) & 0x0F0F0F0F0F0F0F0F
-
-    x = (x | (x << 2)) & 0x3333333333333333
-    y = (y | (y << 2)) & 0x3333333333333333
-
-    x = (x | (x << 1)) & 0x5555555555555555
-    y = (y | (y << 1)) & 0x5555555555555555
-
-    # Combine components into final quadkey
-    quadkey = (
-        0x4000000000000000  # Base value
-        | (1 << 59)  # Mode
-        | (z << 52)  # Zoom level
-        | ((x | (y << 1)) >> 12)  # Interleaved coordinates
-        | (0xFFFFFFFFFFFFF >> (z * 2))  # Mask
-    )
-
-    return quadkey
 
 
 def generate_tiles(rg: RasterGeometry):
@@ -204,88 +163,87 @@ def main(geotiff_filename, raquet_filename):
         raquet_filename: RaQuet filename
     """
     raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
-    assert raster_geometry.gt2 == 0.0 and raster_geometry.gt4 == 0.0, "Expect no skew"
-    band_names = [f"band_{i}" for i in range(1, 1 + raster_geometry.bands)]
 
-    # Create table schema based on band count
-    fields = [
-        ("block", pyarrow.uint64()),
-        ("metadata", pyarrow.string()),
-        *[(band_name, pyarrow.binary()) for band_name in band_names],
-    ]
+    try:
+        assert raster_geometry.gt2 == 0 and raster_geometry.gt4 == 0, "Expect no skew"
+        band_names = [f"band_{i}" for i in range(1, 1 + raster_geometry.bands)]
 
-    schema = pyarrow.schema(fields)
-
-    # Create empty table
-    table = pyarrow.Table.from_pydict({name: [] for name, _ in fields}, schema=schema)
-
-    for tile in generate_tiles(raster_geometry):
-        logging.info(
-            "Tile z=%s x=%s y=%s quadkey=%s bounds=%s",
-            tile.z,
-            tile.x,
-            tile.y,
-            hex(interleave_quadkey(tile.z, tile.x, tile.y)),
-            mercantile.xy_bounds(tile),
+        # Create table schema based on band count
+        schema = pyarrow.schema(
+            [
+                ("block", pyarrow.uint64()),
+                ("metadata", pyarrow.string()),
+                *[(bname, pyarrow.binary()) for bname in band_names],
+            ]
         )
-        xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
 
-        # Convert mercator coordinates to pixel coordinates
-        txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
-        tyoff = int(round((raster_geometry.yoff - ymin) / -raster_geometry.yres))
-        txsize = int(round((xmax - xmin) / raster_geometry.xres))
-        tysize = int(round((ymax - ymin) / -raster_geometry.yres))
-
-        band_data = []
-
-        for i in range(1, 1 + raster_geometry.bands):
-            pipe_send.send((i, txoff, tyoff, txsize, tysize))
-            (data,) = pipe_recv.recv()
-
-            # Append data to list for this band
-            band_data.append(data)
-
-        # Create new row in table after processing all bands
-        quadkey = interleave_quadkey(tile.z, tile.x, tile.y)
-        tile_row = pyarrow.Table.from_pydict(
+        # Initialize table with just metadata at block=0
+        metadata_json = json.dumps(
             {
-                "block": [quadkey],
-                "metadata": [None],
-                **{band_name: [band_data[i]] for i, band_name in enumerate(band_names)},
+                "bounds": [None, None, None, None],
+                "compression": "gzip",
+                "width": raster_geometry.width,
+                "height": raster_geometry.height,
+                "minresolution": raster_geometry.zoom,
+                "maxresolution": raster_geometry.zoom,
+                "block_width": None,
+                "block_height": None,
+                "bands": [{"type": None, "name": bname} for bname in band_names],
+            }
+        )
+        table = pyarrow.Table.from_pydict(
+            {
+                "block": [0],
+                "metadata": [json.dumps(metadata_json)],
+                **{bname: [None] for bname in band_names},
             },
             schema=schema,
         )
 
-        table = pyarrow.concat_tables([table, tile_row])
+        for tile in generate_tiles(raster_geometry):
+            logging.info(
+                "Tile z=%s x=%s y=%s quadkey=%s bounds=%s",
+                tile.z,
+                tile.x,
+                tile.y,
+                hex(quadbin.tile_to_cell((tile.x, tile.y, tile.z))),
+                mercantile.xy_bounds(tile),
+            )
+            xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
 
-    metadata_json = json.dumps(
-        {
-            "bounds": [None, None, None, None],
-            "compression": "gzip",
-            "width": raster_geometry.width,
-            "height": raster_geometry.height,
-            "minresolution": None,
-            "maxresolution": raster_geometry.zoom,
-            "block_width": None,
-            "block_height": None,
-            "bands": [{"type": None, "name": band_name} for band_name in band_names],
-        }
-    )
+            # Convert mercator coordinates to pixel coordinates
+            txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
+            tyoff = int(round((raster_geometry.yoff - ymin) / -raster_geometry.yres))
+            txsize = int(round((xmax - xmin) / raster_geometry.xres))
+            tysize = int(round((ymax - ymin) / -raster_geometry.yres))
 
-    metadata_row = pyarrow.Table.from_pydict(
-        {
-            "block": [0],
-            "metadata": [json.dumps(metadata_json)],
-            **{band_name: [None] for band_name in band_names},
-        },
-        schema=schema,
-    )
+            block_data = []
 
-    table = pyarrow.concat_tables([table, metadata_row])
+            for i in range(1, 1 + raster_geometry.bands):
+                pipe_send.send((i, txoff, tyoff, txsize, tysize))
+                (block_datum,) = pipe_recv.recv()
 
-    # Write table to parquet file
-    # print(table)
-    pyarrow.parquet.write_table(table, raquet_filename)
+                # Append data to list for this band
+                block_data.append(block_datum)
+
+            # Create new row in table after processing all bands
+            tile_row = pyarrow.Table.from_pydict(
+                {
+                    "block": [quadbin.tile_to_cell((tile.x, tile.y, tile.z))],
+                    "metadata": [None],
+                    **{bname: [block_data[i]] for i, bname in enumerate(band_names)},
+                },
+                schema=schema,
+            )
+            table = pyarrow.concat_tables([table, tile_row])
+
+        # Write table to parquet file
+        pyarrow.parquet.write_table(table, raquet_filename)
+
+    except:
+        pipe_send.close()
+        pipe_recv.close()
+        raise
 
 
 parser = argparse.ArgumentParser()
