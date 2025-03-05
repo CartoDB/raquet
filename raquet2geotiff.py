@@ -8,6 +8,7 @@ Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
+    - quadbin <https://pypi.org/project/quadbin/>
 """
 import argparse
 import gzip
@@ -18,34 +19,7 @@ import multiprocessing
 import mercantile
 import pyarrow.compute
 import pyarrow.parquet
-
-
-def deinterleave_quadkey(quadkey: int) -> tuple[int, int, int]:
-    """Convert a quadkey integer into z/x/y tile coordinates.
-
-    Args:
-        quadkey: 64-bit integer quadkey value
-
-    Returns:
-        Tuple of (z, x, y) tile coordinates
-    """
-    # Extract z from bits 52-58
-    z = (quadkey >> 52) & 0x7F
-
-    # Extract interleaved x,y bits from 0-51
-    bits = (quadkey & ((1 << 52) - 1)) << 12
-
-    # Deinterleave x and y
-    x = y = 0
-    for i in range(32):
-        x |= ((bits >> (2 * i)) & 1) << i
-        y |= ((bits >> (2 * i + 1)) & 1) << i
-
-    # Right shift based on zoom level
-    x = x >> (32 - z)
-    y = y >> (32 - z)
-
-    return z, x, y
+import quadbin
 
 
 def geotiff_process(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
@@ -196,7 +170,7 @@ def main(raquet_filename, geotiff_filename):
         block = table.column("block")[i].as_py()
         if block == 0:
             continue
-        z, x, y = deinterleave_quadkey(block)
+        x, y, z = quadbin.cell_to_tile(block)
         if z != metadata["maxresolution"]:
             continue
 
