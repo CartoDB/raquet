@@ -95,32 +95,39 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
     osgeo.gdal.UseExceptions()
 
-    ds = osgeo.gdal.Open(geotiff_filename)
-    sref = ds.GetSpatialRef()
-    _, xres, *_, yres = ds.GetGeoTransform()
+    try:
+        ds = osgeo.gdal.Open(geotiff_filename)
+        sref = ds.GetSpatialRef()
+        _, xres, *_, yres = ds.GetGeoTransform()
 
-    web_mercator = osgeo.osr.SpatialReference()
-    web_mercator.ImportFromEPSG(3857)
-    if sref.ExportToProj4() != web_mercator.ExportToProj4():
-        raise ValueError("Source SRS is not EPSG:3857")
+        web_mercator = osgeo.osr.SpatialReference()
+        web_mercator.ImportFromEPSG(3857)
+        if sref.ExportToProj4() != web_mercator.ExportToProj4():
+            raise ValueError("Source SRS is not EPSG:3857")
 
-    valid_scales = [round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)]
-    if round(-yres, SCALE_PRECISION) not in valid_scales:
-        raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
-    if round(xres, SCALE_PRECISION) not in valid_scales:
-        raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
+        valid_scales = [
+            round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)
+        ]
+        if round(-yres, SCALE_PRECISION) not in valid_scales:
+            raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
+        if round(xres, SCALE_PRECISION) not in valid_scales:
+            raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
-    zoom = valid_scales.index(round(xres, SCALE_PRECISION)) - 8
+        zoom = valid_scales.index(round(xres, SCALE_PRECISION)) - 8
 
-    raster_geometry = RasterGeometry(
-        ds.RasterCount,
-        ds.RasterXSize,
-        ds.RasterYSize,
-        zoom,
-        *ds.GetGeoTransform(),
-    )
+        raster_geometry = RasterGeometry(
+            ds.RasterCount,
+            ds.RasterXSize,
+            ds.RasterYSize,
+            zoom,
+            *ds.GetGeoTransform(),
+        )
 
-    pipe_out.send(raster_geometry)
+        pipe_out.send(raster_geometry)
+    except:
+        pipe_in.close()
+        pipe_out.close()
+        raise
 
     while True:
         try:
