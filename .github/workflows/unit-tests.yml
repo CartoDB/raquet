@@ -2,7 +2,9 @@ name: Unit Tests
 
 on:
   push:
+    branches: [ main ]
   pull_request:
+    branches: [ main ]
 
 jobs:
   test:
@@ -29,6 +31,6 @@ jobs:
         
     - name: Run doctests
       run: |
-        python -m doctest raquet2geotiff.py
         python -m doctest geotiff2raquet.py
+        python -m doctest raquet2geotiff.py
 
