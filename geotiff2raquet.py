@@ -22,6 +22,9 @@ Required packages:
 >>> [metadata[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
 ['gzip', 1024, 1024, 5, 5]
 
+>>> [round(b, 8) for b in metadata["bounds"]]
+[0.0, 40.97989807, 45.0, 66.51326044]
+
 >>> [b["name"] for b in metadata["bands"]]
 ['band_1', 'band_2', 'band_3', 'band_4']
 
@@ -49,6 +52,10 @@ class RasterGeometry:
     width: int
     height: int
     zoom: int
+    minlat: float
+    minlon: float
+    maxlat: float
+    maxlon: float
     xoff: float
     xres: float
     gt2: float
@@ -98,7 +105,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
         sref = ds.GetSpatialRef()
-        _, xres, *_, yres = ds.GetGeoTransform()
+        xmin, xres, _, ymax, _, yres = ds.GetGeoTransform()
 
         web_mercator = osgeo.osr.SpatialReference()
         web_mercator.ImportFromEPSG(3857)
@@ -114,12 +121,26 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
             raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
         zoom = valid_scales.index(round(xres, SCALE_PRECISION)) - 8
+        xmax = xmin + ds.RasterXSize * xres
+        ymin = ymax + ds.RasterYSize * yres
+
+        wgs84 = osgeo.osr.SpatialReference()
+        wgs84.ImportFromEPSG(4326)  # WGS84
+        wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+        transform = osgeo.osr.CoordinateTransformation(web_mercator, wgs84)
+
+        minlon, minlat, _ = transform.TransformPoint(xmin, ymin)
+        maxlon, maxlat, _ = transform.TransformPoint(xmax, ymax)
 
         raster_geometry = RasterGeometry(
             ds.RasterCount,
             ds.RasterXSize,
             ds.RasterYSize,
             zoom,
+            minlat,
+            minlon,
+            maxlat,
+            maxlon,
             *ds.GetGeoTransform(),
         )
 
@@ -220,7 +241,12 @@ def main(geotiff_filename, raquet_filename):
         # Initialize table with just metadata at block=0
         metadata_json = json.dumps(
             {
-                "bounds": [None, None, None, None],
+                "bounds": [
+                    raster_geometry.minlon,
+                    raster_geometry.minlat,
+                    raster_geometry.maxlon,
+                    raster_geometry.maxlat,
+                ],
                 "compression": "gzip",
                 "width": raster_geometry.width,
                 "height": raster_geometry.height,

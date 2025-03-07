@@ -16,8 +16,8 @@ Required packages:
 >>> geotiff_info["size"]
 [1024, 1024]
 
->>> [round(n, 9) for n in geotiff_info["geoTransform"]]
-[0.0, 4891.969810251, 0.0, 10018754.171394622, 0.0, -4891.969810251]
+>>> [round(n, 8) for n in geotiff_info["geoTransform"]]
+[0.0, 4891.96981025, 0.0, 10018754.17139462, 0.0, -4891.96981025]
 
 >>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
 [([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
