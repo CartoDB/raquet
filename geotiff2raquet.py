@@ -273,10 +273,9 @@ def main(geotiff_filename, raquet_filename):
         # Write table to parquet file
         pyarrow.parquet.write_table(table, raquet_filename)
 
-    except:
+    finally:
         pipe_send.close()
         pipe_recv.close()
-        raise
 
 
 parser = argparse.ArgumentParser()

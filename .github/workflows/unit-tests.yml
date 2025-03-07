@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test1:
+  test-import:
     runs-on: ubuntu-latest
     
     steps:
@@ -40,7 +40,7 @@ jobs:
       run: |
         python -m doctest geotiff2raquet.py -v
 
-  test2:
+  test-export:
     runs-on: ubuntu-latest
     
     steps:
