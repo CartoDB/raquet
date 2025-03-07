@@ -10,9 +10,9 @@ Required packages:
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
->>> import tempfile; _, geotiff_filename = tempfile.mkstemp(suffix=".tif")
->>> main("examples/europe.parquet", geotiff_filename)
->>> geotiff_info = read_geotiff_info(geotiff_filename)
+>>> import tempfile; _, geotiff_tempfile = tempfile.mkstemp(suffix=".tif")
+>>> main("examples/europe.parquet", geotiff_tempfile)
+>>> geotiff_info = read_geotiff_info(geotiff_tempfile)
 >>> geotiff_info["size"]
 [1024, 1024]
 

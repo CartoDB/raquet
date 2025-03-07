@@ -10,9 +10,9 @@ Required packages:
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
->>> import tempfile; _, raquet_filename = tempfile.mkstemp(suffix=".raquet")
->>> main("examples/europe.tif", raquet_filename)
->>> table = pyarrow.parquet.read_table(raquet_filename)
+>>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+>>> main("examples/europe.tif", raquet_tempfile)
+>>> table = pyarrow.parquet.read_table(raquet_tempfile)
 >>> len(table)
 17
 >>> table.column_names
