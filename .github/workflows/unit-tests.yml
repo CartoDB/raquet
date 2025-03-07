@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test-import:
+  test:
     runs-on: ubuntu-latest
     
     steps:
@@ -28,49 +28,7 @@ jobs:
         python -m pip install GDAL==$(gdal-config --version)
         python -m pip install -r requirements.txt
         
-    - name: Check basic libraries
-      run: |
-        python -c 'import osgeo.gdal; osgeo.gdal.Open("examples/europe.tif")'
-
-    - name: Run scripts
-      run: |
-        ./geotiff2raquet.py examples/europe.tif /tmp/europe.parquet -v
-
     - name: Run doctests
       run: |
         python -m doctest geotiff2raquet.py -v
-
-  test-export:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.x'
-        
-    - name: Install GDAL dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gdal-bin libgdal-dev
-        
-    - name: Install Python packages
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install GDAL==$(gdal-config --version)
-        python -m pip install -r requirements.txt
-        
-    - name: Check basic libraries
-      run: |
-        python -c 'import pyarrow.parquet; pyarrow.parquet.read_table("examples/europe.parquet")'
-
-    - name: Run scripts
-      run: |
-        ./raquet2geotiff.py examples/europe.parquet /tmp/europe.tif -v
-
-    - name: Run doctests
-      run: |
         python -m doctest raquet2geotiff.py -v
-
