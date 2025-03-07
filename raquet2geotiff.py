@@ -172,7 +172,12 @@ def read_geotiff(geotiff_filename: str, pipe_out):
 
     osgeo.gdal.UseExceptions()
 
-    pipe_out.send(osgeo.gdal.Info(geotiff_filename, format="json"))
+    try:
+        geotiff_info = osgeo.gdal.Info(geotiff_filename, format="json")
+    except:
+        geotiff_info = None
+
+    pipe_out.send(geotiff_info)
 
 
 def read_geotiff_info(geotiff_filename: str) -> dict:
@@ -193,6 +198,7 @@ def read_geotiff_info(geotiff_filename: str) -> dict:
     try:
         # Close child end in parent process
         gdal_info = parent_recv.recv()
+        assert isinstance(gdal_info, dict)
     finally:
         child_send.close()
         parent_recv.close()
