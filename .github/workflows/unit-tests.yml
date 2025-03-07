@@ -30,6 +30,6 @@ jobs:
         
     - name: Run doctests
       run: |
-        python -m doctest geotiff2raquet.py
-        python -m doctest raquet2geotiff.py
+        python -m doctest geotiff2raquet.py -v
+        python -m doctest raquet2geotiff.py -v
 
