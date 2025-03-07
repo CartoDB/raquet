@@ -13,6 +13,11 @@ Required packages:
 >>> import tempfile; _, raquet_filename = tempfile.mkstemp(suffix=".raquet")
 >>> main("examples/europe.tif", raquet_filename)
 >>> table = pyarrow.parquet.read_table(raquet_filename)
+>>> len(table)
+17
+>>> table.column_names
+['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
+
 >>> metadata = read_metadata(table)
 >>> [metadata[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
 ['gzip', 1024, 1024, 5, 5]
