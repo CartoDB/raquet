@@ -50,91 +50,95 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
 
     osgeo.gdal.UseExceptions()
 
-    # Create projection
-    srs = osgeo.osr.SpatialReference()
-    srs.ImportFromEPSG(3857)
+    try:
+        # Create projection
+        srs = osgeo.osr.SpatialReference()
+        srs.ImportFromEPSG(3857)
 
-    # Create transformer from geographic (lat/lon) to web mercator
-    source_srs = osgeo.osr.SpatialReference()
-    source_srs.ImportFromEPSG(4326)  # WGS84
-    source_srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-    transform = osgeo.osr.CoordinateTransformation(source_srs, srs)
+        # Create transformer from geographic (lat/lon) to web mercator
+        source_srs = osgeo.osr.SpatialReference()
+        source_srs.ImportFromEPSG(4326)  # WGS84
+        source_srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+        transform = osgeo.osr.CoordinateTransformation(source_srs, srs)
 
-    # Transform coordinates
-    minlon, minlat, maxlon, maxlat = metadata["bounds"]
-    xmin, ymin, _ = transform.TransformPoint(minlon, minlat)
-    xmax, ymax, _ = transform.TransformPoint(maxlon, maxlat)
+        # Transform coordinates
+        minlon, minlat, maxlon, maxlat = metadata["bounds"]
+        xmin, ymin, _ = transform.TransformPoint(minlon, minlat)
+        xmax, ymax, _ = transform.TransformPoint(maxlon, maxlat)
 
-    # GDAL data types mapping
-    gdal_types = {
-        "uint8": osgeo.gdal.GDT_Byte,
-        # "int8": osgeo.gdal.GDT_Int8, # supported by GDAL >= 3.7
-        "uint16": osgeo.gdal.GDT_UInt16,
-        "int16": osgeo.gdal.GDT_Int16,
-        "uint32": osgeo.gdal.GDT_UInt32,
-        "int32": osgeo.gdal.GDT_Int32,
-        "uint64": osgeo.gdal.GDT_UInt64,
-        "int64": osgeo.gdal.GDT_Int64,
-        "float32": osgeo.gdal.GDT_Float32,
-        "float64": osgeo.gdal.GDT_Float64,
-    }
+        # GDAL data types mapping
+        gdal_types = {
+            "uint8": osgeo.gdal.GDT_Byte,
+            # "int8": osgeo.gdal.GDT_Int8, # supported by GDAL >= 3.7
+            "uint16": osgeo.gdal.GDT_UInt16,
+            "int16": osgeo.gdal.GDT_Int16,
+            "uint32": osgeo.gdal.GDT_UInt32,
+            "int32": osgeo.gdal.GDT_Int32,
+            "uint64": osgeo.gdal.GDT_UInt64,
+            "int64": osgeo.gdal.GDT_Int64,
+            "float32": osgeo.gdal.GDT_Float32,
+            "float64": osgeo.gdal.GDT_Float64,
+        }
 
-    assert len({b["type"] for b in metadata["bands"]}) == 1, "Expect just one band type"
+        assert (
+            len({b["type"] for b in metadata["bands"]}) == 1
+        ), "Expect just one band type"
 
-    # Create empty GeoTIFF with compression
-    driver = osgeo.gdal.GetDriverByName("GTiff")
-    output_width, output_height = metadata["width"], metadata["height"]
-    raster = driver.Create(
-        geotiff_filename,
-        output_width,
-        output_height,
-        len(metadata["bands"]),
-        gdal_types[metadata["bands"][0]["type"]],
-        options=[
-            "COMPRESS=DEFLATE",
-            "TILED=YES",
-            f"BLOCKXSIZE={metadata['block_width']}",
-            f"BLOCKYSIZE={metadata['block_height']}",
-        ],
-    )
+        # Create empty GeoTIFF with compression
+        driver = osgeo.gdal.GetDriverByName("GTiff")
+        output_width, output_height = metadata["width"], metadata["height"]
+        raster = driver.Create(
+            geotiff_filename,
+            output_width,
+            output_height,
+            len(metadata["bands"]),
+            gdal_types[metadata["bands"][0]["type"]],
+            options=[
+                "COMPRESS=DEFLATE",
+                "TILED=YES",
+                f"BLOCKXSIZE={metadata['block_width']}",
+                f"BLOCKYSIZE={metadata['block_height']}",
+            ],
+        )
 
-    # Set projection
-    raster.SetProjection(srs.ExportToWkt())
+        # Set projection
+        raster.SetProjection(srs.ExportToWkt())
 
-    # Set geotransform
-    xres = (xmax - xmin) / output_width
-    yres = (ymax - ymin) / output_height
-    geotransform = (xmin, xres, 0, ymax, 0, -yres)
-    raster.SetGeoTransform(geotransform)
+        # Set geotransform
+        xres = (xmax - xmin) / output_width
+        yres = (ymax - ymin) / output_height
+        geotransform = (xmin, xres, 0, ymax, 0, -yres)
+        raster.SetGeoTransform(geotransform)
 
-    while True:
-        try:
-            tile, *block_data = pipe_in.recv()
+        while True:
+            try:
+                tile, *block_data = pipe_in.recv()
 
-            # Get mercator corner coordinates for this tile
-            ulx, _, _, uly = mercantile.xy_bounds(tile)
+                # Get mercator corner coordinates for this tile
+                ulx, _, _, uly = mercantile.xy_bounds(tile)
 
-            # Convert mercator coordinates to pixel coordinates
-            xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
-            yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+                # Convert mercator coordinates to pixel coordinates
+                xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
+                yoff = int(round((uly - geotransform[3]) / geotransform[5]))
 
-            # Write to raster
-            for i, block_datum in enumerate(block_data):
-                band = raster.GetRasterBand(i + 1)
-                if metadata.get("nodata") is not None:
-                    band.SetNoDataValue(metadata["nodata"])
-                band.WriteRaster(
-                    xoff,
-                    yoff,
-                    metadata["block_width"],
-                    metadata["block_height"],
-                    block_datum,
-                )
-        except EOFError:
-            break
+                # Write to raster
+                for i, block_datum in enumerate(block_data):
+                    band = raster.GetRasterBand(i + 1)
+                    if metadata.get("nodata") is not None:
+                        band.SetNoDataValue(metadata["nodata"])
+                    band.WriteRaster(
+                        xoff,
+                        yoff,
+                        metadata["block_width"],
+                        metadata["block_height"],
+                        block_datum,
+                    )
+            except EOFError:
+                break
 
-    pipe_in.close()
-    pipe_out.close()
+    finally:
+        pipe_in.close()
+        pipe_out.close()
 
 
 def open_geotiff_in_process(metadata: dict, geotiff_filename: str):

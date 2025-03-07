@@ -124,33 +124,35 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         )
 
         pipe_out.send(raster_geometry)
-    except:
+
+        while True:
+            try:
+                i, txoff, tyoff, txsize, tysize = pipe_in.recv()
+
+                logging.info(
+                    "Band %s nodata value: %s", i, ds.GetRasterBand(i).GetNoDataValue()
+                )
+
+                # Read raster data for this tile
+                band = ds.GetRasterBand(i)
+                logging.info(
+                    "txoff %s tyoff %s txsize %s tysize %s",
+                    txoff,
+                    tyoff,
+                    txsize,
+                    tysize,
+                )
+                data = band.ReadRaster(txoff, tyoff, txsize, tysize)
+                logging.info(
+                    "Read %s bytes from band %s: %s...", len(data), i, data[:12]
+                )
+
+                pipe_out.send((data,))
+            except EOFError:
+                break
+    finally:
         pipe_in.close()
         pipe_out.close()
-        raise
-
-    while True:
-        try:
-            i, txoff, tyoff, txsize, tysize = pipe_in.recv()
-
-            logging.info(
-                "Band %s nodata value: %s", i, ds.GetRasterBand(i).GetNoDataValue()
-            )
-
-            # Read raster data for this tile
-            band = ds.GetRasterBand(i)
-            logging.info(
-                "txoff %s tyoff %s txsize %s tysize %s", txoff, tyoff, txsize, tysize
-            )
-            data = band.ReadRaster(txoff, tyoff, txsize, tysize)
-            logging.info("Read %s bytes from band %s: %s...", len(data), i, data[:12])
-
-            pipe_out.send((data,))
-        except EOFError:
-            break
-
-    pipe_in.close()
-    pipe_out.close()
 
 
 def open_geotiff_in_process(geotiff_filename: str):
