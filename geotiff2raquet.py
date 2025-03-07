@@ -44,6 +44,7 @@ import quadbin
 
 EARTH_DIAMETER = mercantile.CE
 SCALE_PRECISION = 11
+EMPTY_BLOCK = b""
 
 
 @dataclasses.dataclass
@@ -84,7 +85,7 @@ def generate_tiles(rg: RasterGeometry):
     lry = int((EARTH_DIAMETER / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
     logging.info("lrx %s lry %s", lrx, lry)
 
-    for x, y in itertools.product(range(ulx, lrx), range(uly, lry - 1)):
+    for x, y in itertools.product(range(ulx, lrx + 1), range(uly, lry + 1)):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
@@ -153,7 +154,28 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
                     raise EOFError
 
+                # Expand message to an intended raster area to retrieve
                 i, txoff, tyoff, txsize, tysize = received
+
+                # Respond with an empty block if requested area is too far east or north
+                if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
+                    pipe_out.send((EMPTY_BLOCK,))
+                    continue
+
+                # Adjust raster area to within valid values
+                if txoff < 0:
+                    txoff, txsize = 0, txsize + txoff
+                if tyoff < 0:
+                    tyoff, tysize = 0, tysize + tyoff
+                if txoff + txsize > ds.RasterXSize:
+                    txsize = ds.RasterXSize - txoff
+                if tyoff + tysize > ds.RasterYSize:
+                    tysize = ds.RasterYSize - tyoff
+
+                # Respond with an empty block if requested area is zero width or height
+                if txsize == 0 or tysize == 0:
+                    pipe_out.send((EMPTY_BLOCK,))
+                    continue
 
                 logging.info(
                     "Band %s nodata value: %s", i, ds.GetRasterBand(i).GetNoDataValue()
@@ -291,6 +313,9 @@ def main(geotiff_filename, raquet_filename):
 
                 # Append data to list for this band
                 block_data.append(block_datum)
+
+            if all(block_datum == EMPTY_BLOCK for block_datum in block_data):
+                continue
 
             # Create new row in table after processing all bands
             tile_row = pyarrow.Table.from_pydict(
