@@ -127,7 +127,12 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
         while True:
             try:
-                i, txoff, tyoff, txsize, tysize = pipe_in.recv()
+                received = pipe_in.recv()
+                if received is None:
+                    # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
+                    raise EOFError
+
+                i, txoff, tyoff, txsize, tysize = received
 
                 logging.info(
                     "Band %s nodata value: %s", i, ds.GetRasterBand(i).GetNoDataValue()
@@ -276,6 +281,9 @@ def main(geotiff_filename, raquet_filename):
         pyarrow.parquet.write_table(table, raquet_filename)
 
     finally:
+        # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
+        pipe_send.send(None)
+
         pipe_send.close()
         pipe_recv.close()
 

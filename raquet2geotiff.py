@@ -16,8 +16,8 @@ Required packages:
 >>> geotiff_info["size"]
 [1024, 1024]
 
->>> [round(n, 10) for n in geotiff_info["geoTransform"]]
-[0.0, 4891.9698102513, 0.0, 10018754.171394624, 0.0, -4891.9698102513]
+>>> [round(n, 9) for n in geotiff_info["geoTransform"]]
+[0.0, 4891.969810251, 0.0, 10018754.171394622, 0.0, -4891.969810251]
 
 >>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
 [([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
@@ -112,7 +112,12 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
 
         while True:
             try:
-                tile, *block_data = pipe_in.recv()
+                received = pipe_in.recv()
+                if received is None:
+                    # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
+                    raise EOFError
+
+                tile, *block_data = received
 
                 # Get mercator corner coordinates for this tile
                 ulx, _, _, uly = mercantile.xy_bounds(tile)
@@ -252,6 +257,9 @@ def main(raquet_filename, geotiff_filename):
 
             pipe_send.send((mercantile.Tile(x, y, z), *block_data))
     finally:
+        # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
+        pipe_send.send(None)
+
         pipe_send.close()
         pipe_recv.close()
 
