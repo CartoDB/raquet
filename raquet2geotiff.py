@@ -9,6 +9,19 @@ Required packages:
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
+
+>>> import tempfile; _, geotiff_filename = tempfile.mkstemp(suffix=".tif")
+>>> main("examples/europe.parquet", geotiff_filename)
+>>> geotiff_info = read_geotiff_info(geotiff_filename)
+>>> geotiff_info["size"]
+[1024, 1024]
+
+>>> [round(n, 10) for n in geotiff_info["geoTransform"]]
+[0.0, 4891.9698102513, 0.0, 10018754.171394624, 0.0, -4891.9698102513]
+
+>>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
+[([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
+
 """
 import argparse
 import gzip
@@ -34,6 +47,8 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
     import osgeo.osr
+
+    osgeo.gdal.UseExceptions()
 
     # Create projection
     srs = osgeo.osr.SpatialReference()
@@ -145,6 +160,46 @@ def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
     return parent_send, parent_recv
 
 
+def read_geotiff(geotiff_filename: str, pipe_out):
+    """Worker process that reads a GeoTIFF through pipes.
+
+    Args:
+        geotiff_filename: Name of GeoTIFF file to read
+        pipe_out: Connection to send data to parent
+    """
+    # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
+    import osgeo.gdal
+
+    osgeo.gdal.UseExceptions()
+
+    pipe_out.send(osgeo.gdal.Info(geotiff_filename, format="json"))
+
+
+def read_geotiff_info(geotiff_filename: str) -> dict:
+    """Retrieve osgeo.gdal.Info() for a GeoTIFF file
+
+    Returns:
+        Dictionary response from https://gdal.org/en/stable/api/python/utilities.html#osgeo.gdal.Info
+    """
+    # Create bidirectional pipes
+    parent_recv, child_send = multiprocessing.Pipe(duplex=False)
+
+    # Start worker process
+    process = multiprocessing.Process(
+        target=read_geotiff, args=(geotiff_filename, child_send)
+    )
+    process.start()
+
+    try:
+        # Close child end in parent process
+        gdal_info = parent_recv.recv()
+    finally:
+        child_send.close()
+        parent_recv.close()
+
+    return gdal_info
+
+
 def main(raquet_filename, geotiff_filename):
     """Read RaQuet file and write to a GeoTIFF datasource
 
@@ -183,10 +238,9 @@ def main(raquet_filename, geotiff_filename):
                 block_data = [gzip.decompress(d) for d in block_data]
 
             pipe_send.send((mercantile.Tile(x, y, z), *block_data))
-    except:
+    finally:
         pipe_send.close()
         pipe_recv.close()
-        raise
 
 
 parser = argparse.ArgumentParser(description="Convert RaQuet file to GeoTIFF output")
