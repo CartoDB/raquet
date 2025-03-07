@@ -33,6 +33,11 @@ jobs:
         python -c 'import osgeo.gdal; osgeo.gdal.Open("examples/europe.tif")'
         python -c 'import pyarrow.parquet; pyarrow.parquet.read_table("examples/europe.parquet")'
 
+    - name: Run scripts
+      run: |
+        ./raquet2geotiff.py examples/europe.parquet /tmp/europe.tif
+        ./geotiff2raquet.py examples/europe.tif /tmp/europe.parquet
+
     - name: Run doctests
       run: |
         python -m doctest geotiff2raquet.py -v
