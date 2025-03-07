@@ -200,6 +200,14 @@ def read_geotiff_info(geotiff_filename: str) -> dict:
     return gdal_info
 
 
+def read_metadata(table) -> dict:
+    """Get first row where block=0 to extract metadata"""
+    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
+    if len(block_zero) == 0:
+        raise Exception("No block=0 in table")
+    return json.loads(block_zero.column("metadata")[0].as_py())
+
+
 def main(raquet_filename, geotiff_filename):
     """Read RaQuet file and write to a GeoTIFF datasource
 
@@ -211,12 +219,7 @@ def main(raquet_filename, geotiff_filename):
 
     # Sort by block column
     table = table.sort_by("block")
-    metadata = None
-
-    # Get first row where block=0 to extract metadata
-    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
-    if len(block_zero) > 0:
-        metadata = json.loads(block_zero.column("metadata")[0].as_py())
+    metadata = read_metadata(table)
 
     pipe_send, pipe_recv = open_geotiff_in_process(metadata, geotiff_filename)
 

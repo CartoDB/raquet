@@ -9,6 +9,17 @@ Required packages:
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
+
+>>> import tempfile; _, raquet_filename = tempfile.mkstemp(suffix=".raquet")
+>>> main("examples/europe.tif", raquet_filename)
+>>> table = pyarrow.parquet.read_table(raquet_filename)
+>>> metadata = read_metadata(table)
+>>> [metadata[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
+['gzip', 1024, 1024, 5, 5]
+
+>>> [b["name"] for b in metadata["bands"]]
+['band_1', 'band_2', 'band_3', 'band_4']
+
 """
 import argparse
 import dataclasses
@@ -76,6 +87,8 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
     import osgeo.osr
+
+    osgeo.gdal.UseExceptions()
 
     ds = osgeo.gdal.Open(geotiff_filename)
     sref = ds.GetSpatialRef()
@@ -155,6 +168,14 @@ def open_geotiff_in_process(geotiff_filename: str):
     return raster_geometry, parent_send, parent_recv
 
 
+def read_metadata(table) -> dict:
+    """Get first row where block=0 to extract metadata"""
+    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
+    if len(block_zero) == 0:
+        raise Exception("No block=0 in table")
+    return json.loads(block_zero.column("metadata")[0].as_py())
+
+
 def main(geotiff_filename, raquet_filename):
     """Read GeoTIFF datasource and write to a RaQuet file
 
@@ -194,7 +215,7 @@ def main(geotiff_filename, raquet_filename):
         table = pyarrow.Table.from_pydict(
             {
                 "block": [0],
-                "metadata": [json.dumps(metadata_json)],
+                "metadata": [metadata_json],
                 **{bname: [None] for bname in band_names},
             },
             schema=schema,
