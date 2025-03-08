@@ -25,7 +25,7 @@ jobs:
     - name: Install Python packages
       run: |
         python -m pip install --upgrade pip wheel setuptools
-        python -m pip install GDAL==$(gdal-config --version)
+        python -m pip install --no-cache-dir --force-reinstall GDAL[numpy]==$(gdal-config --version)
         python -m pip install -r requirements.txt
         
     - name: Run doctests
