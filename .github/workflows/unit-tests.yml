@@ -20,12 +20,12 @@ jobs:
     - name: Install GDAL dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gdal-bin libgdal-dev
+        sudo apt-get install -y gdal-bin libgdal-dev python3-numpy
         
     - name: Install Python packages
       run: |
         python -m pip install --upgrade pip wheel setuptools
-        python -m pip install --no-cache-dir --force-reinstall GDAL[numpy]==$(gdal-config --version)
+        python -m pip install GDAL==$(gdal-config --version)
         python -m pip install -r requirements.txt
         
     - name: Run doctests

@@ -39,6 +39,7 @@ import logging
 import multiprocessing
 
 import mercantile
+import numpy
 import pyarrow.compute
 import pyarrow.parquet
 import quadbin
@@ -100,7 +101,6 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
     import osgeo.osr
-    import numpy
 
     osgeo.gdal.UseExceptions()
 
