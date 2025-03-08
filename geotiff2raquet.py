@@ -7,6 +7,7 @@ Usage:
 Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
+    - numpy <https://pypi.org/project/numpy/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
@@ -38,13 +39,13 @@ import logging
 import multiprocessing
 
 import mercantile
+import numpy
 import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
 EARTH_DIAMETER = mercantile.CE
 SCALE_PRECISION = 11
-EMPTY_BLOCK = b""
 
 
 @dataclasses.dataclass
@@ -155,26 +156,39 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     raise EOFError
 
                 # Expand message to an intended raster area to retrieve
-                i, txoff, tyoff, txsize, tysize = received
+                i, tile = received
+
+                # Convert mercator coordinates to pixel coordinates
+                xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
+                txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
+                tyoff = int(
+                    round((raster_geometry.yoff - ymin) / -raster_geometry.yres)
+                )
+                txsize = int(round((xmax - xmin) / raster_geometry.xres))
+                tysize = int(round((ymax - ymin) / -raster_geometry.yres))
+                expected_shape = tysize, txsize
 
                 # Respond with an empty block if requested area is too far east or north
                 if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
-                    pipe_out.send((EMPTY_BLOCK,))
+                    pipe_out.send((None,))
                     continue
 
                 # Adjust raster area to within valid values
+                xpad_before, xpad_after, ypad_before, ypad_after = 0, 0, 0, 0
                 if txoff < 0:
-                    txoff, txsize = 0, txsize + txoff
+                    txoff, txsize, xpad_before = 0, txsize + txoff, -txoff
                 if tyoff < 0:
-                    tyoff, tysize = 0, tysize + tyoff
+                    tyoff, tysize, ypad_before = 0, tysize + tyoff, -tyoff
                 if txoff + txsize > ds.RasterXSize:
+                    xpad_after = txsize - (ds.RasterXSize - txoff)
                     txsize = ds.RasterXSize - txoff
                 if tyoff + tysize > ds.RasterYSize:
+                    ypad_after = tysize - (ds.RasterYSize - tyoff)
                     tysize = ds.RasterYSize - tyoff
 
                 # Respond with an empty block if requested area is zero width or height
                 if txsize == 0 or tysize == 0:
-                    pipe_out.send((EMPTY_BLOCK,))
+                    pipe_out.send((None,))
                     continue
 
                 logging.info(
@@ -190,7 +204,18 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     txsize,
                     tysize,
                 )
-                data = band.ReadRaster(txoff, tyoff, txsize, tysize)
+
+                # Pad to full tile size with NODATA fill if needed
+                arr1 = band.ReadAsArray(txoff, tyoff, txsize, tysize)
+                pads = (ypad_before, ypad_after), (xpad_before, xpad_after)
+
+                if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
+                    arr2 = numpy.pad(arr1, pads, constant_values=nodata)
+                else:
+                    arr2 = numpy.pad(arr1, pads)
+
+                assert arr2.shape == expected_shape
+                data = arr2.tobytes()
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), i, data[:12]
                 )
@@ -297,24 +322,17 @@ def main(geotiff_filename, raquet_filename):
                 hex(quadbin.tile_to_cell((tile.x, tile.y, tile.z))),
                 mercantile.xy_bounds(tile),
             )
-            xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
-
-            # Convert mercator coordinates to pixel coordinates
-            txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
-            tyoff = int(round((raster_geometry.yoff - ymin) / -raster_geometry.yres))
-            txsize = int(round((xmax - xmin) / raster_geometry.xres))
-            tysize = int(round((ymax - ymin) / -raster_geometry.yres))
 
             block_data = []
 
             for i in range(1, 1 + raster_geometry.bands):
-                pipe_send.send((i, txoff, tyoff, txsize, tysize))
+                pipe_send.send((i, tile))
                 (block_datum,) = pipe_recv.recv()
 
                 # Append data to list for this band
                 block_data.append(block_datum)
 
-            if all(block_datum == EMPTY_BLOCK for block_datum in block_data):
+            if all(block_datum is None for block_datum in block_data):
                 continue
 
             # Create new row in table after processing all bands

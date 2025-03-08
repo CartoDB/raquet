@@ -1,4 +1,5 @@
 GDAL>=3
 mercantile>=1
+numpy>=2
 pyarrow>=19
 quadbin>=0.2.2
