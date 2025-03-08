@@ -12,22 +12,46 @@ Required packages:
     - quadbin <https://pypi.org/project/quadbin/>
 
 >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+
+Test case "europe.tif"
+
 >>> main("examples/europe.tif", raquet_tempfile)
->>> table = pyarrow.parquet.read_table(raquet_tempfile)
->>> len(table)
+>>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
+>>> len(table1)
 17
->>> table.column_names
+
+>>> table1.column_names
 ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
 
->>> metadata = read_metadata(table)
->>> [metadata[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
+>>> metadata1 = read_metadata(table1)
+>>> [metadata1[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
 ['gzip', 1024, 1024, 5, 5]
 
->>> [round(b, 8) for b in metadata["bounds"]]
+>>> [round(b, 8) for b in metadata1["bounds"]]
 [0.0, 40.97989807, 45.0, 66.51326044]
 
->>> [b["name"] for b in metadata["bands"]]
+>>> [b["name"] for b in metadata1["bands"]]
 ['band_1', 'band_2', 'band_3', 'band_4']
+
+Test case "san-francisco.tif"
+
+>>> main("examples/san-francisco.tif", raquet_tempfile)
+>>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
+>>> len(table2)
+3
+
+>>> table2.column_names
+['block', 'metadata', 'band_1']
+
+>>> metadata2 = read_metadata(table2)
+>>> [metadata2[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
+['gzip', 266, 362, 11, 11]
+
+>>> [round(b, 8) for b in metadata2["bounds"]]
+[-122.6953125, 37.57941251, -122.51953125, 37.85750716]
+
+>>> [b["name"] for b in metadata2["bands"]]
+['band_1']
 
 """
 import argparse
