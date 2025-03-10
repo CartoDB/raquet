@@ -240,7 +240,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     arr2 = numpy.pad(arr1, pads)
 
                 assert arr2.shape == expected_shape
-                data = arr2.tobytes()
+                data = gzip.compress(arr2.tobytes())
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), i, data[:12]
                 )
