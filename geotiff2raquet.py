@@ -252,7 +252,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     raise EOFError
 
                 # Expand message to an intended raster area to retrieve
-                i, tile = received
+                band_num, tile = received
 
                 # Convert mercator coordinates to pixel coordinates
                 xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
@@ -288,11 +288,13 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                     continue
 
                 logging.info(
-                    "Band %s nodata value: %s", i, ds.GetRasterBand(i).GetNoDataValue()
+                    "Band %s nodata value: %s",
+                    band_num,
+                    ds.GetRasterBand(band_num).GetNoDataValue(),
                 )
 
                 # Read raster data for this tile
-                band = ds.GetRasterBand(i)
+                band = ds.GetRasterBand(band_num)
                 logging.info(
                     "txoff %s tyoff %s txsize %s tysize %s",
                     txoff,
@@ -307,7 +309,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 band_type = gdaltype_bandtypes[band.DataType]
                 data = read_rasterband(band, bbox, xpads, ypads, band_type)
                 logging.info(
-                    "Read %s bytes from band %s: %s...", len(data), i, data[:12]
+                    "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
                 assert len(data) == expected_count * band_type.size
 
@@ -365,7 +367,7 @@ def main(geotiff_filename, raquet_filename):
 
     try:
         assert raster_geometry.gt2 == 0 and raster_geometry.gt4 == 0, "Expect no skew"
-        band_names = [f"band_{i}" for i in range(1, 1 + raster_geometry.bands)]
+        band_names = [f"band_{n}" for n in range(1, 1 + raster_geometry.bands)]
 
         # Create table schema based on band count
         schema = pyarrow.schema(
@@ -395,8 +397,8 @@ def main(geotiff_filename, raquet_filename):
 
             block_data = []
 
-            for i in range(1, 1 + raster_geometry.bands):
-                pipe_send.send((i, tile))
+            for band_num in range(1, 1 + raster_geometry.bands):
+                pipe_send.send((band_num, tile))
                 (block_datum,) = pipe_recv.recv()
 
                 # Append data to list for this band

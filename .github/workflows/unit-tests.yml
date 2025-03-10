@@ -20,7 +20,7 @@ jobs:
     - name: Install GDAL dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gdal-bin libgdal-dev python3-numpy
+        sudo apt-get install -y gdal-bin libgdal-dev
         
     - name: Install Python packages
       run: |
