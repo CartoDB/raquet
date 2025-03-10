@@ -53,6 +53,7 @@ Test case "san-francisco.tif"
 ['band_1']
 
 """
+
 import argparse
 import dataclasses
 import gzip
@@ -74,6 +75,8 @@ SCALE_PRECISION = 11
 
 @dataclasses.dataclass
 class RasterGeometry:
+    """Convenience wrapper for details of raster geometry and transformation"""
+
     bands: int
     width: int
     height: int
@@ -92,6 +95,8 @@ class RasterGeometry:
 
 @dataclasses.dataclass
 class BandType:
+    """Convenience wrapper for details of band data type"""
+
     fmt: str
     size: int
     typ: type
@@ -122,7 +127,7 @@ def generate_tiles(rg: RasterGeometry):
 
 
 def read_rasterband(
-    band: "osgeo.gdal.Band",
+    band: "osgeo.gdal.Band",  # noqa: F821 (Band type safely imported in read_geotiff)
     bbox: tuple[int, int, int, int],
     xpads: tuple[int, int],
     ypads: tuple[int, int],

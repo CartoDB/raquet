@@ -23,6 +23,7 @@ Required packages:
 [([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
 
 """
+
 import argparse
 import gzip
 import json
@@ -80,9 +81,9 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
             "float64": osgeo.gdal.GDT_Float64,
         }
 
-        assert (
-            len({b["type"] for b in metadata["bands"]}) == 1
-        ), "Expect just one band type"
+        assert len({b["type"] for b in metadata["bands"]}) == 1, (
+            "Expect just one band type"
+        )
 
         # Create empty GeoTIFF with compression
         driver = osgeo.gdal.GetDriverByName("GTiff")
@@ -183,7 +184,7 @@ def read_geotiff(geotiff_filename: str, pipe_out):
 
     try:
         geotiff_info = osgeo.gdal.Info(geotiff_filename, format="json")
-    except:
+    except:  # noqa: E722 (fine with this bare except)
         geotiff_info = None
 
     pipe_out.send(geotiff_info)
