@@ -72,6 +72,10 @@ import quadbin
 EARTH_DIAMETER = mercantile.CE
 SCALE_PRECISION = 11
 
+# List of acceptable ground resolutions for whole-number Web Mercator zooms
+# See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
+VALID_RESOLUTIONS = [round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)]
+
 
 @dataclasses.dataclass
 class RasterGeometry:
@@ -210,15 +214,12 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         if sref.ExportToProj4() != web_mercator.ExportToProj4():
             raise ValueError("Source SRS is not EPSG:3857")
 
-        valid_scales = [
-            round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)
-        ]
-        if round(-yres, SCALE_PRECISION) not in valid_scales:
+        if round(-yres, SCALE_PRECISION) not in VALID_RESOLUTIONS:
             raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
-        if round(xres, SCALE_PRECISION) not in valid_scales:
+        if round(xres, SCALE_PRECISION) not in VALID_RESOLUTIONS:
             raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
-        zoom = valid_scales.index(round(xres, SCALE_PRECISION)) - 8
+        zoom = VALID_RESOLUTIONS.index(round(xres, SCALE_PRECISION)) - 8
         xmax = xmin + ds.RasterXSize * xres
         ymin = ymax + ds.RasterYSize * yres
 
