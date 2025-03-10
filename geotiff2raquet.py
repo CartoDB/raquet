@@ -127,36 +127,40 @@ def read_rasterband(
 
     Acts like numpy.pad() without requiring numpy dependency
     """
+    data1: bytes = band.ReadRaster(*bbox)
+
+    # Return early if no padding to be done
+    if (xpads, ypads) == ((0, 0), (0, 0)):
+        return data1
+
+    # Prepare nodata cell value in expected format
     if (_nodata := band.GetNoDataValue()) is not None:
         nodata = struct.pack(fmt, typ(_nodata))
     else:
         nodata = struct.pack(fmt, typ(0))
 
-    data1: bytes = band.ReadRaster(*bbox)
-
-    if (xpads, ypads) == ((0, 0), (0, 0)):
-        # No padding to be done, bail out early
-        return data1
+    # Pad start and end of each row if needed
+    rowlen1 = bbox[2] * size
+    data2: list[bytes]
+    offsets = range(0, len(data1), rowlen1)
 
     if xpads != (0, 0):
         rowprefix, rowsuffix = nodata * xpads[0], nodata * xpads[1]
+        data2 = [rowprefix + data1[off : off + rowlen1] + rowsuffix for off in offsets]
     else:
-        rowprefix, rowsuffix = b"", b""
+        data2 = [data1[off : off + rowlen1] for off in offsets]
 
-    rowlen1 = bbox[2] * size
-    data2: list[bytes] = [
-        rowprefix + data1[off : off + rowlen1] + rowsuffix
-        for off in range(0, len(data1), rowlen1)
-    ]
-
+    # Pad start and end of full table if needed
     rowlen2 = len(data2[0]) // size
-    if ypads != (0, 0):
-        arrprefix = [nodata * rowlen2] * ypads[0]
-        arrsuffix = [nodata * rowlen2] * ypads[1]
-    else:
-        arrprefix, arrsuffix = [], []
-    data3: list[bytes] = arrprefix + data2 + arrsuffix
+    data3: list[bytes]
 
+    if ypads != (0, 0):
+        emptyrow = nodata * rowlen2
+        data3 = [emptyrow] * ypads[0] + data2 + [emptyrow] * ypads[1]
+    else:
+        data3 = data2
+
+    # Concatenate raw bytes and return
     return b"".join(data3)
 
 
