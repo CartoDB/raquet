@@ -7,7 +7,6 @@ Usage:
 Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
-    - numpy <https://pypi.org/project/numpy/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
@@ -62,9 +61,9 @@ import json
 import logging
 import math
 import multiprocessing
+import struct
 
 import mercantile
-import numpy
 import pyarrow.compute
 import pyarrow.parquet
 import quadbin
@@ -115,19 +114,50 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def array_pad(
+def read_rasterband(
     band: "osgeo.gdal.Band",
     bbox: tuple[int, int, int, int],
-    pads: tuple[tuple[int, int], tuple[int, int]],
-) -> numpy.array:
-    """Pad input array with optional nodata value"""
-    arr1 = band.ReadAsArray(*bbox)
-    if (nodata := band.GetNoDataValue()) is not None:
-        arr2 = numpy.pad(arr1, pads, constant_values=nodata)
-    else:
-        arr2 = numpy.pad(arr1, pads)
+    xpads: tuple[int, int],
+    ypads: tuple[int, int],
+    fmt: str,
+    size: int,
+    typ: type,
+) -> bytes:
+    """Return uncompressed raster bytes padded to full tile size.
 
-    return arr2
+    Acts like numpy.pad() without requiring numpy dependency
+    """
+    if (_nodata := band.GetNoDataValue()) is not None:
+        nodata = struct.pack(fmt, typ(_nodata))
+    else:
+        nodata = struct.pack(fmt, typ(0))
+
+    data1: bytes = band.ReadRaster(*bbox)
+
+    if (xpads, ypads) == ((0, 0), (0, 0)):
+        # No padding to be done, bail out early
+        return data1
+
+    if xpads != (0, 0):
+        rowprefix, rowsuffix = nodata * xpads[0], nodata * xpads[1]
+    else:
+        rowprefix, rowsuffix = b"", b""
+
+    rowlen1 = bbox[2] * size
+    data2: list[bytes] = [
+        rowprefix + data1[off : off + rowlen1] + rowsuffix
+        for off in range(0, len(data1), rowlen1)
+    ]
+
+    rowlen2 = len(data2[0]) // size
+    if ypads != (0, 0):
+        arrprefix = [nodata * rowlen2] * ypads[0]
+        arrsuffix = [nodata * rowlen2] * ypads[1]
+    else:
+        arrprefix, arrsuffix = [], []
+    data3: list[bytes] = arrprefix + data2 + arrsuffix
+
+    return b"".join(data3)
 
 
 def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
@@ -143,6 +173,23 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     import osgeo.osr
 
     osgeo.gdal.UseExceptions()
+
+    gdaltype_structformats: dict[int, tuple[str, int], type] = {
+        osgeo.gdal.GDT_Byte: ("B", 1, int),
+        osgeo.gdal.GDT_CFloat32: ("f", 4, float),
+        osgeo.gdal.GDT_CFloat64: ("d", 8, float),
+        osgeo.gdal.GDT_CInt16: ("h", 2, int),
+        osgeo.gdal.GDT_CInt32: ("i", 4, int),
+        osgeo.gdal.GDT_Float32: ("f", 4, float),
+        osgeo.gdal.GDT_Float64: ("d", 8, float),
+        osgeo.gdal.GDT_Int16: ("h", 2, int),
+        osgeo.gdal.GDT_Int32: ("i", 4, int),
+        osgeo.gdal.GDT_Int64: ("q", 8, int),
+        osgeo.gdal.GDT_Int8: ("b", 1, int),
+        osgeo.gdal.GDT_UInt16: ("H", 2, int),
+        osgeo.gdal.GDT_UInt32: ("I", 4, int),
+        osgeo.gdal.GDT_UInt64: ("Q", 8, int),
+    }
 
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
@@ -247,15 +294,15 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
                 # Pad to full tile size with NODATA fill if needed
                 bbox = (txoff, tyoff, txsize, tysize)
-                pads = (ypad_before, ypad_after), (xpad_before, xpad_after)
-                arr = array_pad(band, bbox, pads)
-                assert arr.shape == expected_shape
-                data = gzip.compress(arr.tobytes())
+                xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
+                fmt, size, typ = gdaltype_structformats[band.DataType]
+                data = read_rasterband(band, bbox, xpads, ypads, fmt, size, typ)
+                assert len(data) == expected_shape[0] * expected_shape[1] * size
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), i, data[:12]
                 )
 
-                pipe_out.send((data,))
+                pipe_out.send((gzip.compress(data),))
             except EOFError:
                 break
     finally:
