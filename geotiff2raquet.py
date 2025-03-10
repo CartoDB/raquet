@@ -115,6 +115,21 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
+def array_pad(
+    band: "osgeo.gdal.Band",
+    bbox: tuple[int, int, int, int],
+    pads: tuple[tuple[int, int], tuple[int, int]],
+) -> numpy.array:
+    """Pad input array with optional nodata value"""
+    arr1 = band.ReadAsArray(*bbox)
+    if (nodata := band.GetNoDataValue()) is not None:
+        arr2 = numpy.pad(arr1, pads, constant_values=nodata)
+    else:
+        arr2 = numpy.pad(arr1, pads)
+
+    return arr2
+
+
 def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that accesses a GeoTIFF through pipes.
 
@@ -231,16 +246,11 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 )
 
                 # Pad to full tile size with NODATA fill if needed
-                arr1 = band.ReadAsArray(txoff, tyoff, txsize, tysize)
+                bbox = (txoff, tyoff, txsize, tysize)
                 pads = (ypad_before, ypad_after), (xpad_before, xpad_after)
-
-                if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
-                    arr2 = numpy.pad(arr1, pads, constant_values=nodata)
-                else:
-                    arr2 = numpy.pad(arr1, pads)
-
-                assert arr2.shape == expected_shape
-                data = gzip.compress(arr2.tobytes())
+                arr = array_pad(band, bbox, pads)
+                assert arr.shape == expected_shape
+                data = gzip.compress(arr.tobytes())
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), i, data[:12]
                 )
