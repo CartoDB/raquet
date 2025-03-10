@@ -90,6 +90,13 @@ class RasterGeometry:
     yres: float
 
 
+@dataclasses.dataclass
+class BandType:
+    fmt: str
+    size: int
+    typ: type
+
+
 def generate_tiles(rg: RasterGeometry):
     """Generate tiles for a given zoom level
 
@@ -119,15 +126,13 @@ def read_rasterband(
     bbox: tuple[int, int, int, int],
     xpads: tuple[int, int],
     ypads: tuple[int, int],
-    fmt: str,
-    size: int,
-    typ: type,
+    band_type: BandType,
 ) -> bytes:
     """Return uncompressed raster bytes padded to full tile size.
 
     Acts like numpy.pad() without requiring numpy dependency
     """
-    data1: bytes = band.ReadRaster(*bbox)
+    data1 = band.ReadRaster(*bbox)
 
     # Return early if no padding to be done
     if (xpads, ypads) == ((0, 0), (0, 0)):
@@ -135,30 +140,25 @@ def read_rasterband(
 
     # Prepare nodata cell value in expected format
     if (_nodata := band.GetNoDataValue()) is not None:
-        nodata = struct.pack(fmt, typ(_nodata))
+        nodata = struct.pack(band_type.fmt, band_type.typ(_nodata))
     else:
-        nodata = struct.pack(fmt, typ(0))
+        nodata = struct.pack(band_type.fmt, band_type.typ(0))
 
     # Pad start and end of each row if needed
-    rowlen1 = bbox[2] * size
-    data2: list[bytes]
-    offsets = range(0, len(data1), rowlen1)
+    data2 = [data1]
 
     if xpads != (0, 0):
+        rowsize = bbox[2] * band_type.size
+        offsets = range(0, len(data1), rowsize)
         rowprefix, rowsuffix = nodata * xpads[0], nodata * xpads[1]
-        data2 = [rowprefix + data1[off : off + rowlen1] + rowsuffix for off in offsets]
-    else:
-        data2 = [data1[off : off + rowlen1] for off in offsets]
+        data2 = [rowprefix + data1[off : off + rowsize] + rowsuffix for off in offsets]
 
     # Pad start and end of full table if needed
-    rowlen2 = len(data2[0]) // size
-    data3: list[bytes]
+    data3 = data2
 
     if ypads != (0, 0):
-        emptyrow = nodata * rowlen2
+        emptyrow = nodata * (xpads[0] + bbox[2] + xpads[1])
         data3 = [emptyrow] * ypads[0] + data2 + [emptyrow] * ypads[1]
-    else:
-        data3 = data2
 
     # Concatenate raw bytes and return
     return b"".join(data3)
@@ -178,21 +178,21 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
     osgeo.gdal.UseExceptions()
 
-    gdaltype_structformats: dict[int, tuple[str, int], type] = {
-        osgeo.gdal.GDT_Byte: ("B", 1, int),
-        osgeo.gdal.GDT_CFloat32: ("f", 4, float),
-        osgeo.gdal.GDT_CFloat64: ("d", 8, float),
-        osgeo.gdal.GDT_CInt16: ("h", 2, int),
-        osgeo.gdal.GDT_CInt32: ("i", 4, int),
-        osgeo.gdal.GDT_Float32: ("f", 4, float),
-        osgeo.gdal.GDT_Float64: ("d", 8, float),
-        osgeo.gdal.GDT_Int16: ("h", 2, int),
-        osgeo.gdal.GDT_Int32: ("i", 4, int),
-        osgeo.gdal.GDT_Int64: ("q", 8, int),
-        osgeo.gdal.GDT_Int8: ("b", 1, int),
-        osgeo.gdal.GDT_UInt16: ("H", 2, int),
-        osgeo.gdal.GDT_UInt32: ("I", 4, int),
-        osgeo.gdal.GDT_UInt64: ("Q", 8, int),
+    gdaltype_bandtypes: dict[int, BandType] = {
+        osgeo.gdal.GDT_Byte: BandType("B", 1, int),
+        osgeo.gdal.GDT_CFloat32: BandType("f", 4, float),
+        osgeo.gdal.GDT_CFloat64: BandType("d", 8, float),
+        osgeo.gdal.GDT_CInt16: BandType("h", 2, int),
+        osgeo.gdal.GDT_CInt32: BandType("i", 4, int),
+        osgeo.gdal.GDT_Float32: BandType("f", 4, float),
+        osgeo.gdal.GDT_Float64: BandType("d", 8, float),
+        osgeo.gdal.GDT_Int16: BandType("h", 2, int),
+        osgeo.gdal.GDT_Int32: BandType("i", 4, int),
+        osgeo.gdal.GDT_Int64: BandType("q", 8, int),
+        osgeo.gdal.GDT_Int8: BandType("b", 1, int),
+        osgeo.gdal.GDT_UInt16: BandType("H", 2, int),
+        osgeo.gdal.GDT_UInt32: BandType("I", 4, int),
+        osgeo.gdal.GDT_UInt64: BandType("Q", 8, int),
     }
 
     try:
@@ -257,7 +257,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 )
                 txsize = int(round((xmax - xmin) / raster_geometry.xres))
                 tysize = int(round((ymax - ymin) / -raster_geometry.yres))
-                expected_shape = tysize, txsize
+                expected_count = tysize * txsize
 
                 # Respond with an empty block if requested area is too far east or north
                 if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
@@ -299,12 +299,12 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 # Pad to full tile size with NODATA fill if needed
                 bbox = (txoff, tyoff, txsize, tysize)
                 xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
-                fmt, size, typ = gdaltype_structformats[band.DataType]
-                data = read_rasterband(band, bbox, xpads, ypads, fmt, size, typ)
-                assert len(data) == expected_shape[0] * expected_shape[1] * size
+                band_type = gdaltype_bandtypes[band.DataType]
+                data = read_rasterband(band, bbox, xpads, ypads, band_type)
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), i, data[:12]
                 )
+                assert len(data) == expected_count * band_type.size
 
                 pipe_out.send((gzip.compress(data),))
             except EOFError:
