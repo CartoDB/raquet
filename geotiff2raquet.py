@@ -38,7 +38,7 @@ Test case "san-francisco.tif"
 >>> main("examples/san-francisco.tif", raquet_tempfile)
 >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
 >>> len(table2)
-3
+5
 
 >>> table2.column_names
 ['block', 'metadata', 'band_1']
@@ -48,7 +48,7 @@ Test case "san-francisco.tif"
 ['gzip', 266, 362, 11, 11]
 
 >>> [round(b, 8) for b in metadata2["bounds"]]
-[-122.6953125, 37.57941251, -122.51953125, 37.85750716]
+[-122.6953125, 37.57941251, -122.34375, 37.85750716]
 
 >>> [b["name"] for b in metadata2["bands"]]
 ['band_1']
@@ -60,6 +60,7 @@ import gzip
 import itertools
 import json
 import logging
+import math
 import multiprocessing
 
 import mercantile
@@ -186,7 +187,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
                 txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
                 tyoff = int(
-                    round((raster_geometry.yoff - ymin) / -raster_geometry.yres)
+                    round((raster_geometry.yoff - ymax) / -raster_geometry.yres)
                 )
                 txsize = int(round((xmax - xmin) / raster_geometry.xres))
                 tysize = int(round((ymax - ymin) / -raster_geometry.yres))
@@ -309,33 +310,12 @@ def main(geotiff_filename, raquet_filename):
             ]
         )
 
-        # Initialize table with just metadata at block=0
-        metadata_json = json.dumps(
-            {
-                "bounds": [
-                    raster_geometry.minlon,
-                    raster_geometry.minlat,
-                    raster_geometry.maxlon,
-                    raster_geometry.maxlat,
-                ],
-                "compression": "gzip",
-                "width": raster_geometry.width,
-                "height": raster_geometry.height,
-                "minresolution": raster_geometry.zoom,
-                "maxresolution": raster_geometry.zoom,
-                "block_width": None,
-                "block_height": None,
-                "bands": [{"type": None, "name": bname} for bname in band_names],
-            }
-        )
+        # Initialize table with no rows
         table = pyarrow.Table.from_pydict(
-            {
-                "block": [0],
-                "metadata": [metadata_json],
-                **{bname: [None] for bname in band_names},
-            },
-            schema=schema,
+            {fname: [] for fname in schema.names}, schema=schema
         )
+
+        minlat, minlon, maxlat, maxlon = math.inf, math.inf, -math.inf, -math.inf
 
         for tile in generate_tiles(raster_geometry):
             logging.info(
@@ -344,7 +324,7 @@ def main(geotiff_filename, raquet_filename):
                 tile.x,
                 tile.y,
                 hex(quadbin.tile_to_cell((tile.x, tile.y, tile.z))),
-                mercantile.xy_bounds(tile),
+                mercantile.bounds(tile),
             )
 
             block_data = []
@@ -369,6 +349,35 @@ def main(geotiff_filename, raquet_filename):
                 schema=schema,
             )
             table = pyarrow.concat_tables([table, tile_row])
+
+            # Accumulate real bounds based on included tiles
+            ll_bounds = mercantile.bounds(tile)
+            minlat, minlon = min(minlat, ll_bounds.south), min(minlon, ll_bounds.west)
+            maxlat, maxlon = max(maxlat, ll_bounds.north), max(maxlon, ll_bounds.east)
+
+        # Prepend metadata row to the complete table
+        metadata_json = json.dumps(
+            {
+                "bounds": [minlon, minlat, maxlon, maxlat],
+                "compression": "gzip",
+                "width": raster_geometry.width,
+                "height": raster_geometry.height,
+                "minresolution": raster_geometry.zoom,
+                "maxresolution": raster_geometry.zoom,
+                "block_width": None,
+                "block_height": None,
+                "bands": [{"type": None, "name": bname} for bname in band_names],
+            }
+        )
+        metadata_row = pyarrow.Table.from_pydict(
+            {
+                "block": [0],
+                "metadata": [metadata_json],
+                **{bname: [None] for bname in band_names},
+            },
+            schema=schema,
+        )
+        table = pyarrow.concat_tables([metadata_row, table])
 
         # Write table to parquet file
         pyarrow.parquet.write_table(table, raquet_filename)
