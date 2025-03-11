@@ -69,12 +69,12 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
-EARTH_DIAMETER = mercantile.CE
-SCALE_PRECISION = 11
+# Decimal precision needed for resolution comparisons
+DECM_PRECISION = 11
 
 # List of acceptable ground resolutions for whole-number Web Mercator zooms
 # See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
-VALID_RESOLUTIONS = [round(EARTH_DIAMETER / (2**i), SCALE_PRECISION) for i in range(32)]
+VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
 
 
 @dataclasses.dataclass
@@ -116,14 +116,15 @@ def generate_tiles(rg: RasterGeometry):
         Generator of tiles
     """
     logging.info("xoff %s yoff %s zoom %s", rg.xoff, rg.yoff, rg.zoom)
+    earth_circumference = mercantile.CE
 
-    tileres = EARTH_DIAMETER / 2**rg.zoom
-    ulx = int((rg.xoff + EARTH_DIAMETER / 2) / tileres)
-    uly = int((EARTH_DIAMETER / 2 - rg.yoff) / tileres)
+    tileres = earth_circumference / 2**rg.zoom
+    ulx = int((rg.xoff + earth_circumference / 2) / tileres)
+    uly = int((earth_circumference / 2 - rg.yoff) / tileres)
     logging.info("tileres %s ulx %s uly %s", tileres, ulx, uly)
 
-    lrx = int((rg.xoff + rg.width * rg.xres + EARTH_DIAMETER / 2) / tileres)
-    lry = int((EARTH_DIAMETER / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
+    lrx = int((rg.xoff + rg.width * rg.xres + earth_circumference / 2) / tileres)
+    lry = int((earth_circumference / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
     logging.info("lrx %s lry %s", lrx, lry)
 
     for x, y in itertools.product(range(ulx, lrx + 1), range(uly, lry + 1)):
@@ -214,12 +215,12 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         if sref.ExportToProj4() != web_mercator.ExportToProj4():
             raise ValueError("Source SRS is not EPSG:3857")
 
-        if round(-yres, SCALE_PRECISION) not in VALID_RESOLUTIONS:
+        if round(-yres, DECM_PRECISION) not in VALID_RESOLUTIONS:
             raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
-        if round(xres, SCALE_PRECISION) not in VALID_RESOLUTIONS:
+        if round(xres, DECM_PRECISION) not in VALID_RESOLUTIONS:
             raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
-        zoom = VALID_RESOLUTIONS.index(round(xres, SCALE_PRECISION)) - 8
+        zoom = VALID_RESOLUTIONS.index(round(xres, DECM_PRECISION)) - 8
         xmax = xmin + ds.RasterXSize * xres
         ymin = ymax + ds.RasterYSize * yres
 
