@@ -44,7 +44,7 @@ Test case "san-francisco.tif"
 
 >>> metadata2 = read_metadata(table2)
 >>> [metadata2[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
-['gzip', 266, 362, 11, 11]
+['gzip', 512, 512, 11, 11]
 
 >>> [round(b, 8) for b in metadata2["bounds"]]
 [-122.6953125, 37.57941251, -122.34375, 37.85750716]
@@ -68,6 +68,9 @@ import mercantile
 import pyarrow.compute
 import pyarrow.parquet
 import quadbin
+
+# Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
+BLOCK_ZOOM = 8
 
 # Decimal precision needed for resolution comparisons
 DECM_PRECISION = 11
@@ -220,7 +223,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         if round(xres, DECM_PRECISION) not in VALID_RESOLUTIONS:
             raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
 
-        zoom = VALID_RESOLUTIONS.index(round(xres, DECM_PRECISION)) - 8
+        zoom = VALID_RESOLUTIONS.index(round(xres, DECM_PRECISION)) - BLOCK_ZOOM
         xmax = xmin + ds.RasterXSize * xres
         ymin = ymax + ds.RasterYSize * yres
 
@@ -358,6 +361,31 @@ def read_metadata(table) -> dict:
     return json.loads(block_zero.column("metadata")[0].as_py())
 
 
+def get_raquet_dimensions(
+    zoom: int, xmin: int, ymin: int, xmax: int, ymax: int
+) -> dict[str, int]:
+    """Get dictionary of basic dimensions for RaQuet metadata from tile bounds"""
+    # First and last tile in rectangular coverage
+    upper_left = mercantile.Tile(x=xmin, y=ymin, z=zoom)
+    lower_right = mercantile.Tile(x=xmax, y=ymax, z=zoom)
+
+    # Pixel dimensions
+    block_width, block_height = 2**BLOCK_ZOOM, 2**BLOCK_ZOOM
+    raster_width = (1 + lower_right.x - upper_left.x) * block_width
+    raster_height = (1 + lower_right.y - upper_left.y) * block_height
+
+    # Lat/lon corners
+    northwest, southeast = mercantile.bounds(upper_left), mercantile.bounds(lower_right)
+
+    return {
+        "bounds": [northwest.west, southeast.south, southeast.east, northwest.north],
+        "width": raster_width,
+        "height": raster_height,
+        "block_width": block_width,
+        "block_height": block_height,
+    }
+
+
 def main(geotiff_filename, raquet_filename):
     """Read GeoTIFF datasource and write to a RaQuet file
 
@@ -385,7 +413,7 @@ def main(geotiff_filename, raquet_filename):
             {fname: [] for fname in schema.names}, schema=schema
         )
 
-        minlat, minlon, maxlat, maxlon = math.inf, math.inf, -math.inf, -math.inf
+        xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
 
         for tile in generate_tiles(raster_geometry):
             logging.info(
@@ -421,22 +449,17 @@ def main(geotiff_filename, raquet_filename):
             table = pyarrow.concat_tables([table, tile_row])
 
             # Accumulate real bounds based on included tiles
-            ll_bounds = mercantile.bounds(tile)
-            minlat, minlon = min(minlat, ll_bounds.south), min(minlon, ll_bounds.west)
-            maxlat, maxlon = max(maxlat, ll_bounds.north), max(maxlon, ll_bounds.east)
+            xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
+            xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
 
         # Prepend metadata row to the complete table
         metadata_json = json.dumps(
             {
-                "bounds": [minlon, minlat, maxlon, maxlat],
                 "compression": "gzip",
-                "width": raster_geometry.width,
-                "height": raster_geometry.height,
                 "minresolution": raster_geometry.zoom,
                 "maxresolution": raster_geometry.zoom,
-                "block_width": None,
-                "block_height": None,
                 "bands": [{"type": None, "name": bname} for bname in band_names],
+                **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
             }
         )
         metadata_row = pyarrow.Table.from_pydict(
