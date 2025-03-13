@@ -35,8 +35,8 @@ Test case "europe.tif"
 >>> [round(b, 8) for b in metadata1["center"]]
 [22.5, 53.74657926, 5]
 
->>> [b["name"] for b in metadata1["bands"]]
-['band_1', 'band_2', 'band_3', 'band_4']
+>>> {b["name"]: b["type"] for b in metadata1["bands"]}
+{'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
 >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
 {'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
@@ -73,8 +73,8 @@ Test case "san-francisco.tif"
 >>> [round(b, 8) for b in metadata2["center"]]
 [-122.51953125, 37.71845983, 11]
 
->>> [b["name"] for b in metadata2["bands"]]
-['band_1']
+>>> {b["name"]: b["type"] for b in metadata2["bands"]}
+{'band_1': 'int16'}
 
 >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
 {'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
@@ -112,7 +112,7 @@ VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in rang
 class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
-    bands: int
+    bandtypes: list[str]
     nodata: int | float | None
     width: int
     height: int
@@ -149,6 +149,7 @@ class BandType:
     fmt: str
     size: int
     typ: type
+    name: str
 
 
 def generate_tiles(rg: RasterGeometry):
@@ -277,20 +278,20 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     osgeo.gdal.UseExceptions()
 
     gdaltype_bandtypes: dict[int, BandType] = {
-        osgeo.gdal.GDT_Byte: BandType("B", 1, int),
-        osgeo.gdal.GDT_CFloat32: BandType("f", 4, float),
-        osgeo.gdal.GDT_CFloat64: BandType("d", 8, float),
-        osgeo.gdal.GDT_CInt16: BandType("h", 2, int),
-        osgeo.gdal.GDT_CInt32: BandType("i", 4, int),
-        osgeo.gdal.GDT_Float32: BandType("f", 4, float),
-        osgeo.gdal.GDT_Float64: BandType("d", 8, float),
-        osgeo.gdal.GDT_Int16: BandType("h", 2, int),
-        osgeo.gdal.GDT_Int32: BandType("i", 4, int),
-        osgeo.gdal.GDT_Int64: BandType("q", 8, int),
-        osgeo.gdal.GDT_Int8: BandType("b", 1, int),
-        osgeo.gdal.GDT_UInt16: BandType("H", 2, int),
-        osgeo.gdal.GDT_UInt32: BandType("I", 4, int),
-        osgeo.gdal.GDT_UInt64: BandType("Q", 8, int),
+        osgeo.gdal.GDT_Byte: BandType("B", 1, int, "uint8"),
+        osgeo.gdal.GDT_CFloat32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_CFloat64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_CInt16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_CInt32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Float32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_Float64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_Int16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_Int32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Int64: BandType("q", 8, int, "int64"),
+        osgeo.gdal.GDT_Int8: BandType("b", 1, int, "int8"),
+        osgeo.gdal.GDT_UInt16: BandType("H", 2, int, "uint16"),
+        osgeo.gdal.GDT_UInt32: BandType("I", 4, int, "uint32"),
+        osgeo.gdal.GDT_UInt64: BandType("Q", 8, int, "uint64"),
     }
 
     try:
@@ -321,7 +322,10 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         maxlon, maxlat, _ = transform.TransformPoint(xmax, ymax)
 
         raster_geometry = RasterGeometry(
-            ds.RasterCount,
+            [
+                gdaltype_bandtypes[ds.GetRasterBand(band_num).DataType].name
+                for band_num in range(1, 1 + ds.RasterCount)
+            ],
             ds.GetRasterBand(1).GetNoDataValue(),
             ds.RasterXSize,
             ds.RasterYSize,
@@ -485,7 +489,7 @@ def main(geotiff_filename, raquet_filename):
 
     try:
         assert raster_geometry.gt2 == 0 and raster_geometry.gt4 == 0, "Expect no skew"
-        band_names = [f"band_{n}" for n in range(1, 1 + raster_geometry.bands)]
+        band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
 
         # Create table schema based on band count
         schema = pyarrow.schema(
@@ -498,7 +502,7 @@ def main(geotiff_filename, raquet_filename):
 
         # Initialize empty lists to collect rows and stats
         rows, row_group_size = [], 1000
-        band_stats = [None] * raster_geometry.bands
+        band_stats = [None for _ in raster_geometry.bandtypes]
 
         # Initialize the parquet writer
         writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
@@ -517,7 +521,7 @@ def main(geotiff_filename, raquet_filename):
 
             block_data, block_stats = [], []
 
-            for band_num in range(1, 1 + raster_geometry.bands):
+            for band_num in range(1, 1 + len(raster_geometry.bandtypes)):
                 pipe_send.send((band_num, tile))
                 block_datum, block_stat = pipe_recv.recv()
 
@@ -568,8 +572,10 @@ def main(geotiff_filename, raquet_filename):
                 "num_blocks": len(rows),
                 "num_pixels": len(rows) * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
                 "bands": [
-                    {"type": None, "name": bname, "stats": stats.__dict__}
-                    for bname, stats in zip(band_names, band_stats)
+                    {"type": btype, "name": bname, "stats": stats.__dict__}
+                    for btype, bname, stats in zip(
+                        raster_geometry.bandtypes, band_names, band_stats
+                    )
                 ],
                 **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
             }
