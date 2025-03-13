@@ -38,6 +38,18 @@ Test case "europe.tif"
 >>> [b["name"] for b in metadata1["bands"]]
 ['band_1', 'band_2', 'band_3', 'band_4']
 
+>>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
+{'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
+
+>>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
+{'count': 1048576, 'max': 255, 'mean': 152.49030876, 'min': 15, 'stddev': 73.9501475, 'sum': 159897678, 'sum_squares': 32764948700}
+
+>>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
+{'count': 1048576, 'max': 255, 'mean': 185.30587387, 'min': 15, 'stddev': 50.48477702, 'sum': 194307292, 'sum_squares': 39814764632}
+
+>>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
+{'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
+
 Test case "san-francisco.tif"
 
 >>> main("examples/san-francisco.tif", raquet_tempfile)
@@ -64,6 +76,9 @@ Test case "san-francisco.tif"
 >>> [b["name"] for b in metadata2["bands"]]
 ['band_1']
 
+>>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
+{'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
+
 """
 
 import argparse
@@ -74,6 +89,7 @@ import json
 import logging
 import math
 import multiprocessing
+import statistics
 import struct
 
 import mercantile
@@ -114,6 +130,19 @@ class RasterGeometry:
 
 
 @dataclasses.dataclass
+class RasterStats:
+    """Convenience wrapper for raster statistics"""
+
+    count: int
+    min: int | float
+    max: int | float
+    mean: int | float
+    stddev: int | float
+    sum: int | float
+    sum_squares: int | float
+
+
+@dataclasses.dataclass
 class BandType:
     """Convenience wrapper for details of band data type"""
 
@@ -147,22 +176,65 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
+def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
+    """Combine two RasterStats into one"""
+    if prev_stats is None:
+        return curr_stats
+
+    next_count = prev_stats.count + curr_stats.count
+    prev_weight = prev_stats.count / next_count
+    curr_weight = curr_stats.count / next_count
+
+    next_stats = RasterStats(
+        count=next_count,
+        min=min(prev_stats.min, curr_stats.min),
+        max=max(prev_stats.max, curr_stats.max),
+        mean=prev_stats.mean * prev_weight + curr_stats.mean * curr_weight,
+        stddev=prev_stats.stddev * prev_weight + curr_stats.stddev * curr_weight,
+        sum=prev_stats.sum + curr_stats.sum,
+        sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
+    )
+
+    logging.info("%s + %s = %s", prev_stats, curr_stats, next_stats)
+    return next_stats
+
+
+def read_statistics(
+    values: list[int | float], nodata: int | float | None
+) -> RasterStats:
+    """Calculate statistics for list of raw band values and optional nodata value"""
+    if nodata is not None:
+        values = [val for val in values if val != nodata]
+
+    return RasterStats(
+        count=len(values),
+        min=min(values),
+        max=max(values),
+        mean=statistics.mean(values),
+        stddev=statistics.stdev(values),
+        sum=sum(val for val in values),
+        sum_squares=sum(val**2 for val in values),
+    )
+
+
 def read_rasterband(
     band: "osgeo.gdal.Band",  # noqa: F821 (Band type safely imported in read_geotiff)
     bbox: tuple[int, int, int, int],
     xpads: tuple[int, int],
     ypads: tuple[int, int],
     band_type: BandType,
-) -> bytes:
+) -> tuple[bytes, RasterStats]:
     """Return uncompressed raster bytes padded to full tile size.
 
     Acts like numpy.pad() without requiring numpy dependency
     """
     data1 = band.ReadRaster(*bbox)
+    pixel_values = struct.unpack(band_type.fmt * bbox[2] * bbox[3], data1)
+    stats = read_statistics(pixel_values, band.GetNoDataValue())
 
     # Return early if no padding to be done
     if (xpads, ypads) == ((0, 0), (0, 0)):
-        return data1
+        return data1, stats
 
     # Prepare nodata cell value in expected format
     if (_nodata := band.GetNoDataValue()) is not None:
@@ -187,7 +259,7 @@ def read_rasterband(
         data3 = [emptyrow] * ypads[0] + data2 + [emptyrow] * ypads[1]
 
     # Concatenate raw bytes and return
-    return b"".join(data3)
+    return b"".join(data3), stats
 
 
 def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
@@ -285,7 +357,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
                 # Respond with an empty block if requested area is too far east or north
                 if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
-                    pipe_out.send((None,))
+                    pipe_out.send((None, None))
                     continue
 
                 # Adjust raster area to within valid values
@@ -303,7 +375,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
                 # Respond with an empty block if requested area is zero width or height
                 if txsize == 0 or tysize == 0:
-                    pipe_out.send((None,))
+                    pipe_out.send((None, None))
                     continue
 
                 logging.info(
@@ -326,13 +398,13 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 bbox = (txoff, tyoff, txsize, tysize)
                 xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
                 band_type = gdaltype_bandtypes[band.DataType]
-                data = read_rasterband(band, bbox, xpads, ypads, band_type)
+                data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
                 assert len(data) == expected_count * band_type.size
 
-                pipe_out.send((gzip.compress(data),))
+                pipe_out.send((gzip.compress(data), stats))
             except EOFError:
                 break
     finally:
@@ -424,8 +496,9 @@ def main(geotiff_filename, raquet_filename):
             ]
         )
 
-        # Initialize empty lists to collect rows
+        # Initialize empty lists to collect rows and stats
         rows, row_group_size = [], 1000
+        band_stats = [None] * raster_geometry.bands
 
         # Initialize the parquet writer
         writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
@@ -442,14 +515,15 @@ def main(geotiff_filename, raquet_filename):
                 mercantile.bounds(tile),
             )
 
-            block_data = []
+            block_data, block_stats = [], []
 
             for band_num in range(1, 1 + raster_geometry.bands):
                 pipe_send.send((band_num, tile))
-                (block_datum,) = pipe_recv.recv()
+                block_datum, block_stat = pipe_recv.recv()
 
                 # Append data to list for this band
                 block_data.append(block_datum)
+                block_stats.append(block_stat)
 
             if all(block_datum is None for block_datum in block_data):
                 continue
@@ -474,6 +548,9 @@ def main(geotiff_filename, raquet_filename):
                 )
                 rows = []
 
+            # Accumulate band statistics
+            band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
+
             # Accumulate real bounds based on included tiles
             xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
             xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
@@ -490,7 +567,10 @@ def main(geotiff_filename, raquet_filename):
                 "nodata": raster_geometry.nodata,
                 "num_blocks": len(rows),
                 "num_pixels": len(rows) * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
-                "bands": [{"type": None, "name": bname} for bname in band_names],
+                "bands": [
+                    {"type": None, "name": bname, "stats": stats.__dict__}
+                    for bname, stats in zip(band_names, band_stats)
+                ],
                 **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
             }
         )
