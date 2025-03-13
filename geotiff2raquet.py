@@ -501,7 +501,7 @@ def main(geotiff_filename, raquet_filename):
         )
 
         # Initialize empty lists to collect rows and stats
-        rows, row_group_size = [], 1000
+        rows, num_blocks, row_group_size = [], 0, 1000
         band_stats = [None for _ in raster_geometry.bandtypes]
 
         # Initialize the parquet writer
@@ -541,60 +541,55 @@ def main(geotiff_filename, raquet_filename):
                 }
             )
 
-            # Write row group when we hit the size limit
-            if len(rows) >= row_group_size:
-                writer.write_table(
-                    pyarrow.Table.from_pydict(
-                        {k: [row[k] for row in rows] for k in schema.names},
-                        schema=schema,
-                    ),
-                    row_group_size=row_group_size,
-                )
-                rows = []
-
-            # Accumulate band statistics
+            # Accumulate band statistics and real bounds based on included tiles
             band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
-
-            # Accumulate real bounds based on included tiles
             xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
             xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
 
-        # Append metadata row
-        # See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
-        metadata_json = json.dumps(
-            {
-                "version": "0.1.0",
-                "compression": "gzip",
-                "block_resolution": raster_geometry.zoom,
-                "minresolution": raster_geometry.zoom,
-                "maxresolution": raster_geometry.zoom,
-                "nodata": raster_geometry.nodata,
-                "num_blocks": len(rows),
-                "num_pixels": len(rows) * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
-                "bands": [
-                    {"type": btype, "name": bname, "stats": stats.__dict__}
-                    for btype, bname, stats in zip(
-                        raster_geometry.bandtypes, band_names, band_stats
-                    )
-                ],
-                **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
-            }
-        )
-        rows.append(
-            {
-                "block": 0,
-                "metadata": metadata_json,
-                **{bname: None for bname in band_names},
-            }
-        )
+            # Write a row group when we hit the size limit
+            if len(rows) >= row_group_size:
+                rows_dict = {k: [row[k] for row in rows] for k in schema.names}
+                rows, num_blocks = [], num_blocks + len(rows)
+                writer.write_table(
+                    pyarrow.Table.from_pydict(rows_dict, schema=schema),
+                    row_group_size=row_group_size,
+                )
 
-        # Write all remaining rows
+        # Write remaining rows
+        rows_dict = {k: [row[k] for row in rows] for k in schema.names}
+        rows, num_blocks = [], num_blocks + len(rows)
         writer.write_table(
-            pyarrow.Table.from_pydict(
-                {k: [row[k] for row in rows] for k in schema.names}, schema=schema
-            ),
+            pyarrow.Table.from_pydict(rows_dict, schema=schema),
             row_group_size=row_group_size,
         )
+
+        # Define RaQuet metadata
+        # See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
+        metadata_json = {
+            "version": "0.1.0",
+            "compression": "gzip",
+            "block_resolution": raster_geometry.zoom,
+            "minresolution": raster_geometry.zoom,
+            "maxresolution": raster_geometry.zoom,
+            "nodata": raster_geometry.nodata,
+            "num_blocks": num_blocks,
+            "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
+            "bands": [
+                {"type": btype, "name": bname, "stats": stats.__dict__}
+                for btype, bname, stats in zip(
+                    raster_geometry.bandtypes, band_names, band_stats
+                )
+            ],
+            **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
+        }
+
+        # Finish writing with metadata row
+        rows_dict = {
+            "block": [0],
+            "metadata": [json.dumps(metadata_json)],
+            **{bname: [None] for bname in band_names},
+        }
+        writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
         writer.close()
 
     finally:
