@@ -23,11 +23,17 @@ Test case "europe.tif"
 ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
 
 >>> metadata1 = read_metadata(table1)
->>> [metadata1[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
-['gzip', 1024, 1024, 5, 5]
+>>> [metadata1[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+['gzip', 1024, 1024, 16, 1048576, None]
+
+>>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+[5, 13, 5, 5]
 
 >>> [round(b, 8) for b in metadata1["bounds"]]
 [0.0, 40.97989807, 45.0, 66.51326044]
+
+>>> [round(b, 8) for b in metadata1["center"]]
+[22.5, 53.74657926, 5]
 
 >>> [b["name"] for b in metadata1["bands"]]
 ['band_1', 'band_2', 'band_3', 'band_4']
@@ -43,11 +49,17 @@ Test case "san-francisco.tif"
 ['block', 'metadata', 'band_1']
 
 >>> metadata2 = read_metadata(table2)
->>> [metadata2[k] for k in ["compression", "width", "height", "minresolution", "maxresolution"]]
-['gzip', 512, 512, 11, 11]
+>>> [metadata2[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+['gzip', 512, 512, 4, 262144, -32767.0]
+
+>>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+[11, 19, 11, 11]
 
 >>> [round(b, 8) for b in metadata2["bounds"]]
 [-122.6953125, 37.57941251, -122.34375, 37.85750716]
+
+>>> [round(b, 8) for b in metadata2["center"]]
+[-122.51953125, 37.71845983, 11]
 
 >>> [b["name"] for b in metadata2["bands"]]
 ['band_1']
@@ -85,6 +97,7 @@ class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
     bands: int
+    nodata: int | float | None
     width: int
     height: int
     zoom: int
@@ -237,6 +250,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
         raster_geometry = RasterGeometry(
             ds.RasterCount,
+            ds.GetRasterBand(1).GetNoDataValue(),
             ds.RasterXSize,
             ds.RasterYSize,
             zoom,
@@ -375,14 +389,16 @@ def get_raquet_dimensions(
     raster_height = (1 + lower_right.y - upper_left.y) * block_height
 
     # Lat/lon corners
-    northwest, southeast = mercantile.bounds(upper_left), mercantile.bounds(lower_right)
+    nw, se = mercantile.bounds(upper_left), mercantile.bounds(lower_right)
 
     return {
-        "bounds": [northwest.west, southeast.south, southeast.east, northwest.north],
+        "bounds": [nw.west, se.south, se.east, nw.north],
+        "center": [nw.west / 2 + se.east / 2, se.south / 2 + nw.north / 2, zoom],
         "width": raster_width,
         "height": raster_height,
         "block_width": block_width,
         "block_height": block_height,
+        "pixel_resolution": zoom + BLOCK_ZOOM,
     }
 
 
@@ -463,11 +479,17 @@ def main(geotiff_filename, raquet_filename):
             xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
 
         # Append metadata row
+        # See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
         metadata_json = json.dumps(
             {
+                "version": "0.1.0",
                 "compression": "gzip",
+                "block_resolution": raster_geometry.zoom,
                 "minresolution": raster_geometry.zoom,
                 "maxresolution": raster_geometry.zoom,
+                "nodata": raster_geometry.nodata,
+                "num_blocks": len(rows),
+                "num_pixels": len(rows) * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
                 "bands": [{"type": None, "name": bname} for bname in band_names],
                 **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
             }
