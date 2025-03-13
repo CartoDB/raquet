@@ -408,10 +408,11 @@ def main(geotiff_filename, raquet_filename):
             ]
         )
 
-        # Initialize table with no rows
-        table = pyarrow.Table.from_pydict(
-            {fname: [] for fname in schema.names}, schema=schema
-        )
+        # Initialize empty lists to collect rows
+        rows, row_group_size = [], 1000
+
+        # Initialize the parquet writer
+        writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
 
@@ -437,22 +438,31 @@ def main(geotiff_filename, raquet_filename):
             if all(block_datum is None for block_datum in block_data):
                 continue
 
-            # Create new row in table after processing all bands
-            tile_row = pyarrow.Table.from_pydict(
+            # Append new row
+            rows.append(
                 {
-                    "block": [quadbin.tile_to_cell((tile.x, tile.y, tile.z))],
-                    "metadata": [None],
-                    **{bname: [block_data[i]] for i, bname in enumerate(band_names)},
-                },
-                schema=schema,
+                    "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
+                    "metadata": None,
+                    **{bname: block_data[i] for i, bname in enumerate(band_names)},
+                }
             )
-            table = pyarrow.concat_tables([table, tile_row])
+
+            # Write row group when we hit the size limit
+            if len(rows) >= row_group_size:
+                writer.write_table(
+                    pyarrow.Table.from_pydict(
+                        {k: [row[k] for row in rows] for k in schema.names},
+                        schema=schema,
+                    ),
+                    row_group_size=row_group_size,
+                )
+                rows = []
 
             # Accumulate real bounds based on included tiles
             xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
             xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
 
-        # Prepend metadata row to the complete table
+        # Append metadata row
         metadata_json = json.dumps(
             {
                 "compression": "gzip",
@@ -462,18 +472,22 @@ def main(geotiff_filename, raquet_filename):
                 **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
             }
         )
-        metadata_row = pyarrow.Table.from_pydict(
+        rows.append(
             {
-                "block": [0],
-                "metadata": [metadata_json],
-                **{bname: [None] for bname in band_names},
-            },
-            schema=schema,
+                "block": 0,
+                "metadata": metadata_json,
+                **{bname: None for bname in band_names},
+            }
         )
-        table = pyarrow.concat_tables([metadata_row, table])
 
-        # Write table to parquet file
-        pyarrow.parquet.write_table(table, raquet_filename)
+        # Write all remaining rows
+        writer.write_table(
+            pyarrow.Table.from_pydict(
+                {k: [row[k] for row in rows] for k in schema.names}, schema=schema
+            ),
+            row_group_size=row_group_size,
+        )
+        writer.close()
 
     finally:
         # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
