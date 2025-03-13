@@ -158,7 +158,6 @@ def read_rasterband(
 
     Acts like numpy.pad() without requiring numpy dependency
     """
-    print(band.ReadAsArray(*bbox).shape)
     data1 = band.ReadRaster(*bbox)
 
     # Return early if no padding to be done
