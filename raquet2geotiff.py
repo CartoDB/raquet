@@ -9,7 +9,21 @@ Required packages:
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
+
+>>> import tempfile; _, geotiff_tempfile = tempfile.mkstemp(suffix=".tif")
+>>> main("examples/europe.parquet", geotiff_tempfile)
+>>> geotiff_info = read_geotiff_info(geotiff_tempfile)
+>>> geotiff_info["size"]
+[1024, 1024]
+
+>>> [round(n, 8) for n in geotiff_info["geoTransform"]]
+[0.0, 4891.96981025, 0.0, 10018754.17139462, 0.0, -4891.96981025]
+
+>>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
+[([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
+
 """
+
 import argparse
 import gzip
 import json
@@ -22,7 +36,7 @@ import pyarrow.parquet
 import quadbin
 
 
-def geotiff_process(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
+def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that writes a GeoTIFF through pipes.
 
     Args:
@@ -35,88 +49,102 @@ def geotiff_process(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
     import osgeo.gdal
     import osgeo.osr
 
-    # Create projection
-    srs = osgeo.osr.SpatialReference()
-    srs.ImportFromEPSG(3857)
+    osgeo.gdal.UseExceptions()
 
-    # Create transformer from geographic (lat/lon) to web mercator
-    source_srs = osgeo.osr.SpatialReference()
-    source_srs.ImportFromEPSG(4326)  # WGS84
-    source_srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-    transform = osgeo.osr.CoordinateTransformation(source_srs, srs)
+    try:
+        # Create projection
+        srs = osgeo.osr.SpatialReference()
+        srs.ImportFromEPSG(3857)
 
-    # Transform coordinates
-    minlon, minlat, maxlon, maxlat = metadata["bounds"]
-    xmin, ymin, _ = transform.TransformPoint(minlon, minlat)
-    xmax, ymax, _ = transform.TransformPoint(maxlon, maxlat)
+        # Create transformer from geographic (lat/lon) to web mercator
+        source_srs = osgeo.osr.SpatialReference()
+        source_srs.ImportFromEPSG(4326)  # WGS84
+        source_srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+        transform = osgeo.osr.CoordinateTransformation(source_srs, srs)
 
-    # GDAL data types mapping
-    gdal_types = {
-        "uint8": osgeo.gdal.GDT_Byte,
-        # "int8": osgeo.gdal.GDT_Int8, # supported by GDAL >= 3.7
-        "uint16": osgeo.gdal.GDT_UInt16,
-        "int16": osgeo.gdal.GDT_Int16,
-        "uint32": osgeo.gdal.GDT_UInt32,
-        "int32": osgeo.gdal.GDT_Int32,
-        "uint64": osgeo.gdal.GDT_UInt64,
-        "int64": osgeo.gdal.GDT_Int64,
-        "float32": osgeo.gdal.GDT_Float32,
-        "float64": osgeo.gdal.GDT_Float64,
-    }
+        # Transform coordinates
+        minlon, minlat, maxlon, maxlat = metadata["bounds"]
+        xmin, ymin, _ = transform.TransformPoint(minlon, minlat)
+        xmax, ymax, _ = transform.TransformPoint(maxlon, maxlat)
 
-    # Create empty GeoTIFF with compression
-    driver = osgeo.gdal.GetDriverByName("GTiff")
-    output_width, output_height = metadata["width"], metadata["height"]
-    raster = driver.Create(
-        geotiff_filename,
-        output_width,
-        output_height,
-        1,
-        gdal_types[metadata["bands"][0]["type"]],
-        options=[
-            "COMPRESS=DEFLATE",
-            "TILED=YES",
-            f"BLOCKXSIZE={metadata['block_width']}",
-            f"BLOCKYSIZE={metadata['block_height']}",
-        ],
-    )
+        # GDAL data types mapping
+        gdal_types = {
+            "uint8": osgeo.gdal.GDT_Byte,
+            # "int8": osgeo.gdal.GDT_Int8, # supported by GDAL >= 3.7
+            "uint16": osgeo.gdal.GDT_UInt16,
+            "int16": osgeo.gdal.GDT_Int16,
+            "uint32": osgeo.gdal.GDT_UInt32,
+            "int32": osgeo.gdal.GDT_Int32,
+            "uint64": osgeo.gdal.GDT_UInt64,
+            "int64": osgeo.gdal.GDT_Int64,
+            "float32": osgeo.gdal.GDT_Float32,
+            "float64": osgeo.gdal.GDT_Float64,
+        }
 
-    # Set projection
-    raster.SetProjection(srs.ExportToWkt())
+        assert len({b["type"] for b in metadata["bands"]}) == 1, (
+            "Expect just one band type"
+        )
 
-    # Set geotransform
-    xres = (xmax - xmin) / output_width
-    yres = (ymax - ymin) / output_height
-    geotransform = (xmin, xres, 0, ymax, 0, -yres)
-    raster.SetGeoTransform(geotransform)
+        # Create empty GeoTIFF with compression
+        driver = osgeo.gdal.GetDriverByName("GTiff")
+        output_width, output_height = metadata["width"], metadata["height"]
+        raster = driver.Create(
+            geotiff_filename,
+            output_width,
+            output_height,
+            len(metadata["bands"]),
+            gdal_types[metadata["bands"][0]["type"]],
+            options=[
+                "COMPRESS=DEFLATE",
+                "TILED=YES",
+                f"BLOCKXSIZE={metadata['block_width']}",
+                f"BLOCKYSIZE={metadata['block_height']}",
+            ],
+        )
 
-    while True:
-        try:
-            tile, block_data = pipe_in.recv()
+        # Set projection
+        raster.SetProjection(srs.ExportToWkt())
 
-            # Get mercator corner coordinates for this tile
-            ulx, _, _, uly = mercantile.xy_bounds(tile)
+        # Set geotransform
+        xres = (xmax - xmin) / output_width
+        yres = (ymax - ymin) / output_height
+        geotransform = (xmin, xres, 0, ymax, 0, -yres)
+        raster.SetGeoTransform(geotransform)
 
-            # Convert mercator coordinates to pixel coordinates
-            xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
-            yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+        while True:
+            try:
+                received = pipe_in.recv()
+                if received is None:
+                    # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
+                    raise EOFError
 
-            # Write to raster
-            band = raster.GetRasterBand(1)
-            if metadata.get("nodata") is not None:
-                band.SetNoDataValue(metadata["nodata"])
-            band.WriteRaster(
-                xoff,
-                yoff,
-                metadata["block_width"],
-                metadata["block_height"],
-                block_data,
-            )
-        except EOFError:
-            break
+                tile, *block_data = received
 
-    pipe_in.close()
-    pipe_out.close()
+                # Get mercator corner coordinates for this tile
+                ulx, _, _, uly = mercantile.xy_bounds(tile)
+
+                # Convert mercator coordinates to pixel coordinates
+                xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
+                yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+
+                # Write to raster
+                for i, block_datum in enumerate(block_data):
+                    band = raster.GetRasterBand(i + 1)
+                    if metadata.get("nodata") is not None:
+                        band.SetNoDataValue(metadata["nodata"])
+                    band.WriteRaster(
+                        xoff,
+                        yoff,
+                        metadata["block_width"],
+                        metadata["block_height"],
+                        block_datum,
+                    )
+            except EOFError:
+                break
+
+    finally:
+        pipe_in.close()
+        pipe_out.close()
 
 
 def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
@@ -131,8 +159,7 @@ def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
 
     # Start worker process
     process = multiprocessing.Process(
-        target=geotiff_process,
-        args=(metadata, geotiff_filename, child_recv, child_send),
+        target=write_geotiff, args=(metadata, geotiff_filename, child_recv, child_send)
     )
     process.start()
 
@@ -141,6 +168,60 @@ def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
     child_recv.close()
 
     return parent_send, parent_recv
+
+
+def read_geotiff(geotiff_filename: str, pipe_out):
+    """Worker process that reads a GeoTIFF through pipes.
+
+    Args:
+        geotiff_filename: Name of GeoTIFF file to read
+        pipe_out: Connection to send data to parent
+    """
+    # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
+    import osgeo.gdal
+
+    osgeo.gdal.UseExceptions()
+
+    try:
+        geotiff_info = osgeo.gdal.Info(geotiff_filename, format="json")
+    except:  # noqa: E722 (fine with this bare except)
+        geotiff_info = None
+
+    pipe_out.send(geotiff_info)
+
+
+def read_geotiff_info(geotiff_filename: str) -> dict:
+    """Retrieve osgeo.gdal.Info() for a GeoTIFF file
+
+    Returns:
+        Dictionary response from https://gdal.org/en/stable/api/python/utilities.html#osgeo.gdal.Info
+    """
+    # Create bidirectional pipes
+    parent_recv, child_send = multiprocessing.Pipe(duplex=False)
+
+    # Start worker process
+    process = multiprocessing.Process(
+        target=read_geotiff, args=(geotiff_filename, child_send)
+    )
+    process.start()
+
+    try:
+        # Close child end in parent process
+        gdal_info = parent_recv.recv()
+        assert isinstance(gdal_info, dict)
+    finally:
+        child_send.close()
+        parent_recv.close()
+
+    return gdal_info
+
+
+def read_metadata(table) -> dict:
+    """Get first row where block=0 to extract metadata"""
+    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
+    if len(block_zero) == 0:
+        raise Exception("No block=0 in table")
+    return json.loads(block_zero.column("metadata")[0].as_py())
 
 
 def main(raquet_filename, geotiff_filename):
@@ -154,32 +235,34 @@ def main(raquet_filename, geotiff_filename):
 
     # Sort by block column
     table = table.sort_by("block")
-    metadata = None
-
-    # Get first row where block=0 to extract metadata
-    block_zero = table.filter(pyarrow.compute.equal(table.column("block"), 0))
-    if len(block_zero) > 0:
-        metadata = json.loads(block_zero.column("metadata")[0].as_py())
+    metadata = read_metadata(table)
 
     pipe_send, pipe_recv = open_geotiff_in_process(metadata, geotiff_filename)
 
-    # Process table one row at a time
-    for i in range(len(table)):
-        if i > 0 and i % 1000 == 0:
-            logging.info(f"Processed {i} of {len(table)} blocks...")
-        block = table.column("block")[i].as_py()
-        if block == 0:
-            continue
-        x, y, z = quadbin.cell_to_tile(block)
-        if z != metadata["maxresolution"]:
-            continue
+    try:
+        # Process table one row at a time
+        for i in range(len(table)):
+            if i > 0 and i % 1000 == 0:
+                logging.info(f"Processed {i} of {len(table)} blocks...")
+            block = table.column("block")[i].as_py()
+            if block == 0:
+                continue
+            x, y, z = quadbin.cell_to_tile(block)
+            if z != metadata["maxresolution"]:
+                continue
 
-        # Get band data for this row and decompress if needed
-        block_data = table.column("band_1")[i].as_py()
-        if metadata.get("compression") == "gzip":
-            block_data = gzip.decompress(block_data)
+            # Get band data for this row and decompress if needed
+            block_data = [table.column(b["name"])[i].as_py() for b in metadata["bands"]]
+            if metadata.get("compression") == "gzip":
+                block_data = [gzip.decompress(d) for d in block_data]
 
-        pipe_send.send((mercantile.Tile(x, y, z), block_data))
+            pipe_send.send((mercantile.Tile(x, y, z), *block_data))
+    finally:
+        # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
+        pipe_send.send(None)
+
+        pipe_send.close()
+        pipe_recv.close()
 
 
 parser = argparse.ArgumentParser(description="Convert RaQuet file to GeoTIFF output")
