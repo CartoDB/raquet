@@ -38,13 +38,13 @@ Test case "europe.tif"
     {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
+    {'count': 1048576, 'max': 255, 'mean': 104.71418476, 'min': 0, 'stddev': 63.2415578, 'sum': 109800781, 'sum_squares': 18272895699}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 152.49030876, 'min': 15, 'stddev': 73.9501475, 'sum': 159897678, 'sum_squares': 32764948700}
+    {'count': 1048576, 'max': 255, 'mean': 91.14939976, 'min': 0, 'stddev': 58.75684674, 'sum': 95577073, 'sum_squares': 16417343519}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 185.30587387, 'min': 15, 'stddev': 50.48477702, 'sum': 194307292, 'sum_squares': 39814764632}
+    {'count': 1048576, 'max': 255, 'mean': 123.96901512, 'min': 0, 'stddev': 68.07750967, 'sum': 129990934, 'sum_squares': 23415765398}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
     {'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
@@ -76,7 +76,7 @@ Test case "n37_w123_1arc_v2-cog.tif"
     {'band_1': 'int16'}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-    {'count': 96292, 'max': 376, 'mean': 38.37027998, 'min': -8, 'stddev': 54.0568915, 'sum': 3694751, 'sum_squares': 452987447}
+    {'count': 96292, 'max': 373, 'mean': 38.37413285, 'min': -6, 'stddev': 53.93091144, 'sum': 3695122, 'sum_squares': 451479336}
 
 Test case "Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif"
 
@@ -96,7 +96,7 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif"
     [13, 21, 13, 13]
 
     >>> {k: round(v, 8) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
-    {'count': 1216387, 'max': 95, 'mean': 75.84779926, 'min': 11, 'stddev': 14.05341831, 'sum': 92260277, 'sum_squares': 7326781745}
+    {'count': 1216387, 'max': 95, 'mean': 75.8494443, 'min': 11, 'stddev': 13.76276756, 'sum': 92262278, 'sum_squares': 7317519948}
 
 Test case "geotiff-discreteloss_2023-cog.tif"
 
