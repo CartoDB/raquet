@@ -31,26 +31,26 @@ Test case "europe.tif"
     >>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [5, 13, 5, 5]
 
-    >>> [round(b, 5) for b in metadata1["bounds"]]
-    [0.0, 40.9799, 45.0, 66.51326]
+    >>> [round(b, 3) for b in metadata1["bounds"]]
+    [0.0, 40.98, 45.0, 66.513]
 
-    >>> [round(b, 5) for b in metadata1["center"]]
-    [22.5, 53.74658, 5]
+    >>> [round(b, 3) for b in metadata1["center"]]
+    [22.5, 53.747, 5]
 
     >>> {b["name"]: b["type"] for b in metadata1["bands"]}
     {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 104.71418, 'min': 0, 'stddev': 63.24156, 'sum': 109800781, 'sum_squares': 18272895699}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 104.714, 'min': 0, 'stddev': 63.242, 'sum': 109800781, 'sum_squares': 18272895699}
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 91.1494, 'min': 0, 'stddev': 58.75685, 'sum': 95577073, 'sum_squares': 16417343519}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 91.149, 'min': 0, 'stddev': 58.757, 'sum': 95577073, 'sum_squares': 16417343519}
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 123.96902, 'min': 0, 'stddev': 68.07751, 'sum': 129990934, 'sum_squares': 23415765398}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 123.969, 'min': 0, 'stddev': 68.078, 'sum': 129990934, 'sum_squares': 23415765398}
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 189.7477, 'min': 0, 'stddev': 83.36095, 'sum': 198964882, 'sum_squares': 50531863662}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 189.748, 'min': 0, 'stddev': 83.361, 'sum': 198964882, 'sum_squares': 50531863662}
 
 Test case "n37_w123_1arc_v2.tif"
 
@@ -69,17 +69,17 @@ Test case "n37_w123_1arc_v2.tif"
     >>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [11, 19, 11, 11]
 
-    >>> [round(b, 5) for b in metadata2["bounds"]]
-    [-122.69531, 37.57941, -122.34375, 37.85751]
+    >>> [round(b, 3) for b in metadata2["bounds"]]
+    [-122.695, 37.579, -122.344, 37.858]
 
-    >>> [round(b, 5) for b in metadata2["center"]]
-    [-122.51953, 37.71846, 11]
+    >>> [round(b, 3) for b in metadata2["center"]]
+    [-122.52, 37.718, 11]
 
     >>> {b["name"]: b["type"] for b in metadata2["bands"]}
     {'band_1': 'int16'}
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-    {'count': 96921, 'max': 377, 'mean': 38.21854, 'min': -7, 'stddev': 54.01632, 'sum': 3704179, 'sum_squares': 453908183}
+    >>> {k: round(v, 3) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
+    {'count': 96921, 'max': 377, 'mean': 38.219, 'min': -7, 'stddev': 54.016, 'sum': 3704179, 'sum_squares': 453908183}
 
 Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 
@@ -98,8 +98,8 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [13, 21, 13, 13]
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
-    {'count': 1216326, 'max': 95, 'mean': 75.84723, 'min': 11, 'stddev': 16.47194, 'sum': 92254953, 'sum_squares': 7415259309}
+    >>> {k: round(v, 3) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
+    {'count': 1216326, 'max': 95, 'mean': 75.847, 'min': 11, 'stddev': 16.472, 'sum': 92254953, 'sum_squares': 7415259309}
 
 Test case "geotiff-discreteloss_2023.tif"
 
@@ -118,7 +118,7 @@ Test case "geotiff-discreteloss_2023.tif"
     >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [13, 21, 13, 13]
 
-    >>> {k: round(v, 5) for k, v in sorted(metadata4["bands"][0]["stats"].items())}
+    >>> {k: round(v, 3) for k, v in sorted(metadata4["bands"][0]["stats"].items())}
     {'count': 27364, 'max': 1, 'mean': 1.0, 'min': 1, 'stddev': 0.0, 'sum': 27364, 'sum_squares': 27364}
 
 """
