@@ -10,74 +10,113 @@ Required packages:
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
->>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
-
 Test case "europe.tif"
 
->>> main("examples/europe.tif", raquet_tempfile)
->>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
->>> len(table1)
-17
+    >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+    >>> main("examples/europe.tif", raquet_tempfile)
+    >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table1)
+    17
 
->>> table1.column_names
-['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
+    >>> table1.column_names
+    ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
 
->>> metadata1 = read_metadata(table1)
->>> [metadata1[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
-['gzip', 1024, 1024, 16, 1048576, None]
+    >>> metadata1 = read_metadata(table1)
+    >>> [metadata1[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1024, 1024, 16, 1048576, None]
 
->>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-[5, 13, 5, 5]
+    >>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [5, 13, 5, 5]
 
->>> [round(b, 8) for b in metadata1["bounds"]]
-[0.0, 40.97989807, 45.0, 66.51326044]
+    >>> [round(b, 8) for b in metadata1["bounds"]]
+    [0.0, 40.97989807, 45.0, 66.51326044]
 
->>> [round(b, 8) for b in metadata1["center"]]
-[22.5, 53.74657926, 5]
+    >>> [round(b, 8) for b in metadata1["center"]]
+    [22.5, 53.74657926, 5]
 
->>> {b["name"]: b["type"] for b in metadata1["bands"]}
-{'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
+    >>> {b["name"]: b["type"] for b in metadata1["bands"]}
+    {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
+    >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 152.49030876, 'min': 15, 'stddev': 73.9501475, 'sum': 159897678, 'sum_squares': 32764948700}
+    >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 152.49030876, 'min': 15, 'stddev': 73.9501475, 'sum': 159897678, 'sum_squares': 32764948700}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 185.30587387, 'min': 15, 'stddev': 50.48477702, 'sum': 194307292, 'sum_squares': 39814764632}
+    >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 185.30587387, 'min': 15, 'stddev': 50.48477702, 'sum': 194307292, 'sum_squares': 39814764632}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
+    >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
+    {'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
 
-Test case "san-francisco.tif"
+Test case "n37_w123_1arc_v2-cog.tif"
 
->>> main("examples/san-francisco.tif", raquet_tempfile)
->>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
->>> len(table2)
-5
+    >>> main("tests/n37_w123_1arc_v2-cog.tif", raquet_tempfile)
+    >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table2)
+    5
 
->>> table2.column_names
-['block', 'metadata', 'band_1']
+    >>> table2.column_names
+    ['block', 'metadata', 'band_1']
 
->>> metadata2 = read_metadata(table2)
->>> [metadata2[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
-['gzip', 512, 512, 4, 262144, -32767.0]
+    >>> metadata2 = read_metadata(table2)
+    >>> [metadata2[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 512, 512, 4, 262144, -32767.0]
 
->>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-[11, 19, 11, 11]
+    >>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [11, 19, 11, 11]
 
->>> [round(b, 8) for b in metadata2["bounds"]]
-[-122.6953125, 37.57941251, -122.34375, 37.85750716]
+    >>> [round(b, 8) for b in metadata2["bounds"]]
+    [-122.6953125, 37.57941251, -122.34375, 37.85750716]
 
->>> [round(b, 8) for b in metadata2["center"]]
-[-122.51953125, 37.71845983, 11]
+    >>> [round(b, 8) for b in metadata2["center"]]
+    [-122.51953125, 37.71845983, 11]
 
->>> {b["name"]: b["type"] for b in metadata2["bands"]}
-{'band_1': 'int16'}
+    >>> {b["name"]: b["type"] for b in metadata2["bands"]}
+    {'band_1': 'int16'}
 
->>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-{'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
+    >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
+    {'count': 96292, 'max': 376, 'mean': 38.37027998, 'min': -8, 'stddev': 54.0568915, 'sum': 3694751, 'sum_squares': 452987447}
+
+Test case "Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif"
+
+    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif", raquet_tempfile)
+    >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table3)
+    43
+
+    >>> table3.column_names
+    ['block', 'metadata', 'band_1']
+
+    >>> metadata3 = read_metadata(table3)
+    >>> [metadata3[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1536, 1792, 42, 2752512, 250.0]
+
+    >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [13, 21, 13, 13]
+
+    >>> {k: round(v, 8) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
+    {'count': 1216387, 'max': 95, 'mean': 75.84779926, 'min': 11, 'stddev': 14.05341831, 'sum': 92260277, 'sum_squares': 7326781745}
+
+Test case "geotiff-discreteloss_2023-cog.tif"
+
+    >>> main("tests/geotiff-discreteloss_2023-cog.tif", raquet_tempfile)
+    >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table4)
+    26
+
+    >>> table4.column_names
+    ['block', 'metadata', 'band_1']
+
+    >>> metadata4 = read_metadata(table4)
+    >>> [metadata4[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1280, 1280, 25, 1638400, 0.0]
+
+    >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [13, 21, 13, 13]
+
+    >>> {k: round(v, 8) for k, v in sorted(metadata4["bands"][0]["stats"].items())}
+    {'count': 27325, 'max': 1, 'mean': 1.0, 'min': 1, 'stddev': 0.0, 'sum': 27325, 'sum_squares': 27325}
 
 """
 
@@ -182,6 +221,9 @@ def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
     if prev_stats is None:
         return curr_stats
 
+    if curr_stats is None:
+        return prev_stats
+
     next_count = prev_stats.count + curr_stats.count
     prev_weight = prev_stats.count / next_count
     curr_weight = curr_stats.count / next_count
@@ -206,6 +248,9 @@ def read_statistics(
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
         values = [val for val in values if val != nodata]
+
+    if len(values) == 0:
+        return None
 
     return RasterStats(
         count=len(values),
