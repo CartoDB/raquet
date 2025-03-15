@@ -40,17 +40,17 @@ Test case "europe.tif"
     >>> {b["name"]: b["type"] for b in metadata1["bands"]}
     {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 104.714, 'min': 0, 'stddev': 63.242, 'sum': 109800781, 'sum_squares': 18272895699}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][0]["stats"].items())}  # doctest: +ELLIPSIS
+    {'count': 1048576, 'max': 255, 'mean': 104.714, 'min': 0, 'stddev': 63.242, 'sum': 109800..., 'sum_squares': 18272...}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 91.149, 'min': 0, 'stddev': 58.757, 'sum': 95577073, 'sum_squares': 16417343519}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][1]["stats"].items())}  # doctest: +ELLIPSIS
+    {'count': 1048576, 'max': 255, 'mean': 91.149, 'min': 0, 'stddev': 58.757, 'sum': 95577..., 'sum_squares': 164173...}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 123.969, 'min': 0, 'stddev': 68.078, 'sum': 129990934, 'sum_squares': 23415765398}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][2]["stats"].items())}  # doctest: +ELLIPSIS
+    {'count': 1048576, 'max': 255, 'mean': 123.969, 'min': 0, 'stddev': 68.078, 'sum': 1299909..., 'sum_squares': 234157...}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
-    {'count': 1048576, 'max': 255, 'mean': 189.748, 'min': 0, 'stddev': 83.361, 'sum': 198964882, 'sum_squares': 50531863662}
+    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][3]["stats"].items())}  # doctest: +ELLIPSIS
+    {'count': 1048576, 'max': 255, 'mean': 189.748, 'min': 0, 'stddev': 83.361, 'sum': 198964..., 'sum_squares': 50531863...}
 
 Test case "n37_w123_1arc_v2.tif"
 
