@@ -384,6 +384,8 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
         pipe_out.send(raster_geometry)
 
+        tile_ds, prev_tile = None, None
+
         while True:
             try:
                 received = pipe_in.recv()
@@ -403,6 +405,35 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 txsize = int(round((xmax - xmin) / raster_geometry.xres))
                 tysize = int(round((ymax - ymin) / -raster_geometry.yres))
                 expected_count = tysize * txsize
+
+                # Overwrite tile_ds if needed
+                if tile != prev_tile:
+                    prev_tile = tile
+
+                    # Initialize warped tile dataset and its bands
+                    tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
+                        "/vsimem/tile.tif",
+                        2**BLOCK_ZOOM,
+                        2**BLOCK_ZOOM,
+                        ds.RasterCount,
+                        ds.GetRasterBand(1).DataType,
+                    )
+                    tile_ds.SetProjection(web_mercator.ExportToWkt())
+
+                    for i in range(1, 1 + ds.RasterCount):
+                        if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
+                            tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
+
+                    px_width = (xmax - xmin) / tile_ds.RasterXSize
+                    px_height = (ymax - ymin) / tile_ds.RasterYSize
+                    tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
+                    osgeo.gdal.Warp(
+                        destNameOrDestDS=tile_ds,
+                        srcDSOrSrcDSTab=ds,
+                        options=osgeo.gdal.WarpOptions(
+                            resampleAlg=osgeo.gdal.GRA_CubicSpline,
+                        ),
+                    )
 
                 # Respond with an empty block if requested area is too far east or north
                 if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
