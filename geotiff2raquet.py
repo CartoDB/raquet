@@ -160,12 +160,6 @@ class RasterGeometry:
     minlon: float
     maxlat: float
     maxlon: float
-    xoff: float
-    xres: float
-    gt2: float
-    yoff: float
-    gt4: float
-    yres: float
 
 
 @dataclasses.dataclass
@@ -200,19 +194,26 @@ def generate_tiles(rg: RasterGeometry):
     Returns:
         Generator of tiles
     """
-    logging.info("xoff %s yoff %s zoom %s", rg.xoff, rg.yoff, rg.zoom)
-    earth_circumference = mercantile.CE
+    ul = mercantile.tile(rg.minlon, rg.maxlat, rg.zoom)
+    lr = mercantile.tile(rg.maxlon, rg.minlat, rg.zoom)
 
-    tileres = earth_circumference / 2**rg.zoom
-    ulx = int((rg.xoff + earth_circumference / 2) / tileres)
-    uly = int((earth_circumference / 2 - rg.yoff) / tileres)
-    logging.info("tileres %s ulx %s uly %s", tileres, ulx, uly)
+    # print("rg:", rg)
+    # print("ul:", )
+    # print("lr:", mercantile.tile(rg.maxlon, rg.minlat, rg.zoom))
+    #
+    # logging.info("xoff %s yoff %s zoom %s", rg.xoff, rg.yoff, rg.zoom)
+    # earth_circumference = mercantile.CE
+    #
+    # tileres = earth_circumference / 2**rg.zoom
+    # ulx = int((rg.xoff + earth_circumference / 2) / tileres)
+    # uly = int((earth_circumference / 2 - rg.yoff) / tileres)
+    # logging.info("tileres %s ulx %s uly %s", tileres, ulx, uly)
+    #
+    # lrx = int((rg.xoff + rg.width * rg.xres + earth_circumference / 2) / tileres)
+    # lry = int((earth_circumference / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
+    # logging.info("lrx %s lry %s", lrx, lry)
 
-    lrx = int((rg.xoff + rg.width * rg.xres + earth_circumference / 2) / tileres)
-    lry = int((earth_circumference / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
-    logging.info("lrx %s lry %s", lrx, lry)
-
-    for x, y in itertools.product(range(ulx, lrx + 1), range(uly, lry + 1)):
+    for x, y in itertools.product(range(ul.x, lr.x + 1), range(ul.y, lr.y + 1)):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
@@ -308,6 +309,37 @@ def read_rasterband(
     return b"".join(data3), stats
 
 
+def find_bounds(
+    ds: "osgeo.gdal.Dataset", transform: "osgeo.osr.CoordinateTransformation"
+) -> tuple[float, float, float, float]:
+    """Return outer bounds for raster in a given transformation"""
+    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
+    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff, yoff + ydim * yres)
+    x3, y3, _ = transform.TransformPoint(xoff + xdim * xres, yoff)
+    x4, y4, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+
+    x5, y5 = min(x1, x2, x3, x4), min(y1, y2, y3, y4)
+    x6, y6 = max(x1, x2, x3, x4), max(y1, y2, y3, y4)
+
+    return (x5, y5, x6, y6)
+
+
+def find_resolution(
+    ds: "osgeo.gdal.Dataset", transform: "osgeo.osr.CoordinateTransformation"
+) -> float:
+    """Return units per pixel for raster via a given transformation"""
+    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
+    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+
+    return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
+
+
 def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that accesses a GeoTIFF through pipes.
 
@@ -321,6 +353,13 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     import osgeo.osr
 
     osgeo.gdal.UseExceptions()
+
+    wgs84 = osgeo.osr.SpatialReference()
+    wgs84.ImportFromEPSG(4326)
+    wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+    web_mercator = osgeo.osr.SpatialReference()
+    web_mercator.ImportFromEPSG(3857)
 
     gdaltype_bandtypes: dict[int, BandType] = {
         osgeo.gdal.GDT_Byte: BandType("B", 1, int, "uint8"),
@@ -341,30 +380,13 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
-        sref = ds.GetSpatialRef()
-        xmin, xres, _, ymax, _, yres = ds.GetGeoTransform()
 
-        web_mercator = osgeo.osr.SpatialReference()
-        web_mercator.ImportFromEPSG(3857)
-        if sref.ExportToProj4() != web_mercator.ExportToProj4():
-            raise ValueError("Source SRS is not EPSG:3857")
+        tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
+        minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
 
-        if round(-yres, DECM_PRECISION) not in VALID_RESOLUTIONS:
-            raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
-        if round(xres, DECM_PRECISION) not in VALID_RESOLUTIONS:
-            raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
-
-        zoom = VALID_RESOLUTIONS.index(round(xres, DECM_PRECISION)) - BLOCK_ZOOM
-        xmax = xmin + ds.RasterXSize * xres
-        ymin = ymax + ds.RasterYSize * yres
-
-        wgs84 = osgeo.osr.SpatialReference()
-        wgs84.ImportFromEPSG(4326)  # WGS84
-        wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-        transform = osgeo.osr.CoordinateTransformation(web_mercator, wgs84)
-
-        minlon, minlat, _ = transform.TransformPoint(xmin, ymin)
-        maxlon, maxlat, _ = transform.TransformPoint(xmax, ymax)
+        tx3857 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), web_mercator)
+        resolution = find_resolution(ds, tx3857)
+        zoom = round(math.log(mercantile.CE / 256 / resolution) / math.log(2))
 
         raster_geometry = RasterGeometry(
             [
@@ -379,7 +401,6 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
             minlon,
             maxlat,
             maxlon,
-            *ds.GetGeoTransform(),
         )
 
         pipe_out.send(raster_geometry)
@@ -395,16 +416,6 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
                 # Expand message to an intended raster area to retrieve
                 band_num, tile = received
-
-                # Convert mercator coordinates to pixel coordinates
-                xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
-                txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
-                tyoff = int(
-                    round((raster_geometry.yoff - ymax) / -raster_geometry.yres)
-                )
-                txsize = int(round((xmax - xmin) / raster_geometry.xres))
-                tysize = int(round((ymax - ymin) / -raster_geometry.yres))
-                expected_count = tysize * txsize
 
                 # Overwrite tile_ds if needed
                 if tile != prev_tile:
@@ -424,9 +435,12 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                         if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
                             tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
 
+                    # Convert mercator coordinates to pixel coordinates
+                    xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
                     px_width = (xmax - xmin) / tile_ds.RasterXSize
                     px_height = (ymax - ymin) / tile_ds.RasterYSize
                     tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
+
                     osgeo.gdal.Warp(
                         destNameOrDestDS=tile_ds,
                         srcDSOrSrcDSTab=ds,
@@ -435,56 +449,77 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                         ),
                     )
 
-                # Respond with an empty block if requested area is too far east or north
-                if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
-                    pipe_out.send((None, None))
-                    continue
-
-                # Adjust raster area to within valid values
-                xpad_before, xpad_after, ypad_before, ypad_after = 0, 0, 0, 0
-                if txoff < 0:
-                    txoff, txsize, xpad_before = 0, txsize + txoff, -txoff
-                if tyoff < 0:
-                    tyoff, tysize, ypad_before = 0, tysize + tyoff, -tyoff
-                if txoff + txsize > ds.RasterXSize:
-                    xpad_after = txsize - (ds.RasterXSize - txoff)
-                    txsize = ds.RasterXSize - txoff
-                if tyoff + tysize > ds.RasterYSize:
-                    ypad_after = tysize - (ds.RasterYSize - tyoff)
-                    tysize = ds.RasterYSize - tyoff
-
-                # Respond with an empty block if requested area is zero width or height
-                if txsize == 0 or tysize == 0:
-                    pipe_out.send((None, None))
-                    continue
-
-                logging.info(
-                    "Band %s nodata value: %s",
-                    band_num,
-                    ds.GetRasterBand(band_num).GetNoDataValue(),
-                )
-
-                # Read raster data for this tile
-                band = ds.GetRasterBand(band_num)
-                logging.info(
-                    "txoff %s tyoff %s txsize %s tysize %s",
-                    txoff,
-                    tyoff,
-                    txsize,
-                    tysize,
-                )
+                band = tile_ds.GetRasterBand(band_num)
 
                 # Pad to full tile size with NODATA fill if needed
-                bbox = (txoff, tyoff, txsize, tysize)
-                xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
+                bbox = (0, 0, tile_ds.RasterXSize, tile_ds.RasterYSize)
+                xpads, ypads = (0, 0), (0, 0)
                 band_type = gdaltype_bandtypes[band.DataType]
                 data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
-                assert len(data) == expected_count * band_type.size
 
                 pipe_out.send((gzip.compress(data), stats))
+
+                # txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
+                # tyoff = int(
+                #     round((raster_geometry.yoff - ymax) / -raster_geometry.yres)
+                # )
+                # txsize = int(round((xmax - xmin) / raster_geometry.xres))
+                # tysize = int(round((ymax - ymin) / -raster_geometry.yres))
+                # expected_count = tysize * txsize
+                #
+                # # Respond with an empty block if requested area is too far east or north
+                # if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
+                #     pipe_out.send((None, None))
+                #     continue
+                #
+                # # Adjust raster area to within valid values
+                # xpad_before, xpad_after, ypad_before, ypad_after = 0, 0, 0, 0
+                # if txoff < 0:
+                #     txoff, txsize, xpad_before = 0, txsize + txoff, -txoff
+                # if tyoff < 0:
+                #     tyoff, tysize, ypad_before = 0, tysize + tyoff, -tyoff
+                # if txoff + txsize > ds.RasterXSize:
+                #     xpad_after = txsize - (ds.RasterXSize - txoff)
+                #     txsize = ds.RasterXSize - txoff
+                # if tyoff + tysize > ds.RasterYSize:
+                #     ypad_after = tysize - (ds.RasterYSize - tyoff)
+                #     tysize = ds.RasterYSize - tyoff
+                #
+                # # Respond with an empty block if requested area is zero width or height
+                # if txsize == 0 or tysize == 0:
+                #     pipe_out.send((None, None))
+                #     continue
+                #
+                # logging.info(
+                #     "Band %s nodata value: %s",
+                #     band_num,
+                #     ds.GetRasterBand(band_num).GetNoDataValue(),
+                # )
+                #
+                # # Read raster data for this tile
+                # band = ds.GetRasterBand(band_num)
+                # logging.info(
+                #     "txoff %s tyoff %s txsize %s tysize %s",
+                #     txoff,
+                #     tyoff,
+                #     txsize,
+                #     tysize,
+                # )
+                #
+                # # Pad to full tile size with NODATA fill if needed
+                # bbox = (txoff, tyoff, txsize, tysize)
+                # xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
+                # band_type = gdaltype_bandtypes[band.DataType]
+                # data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
+                # logging.info(
+                #     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
+                # )
+                # assert len(data) == expected_count * band_type.size
+                #
+                # pipe_out.send((gzip.compress(data), stats))
             except EOFError:
                 break
     finally:
@@ -564,7 +599,6 @@ def main(geotiff_filename, raquet_filename):
     raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
 
     try:
-        assert raster_geometry.gt2 == 0 and raster_geometry.gt4 == 0, "Expect no skew"
         band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
 
         # Create table schema based on band count
