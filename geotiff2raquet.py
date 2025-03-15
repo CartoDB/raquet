@@ -153,8 +153,6 @@ class RasterGeometry:
 
     bandtypes: list[str]
     nodata: int | float | None
-    width: int
-    height: int
     zoom: int
     minlat: float
     minlon: float
@@ -191,30 +189,10 @@ def generate_tiles(rg: RasterGeometry):
     Args:
         rg: RasterGeometry instance
 
-    Returns:
-        Generator of tiles
+    Yields: tile
     """
-    ul = mercantile.tile(rg.minlon, rg.maxlat, rg.zoom)
-    lr = mercantile.tile(rg.maxlon, rg.minlat, rg.zoom)
-
-    # print("rg:", rg)
-    # print("ul:", )
-    # print("lr:", mercantile.tile(rg.maxlon, rg.minlat, rg.zoom))
-    #
-    # logging.info("xoff %s yoff %s zoom %s", rg.xoff, rg.yoff, rg.zoom)
-    # earth_circumference = mercantile.CE
-    #
-    # tileres = earth_circumference / 2**rg.zoom
-    # ulx = int((rg.xoff + earth_circumference / 2) / tileres)
-    # uly = int((earth_circumference / 2 - rg.yoff) / tileres)
-    # logging.info("tileres %s ulx %s uly %s", tileres, ulx, uly)
-    #
-    # lrx = int((rg.xoff + rg.width * rg.xres + earth_circumference / 2) / tileres)
-    # lry = int((earth_circumference / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
-    # logging.info("lrx %s lry %s", lrx, lry)
-
-    for x, y in itertools.product(range(ul.x, lr.x + 1), range(ul.y, lr.y + 1)):
-        yield mercantile.Tile(x, y, rg.zoom)
+    for tile in mercantile.tiles(rg.minlon, rg.minlat, rg.maxlon, rg.maxlat, rg.zoom):
+        yield tile
 
 
 def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
@@ -394,8 +372,6 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 for band_num in range(1, 1 + ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
-            ds.RasterXSize,
-            ds.RasterYSize,
             zoom,
             minlat,
             minlon,
