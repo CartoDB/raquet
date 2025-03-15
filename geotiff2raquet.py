@@ -13,7 +13,7 @@ Required packages:
 Test case "europe.tif"
 
     >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
-    >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO)
+    >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.CubicSpline)
     >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table1)
     17
@@ -51,7 +51,7 @@ Test case "europe.tif"
 
 Test case "n37_w123_1arc_v2.tif"
 
-    >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER)
+    >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER, ResamplingAlgorithm.CubicSpline)
     >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table2)
     5
@@ -80,7 +80,7 @@ Test case "n37_w123_1arc_v2.tif"
 
 Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 
-    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER)
+    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table3)
     43
@@ -96,11 +96,11 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     [13, 21, 13, 13]
 
     >>> {k: round(v, 8) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
-    {'count': 1216326, 'max': 95, 'mean': 75.84772257, 'min': 11, 'stddev': 14.05245063, 'sum': 92255557, 'sum_squares': 7326386701}
+    {'count': 1216326, 'max': 95, 'mean': 75.84722599, 'min': 11, 'stddev': 16.4719357, 'sum': 92254953, 'sum_squares': 7415259309}
 
 Test case "geotiff-discreteloss_2023.tif"
 
-    >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER)
+    >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table4)
     26
@@ -157,6 +157,28 @@ class ZoomStrategy(enum.StrEnum):
     AUTO = "auto"
     LOWER = "lower"
     UPPER = "upper"
+
+
+class ResamplingAlgorithm(enum.StrEnum):
+    """Resampling method to use
+
+    See -r option at https://gdal.org/en/stable/programs/gdalwarp.html#cmdoption-gdalwarp-r
+    """
+
+    NearestNeighbour = "near"
+    Average = "average"
+    Bilinear = "bilinear"
+    Cubic = "cubic"
+    CubicSpline = "cubicspline"
+    Lanczos = "lanczos"
+    Max = "max"
+    Med = "med"
+    Min = "min"
+    Mode = "mode"
+    Q1 = "q1"
+    Q3 = "q3"
+    RMS = "rms"
+    Sum = "sum"
 
 
 @dataclasses.dataclass
@@ -342,7 +364,13 @@ def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
     return int(zoom)
 
 
-def read_geotiff(geotiff_filename: str, zoom_strategy: ZoomStrategy, pipe_in, pipe_out):
+def read_geotiff(
+    geotiff_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    pipe_in: multiprocessing.Pipe,
+    pipe_out: multiprocessing.Pipe,
+):
     """Worker process that accesses a GeoTIFF through pipes.
 
     Args:
@@ -378,6 +406,23 @@ def read_geotiff(geotiff_filename: str, zoom_strategy: ZoomStrategy, pipe_in, pi
         osgeo.gdal.GDT_UInt16: BandType("H", 2, int, "uint16"),
         osgeo.gdal.GDT_UInt32: BandType("I", 4, int, "uint32"),
         osgeo.gdal.GDT_UInt64: BandType("Q", 8, int, "uint64"),
+    }
+
+    resampling_algorithms: dict[str, int] = {
+        ResamplingAlgorithm.Average: osgeo.gdal.GRA_Average,
+        ResamplingAlgorithm.Bilinear: osgeo.gdal.GRA_Bilinear,
+        ResamplingAlgorithm.Cubic: osgeo.gdal.GRA_Cubic,
+        ResamplingAlgorithm.CubicSpline: osgeo.gdal.GRA_CubicSpline,
+        ResamplingAlgorithm.Lanczos: osgeo.gdal.GRA_Lanczos,
+        ResamplingAlgorithm.Max: osgeo.gdal.GRA_Max,
+        ResamplingAlgorithm.Med: osgeo.gdal.GRA_Med,
+        ResamplingAlgorithm.Min: osgeo.gdal.GRA_Min,
+        ResamplingAlgorithm.Mode: osgeo.gdal.GRA_Mode,
+        ResamplingAlgorithm.NearestNeighbour: osgeo.gdal.GRA_NearestNeighbour,
+        ResamplingAlgorithm.Q1: osgeo.gdal.GRA_Q1,
+        ResamplingAlgorithm.Q3: osgeo.gdal.GRA_Q3,
+        ResamplingAlgorithm.RMS: osgeo.gdal.GRA_RMS,
+        ResamplingAlgorithm.Sum: osgeo.gdal.GRA_Sum,
     }
 
     try:
@@ -445,7 +490,7 @@ def read_geotiff(geotiff_filename: str, zoom_strategy: ZoomStrategy, pipe_in, pi
                         destNameOrDestDS=tile_ds,
                         srcDSOrSrcDSTab=ds,
                         options=osgeo.gdal.WarpOptions(
-                            resampleAlg=osgeo.gdal.GRA_CubicSpline,
+                            resampleAlg=resampling_algorithms[resampling_algorithm],
                         ),
                     )
 
@@ -527,7 +572,11 @@ def read_geotiff(geotiff_filename: str, zoom_strategy: ZoomStrategy, pipe_in, pi
         pipe_out.close()
 
 
-def open_geotiff_in_process(geotiff_filename: str, zoom_strategy: ZoomStrategy):
+def open_geotiff_in_process(
+    geotiff_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+) -> tuple[RasterGeometry, multiprocessing.Pipe, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
     Returns:
@@ -538,10 +587,8 @@ def open_geotiff_in_process(geotiff_filename: str, zoom_strategy: ZoomStrategy):
     child_recv, parent_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    process = multiprocessing.Process(
-        target=read_geotiff,
-        args=(geotiff_filename, zoom_strategy, child_recv, child_send),
-    )
+    args = geotiff_filename, zoom_strategy, resampling_algorithm, child_recv, child_send
+    process = multiprocessing.Process(target=read_geotiff, args=args)
     process.start()
 
     # Close child ends in parent process
@@ -590,7 +637,12 @@ def get_raquet_dimensions(
     }
 
 
-def main(geotiff_filename: str, raquet_filename: str, zoom_strategy: ZoomStrategy):
+def main(
+    geotiff_filename: str,
+    raquet_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+):
     """Read GeoTIFF datasource and write to a RaQuet file
 
     Args:
@@ -599,7 +651,7 @@ def main(geotiff_filename: str, raquet_filename: str, zoom_strategy: ZoomStrateg
         zoom_strategy: ZoomStrategy member
     """
     raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(
-        geotiff_filename, zoom_strategy
+        geotiff_filename, zoom_strategy, resampling_algorithm
     )
 
     try:
@@ -726,9 +778,20 @@ parser.add_argument(
     choices=list(ZoomStrategy),
     default=ZoomStrategy.AUTO,
 )
+parser.add_argument(
+    "--resampling-algorithm",
+    help="Resampling method to use, see also https://gdal.org/en/stable/programs/gdalwarp.html#cmdoption-gdalwarp-r",
+    choices=list(ResamplingAlgorithm),
+    default=ResamplingAlgorithm.NearestNeighbour,
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
-    main(args.geotiff_filename, args.raquet_filename, ZoomStrategy(args.zoom_strategy))
+    main(
+        args.geotiff_filename,
+        args.raquet_filename,
+        ZoomStrategy(args.zoom_strategy),
+        ResamplingAlgorithm(args.resampling_algorithm),
+    )
