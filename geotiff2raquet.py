@@ -4,6 +4,9 @@
 Usage:
     geotiff2raquet.py <geotiff_filename> <raquet_filename>
 
+Help:
+    geotiff2raquet.py --help
+
 Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
@@ -124,7 +127,6 @@ import argparse
 import dataclasses
 import enum
 import gzip
-import itertools
 import json
 import logging
 import math
@@ -139,13 +141,6 @@ import quadbin
 
 # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
 BLOCK_ZOOM = 8
-
-# Decimal precision needed for resolution comparisons
-DECM_PRECISION = 11
-
-# List of acceptable ground resolutions for whole-number Web Mercator zooms
-# See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
-VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
 
 
 class ZoomStrategy(enum.StrEnum):
@@ -229,7 +224,9 @@ def generate_tiles(rg: RasterGeometry):
         yield tile
 
 
-def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
+def combine_stats(
+    prev_stats: RasterStats | None, curr_stats: RasterStats | None
+) -> RasterStats | None:
     """Combine two RasterStats into one"""
     if prev_stats is None:
         return curr_stats
@@ -251,7 +248,6 @@ def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
         sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
     )
 
-    logging.info("%s + %s = %s", prev_stats, curr_stats, next_stats)
     return next_stats
 
 
@@ -277,52 +273,20 @@ def read_statistics(
 
 
 def read_rasterband(
-    band: "osgeo.gdal.Band",  # noqa: F821 (Band type safely imported in read_geotiff)
-    bbox: tuple[int, int, int, int],
-    xpads: tuple[int, int],
-    ypads: tuple[int, int],
+    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     band_type: BandType,
 ) -> tuple[bytes, RasterStats]:
-    """Return uncompressed raster bytes padded to full tile size.
-
-    Acts like numpy.pad() without requiring numpy dependency
-    """
-    data1 = band.ReadRaster(*bbox)
-    pixel_values = struct.unpack(band_type.fmt * bbox[2] * bbox[3], data1)
+    """Return uncompressed raster bytes and stats"""
+    data = band.ReadRaster(0, 0, band.XSize, band.YSize)
+    pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
     stats = read_statistics(pixel_values, band.GetNoDataValue())
 
-    # Return early if no padding to be done
-    if (xpads, ypads) == ((0, 0), (0, 0)):
-        return data1, stats
-
-    # Prepare nodata cell value in expected format
-    if (_nodata := band.GetNoDataValue()) is not None:
-        nodata = struct.pack(band_type.fmt, band_type.typ(_nodata))
-    else:
-        nodata = struct.pack(band_type.fmt, band_type.typ(0))
-
-    # Pad start and end of each row if needed
-    data2 = [data1]
-
-    if xpads != (0, 0):
-        rowsize = bbox[2] * band_type.size
-        offsets = range(0, len(data1), rowsize)
-        rowprefix, rowsuffix = nodata * xpads[0], nodata * xpads[1]
-        data2 = [rowprefix + data1[off : off + rowsize] + rowsuffix for off in offsets]
-
-    # Pad start and end of full table if needed
-    data3 = data2
-
-    if ypads != (0, 0):
-        emptyrow = nodata * (xpads[0] + bbox[2] + xpads[1])
-        data3 = [emptyrow] * ypads[0] + data2 + [emptyrow] * ypads[1]
-
-    # Concatenate raw bytes and return
-    return b"".join(data3), stats
+    return data, stats
 
 
 def find_bounds(
-    ds: "osgeo.gdal.Dataset", transform: "osgeo.osr.CoordinateTransformation"
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
 ) -> tuple[float, float, float, float]:
     """Return outer bounds for raster in a given transformation"""
     xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
@@ -340,7 +304,8 @@ def find_bounds(
 
 
 def find_resolution(
-    ds: "osgeo.gdal.Dataset", transform: "osgeo.osr.CoordinateTransformation"
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
 ) -> float:
     """Return units per pixel for raster via a given transformation"""
     xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
@@ -373,8 +338,13 @@ def read_geotiff(
 ):
     """Worker process that accesses a GeoTIFF through pipes.
 
+    Send RasterGeometry via pipe_out first, then respond to (band, tile) tuples on
+    pipe_in with (data bytes, RasterStats instances) tuples on pipe_out.
+
     Args:
         geotiff_filename: Name of GeoTIFF file to open
+        zoom_strategy: Web mercator zoom level selection
+        resampling_algorithm: Resampling method to use
         pipe_in: Connection to receive data from parent
         pipe_out: Connection to send data to parent
     """
@@ -495,76 +465,12 @@ def read_geotiff(
                     )
 
                 band = tile_ds.GetRasterBand(band_num)
-
-                # Pad to full tile size with NODATA fill if needed
-                bbox = (0, 0, tile_ds.RasterXSize, tile_ds.RasterYSize)
-                xpads, ypads = (0, 0), (0, 0)
-                band_type = gdaltype_bandtypes[band.DataType]
-                data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
+                data, stats = read_rasterband(band, gdaltype_bandtypes[band.DataType])
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
 
                 pipe_out.send((gzip.compress(data), stats))
-
-                # txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
-                # tyoff = int(
-                #     round((raster_geometry.yoff - ymax) / -raster_geometry.yres)
-                # )
-                # txsize = int(round((xmax - xmin) / raster_geometry.xres))
-                # tysize = int(round((ymax - ymin) / -raster_geometry.yres))
-                # expected_count = tysize * txsize
-                #
-                # # Respond with an empty block if requested area is too far east or north
-                # if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
-                #     pipe_out.send((None, None))
-                #     continue
-                #
-                # # Adjust raster area to within valid values
-                # xpad_before, xpad_after, ypad_before, ypad_after = 0, 0, 0, 0
-                # if txoff < 0:
-                #     txoff, txsize, xpad_before = 0, txsize + txoff, -txoff
-                # if tyoff < 0:
-                #     tyoff, tysize, ypad_before = 0, tysize + tyoff, -tyoff
-                # if txoff + txsize > ds.RasterXSize:
-                #     xpad_after = txsize - (ds.RasterXSize - txoff)
-                #     txsize = ds.RasterXSize - txoff
-                # if tyoff + tysize > ds.RasterYSize:
-                #     ypad_after = tysize - (ds.RasterYSize - tyoff)
-                #     tysize = ds.RasterYSize - tyoff
-                #
-                # # Respond with an empty block if requested area is zero width or height
-                # if txsize == 0 or tysize == 0:
-                #     pipe_out.send((None, None))
-                #     continue
-                #
-                # logging.info(
-                #     "Band %s nodata value: %s",
-                #     band_num,
-                #     ds.GetRasterBand(band_num).GetNoDataValue(),
-                # )
-                #
-                # # Read raster data for this tile
-                # band = ds.GetRasterBand(band_num)
-                # logging.info(
-                #     "txoff %s tyoff %s txsize %s tysize %s",
-                #     txoff,
-                #     tyoff,
-                #     txsize,
-                #     tysize,
-                # )
-                #
-                # # Pad to full tile size with NODATA fill if needed
-                # bbox = (txoff, tyoff, txsize, tysize)
-                # xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
-                # band_type = gdaltype_bandtypes[band.DataType]
-                # data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
-                # logging.info(
-                #     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
-                # )
-                # assert len(data) == expected_count * band_type.size
-                #
-                # pipe_out.send((gzip.compress(data), stats))
             except EOFError:
                 break
     finally:
