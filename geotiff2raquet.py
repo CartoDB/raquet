@@ -13,9 +13,16 @@ Required packages:
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
+Tests
+
+    >>> import tempfile
+    >>> _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+
+    >>> def print_stats(d):
+    ...     print(*[f'{k}={v:.4g}' for k, v in sorted(d.items())])
+
 Test case "europe.tif"
 
-    >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
     >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.CubicSpline)
     >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table1)
@@ -40,17 +47,17 @@ Test case "europe.tif"
     >>> {b["name"]: b["type"] for b in metadata1["bands"]}
     {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][0]["stats"].items())}  # doctest: +ELLIPSIS
-    {'count': 1048576, 'max': 255, 'mean': 104.714, 'min': 0, 'stddev': 63.242, 'sum': 109800..., 'sum_squares': 18272...}
+    >>> print_stats(metadata1["bands"][0]["stats"])
+    count=1.049e+06 max=255 mean=104.7 min=0 stddev=63.24 sum=1.098e+08 sum_squares=1.827e+10
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][1]["stats"].items())}  # doctest: +ELLIPSIS
-    {'count': 1048576, 'max': 255, 'mean': 91.149, 'min': 0, 'stddev': 58.757, 'sum': 95577..., 'sum_squares': 164173...}
+    >>> print_stats(metadata1["bands"][1]["stats"])
+    count=1.049e+06 max=255 mean=91.15 min=0 stddev=58.76 sum=9.558e+07 sum_squares=1.642e+10
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][2]["stats"].items())}  # doctest: +ELLIPSIS
-    {'count': 1048576, 'max': 255, 'mean': 123.969, 'min': 0, 'stddev': 68.078, 'sum': 1299909..., 'sum_squares': 234157...}
+    >>> print_stats(metadata1["bands"][2]["stats"])
+    count=1.049e+06 max=255 mean=124 min=0 stddev=68.08 sum=1.3e+08 sum_squares=2.342e+10
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata1["bands"][3]["stats"].items())}  # doctest: +ELLIPSIS
-    {'count': 1048576, 'max': 255, 'mean': 189.748, 'min': 0, 'stddev': 83.361, 'sum': 198964..., 'sum_squares': 50531863...}
+    >>> print_stats(metadata1["bands"][3]["stats"])
+    count=1.049e+06 max=255 mean=189.7 min=0 stddev=83.36 sum=1.99e+08 sum_squares=5.053e+10
 
 Test case "n37_w123_1arc_v2.tif"
 
@@ -78,8 +85,8 @@ Test case "n37_w123_1arc_v2.tif"
     >>> {b["name"]: b["type"] for b in metadata2["bands"]}
     {'band_1': 'int16'}
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-    {'count': 96921, 'max': 377, 'mean': 38.219, 'min': -7, 'stddev': 54.016, 'sum': 3704179, 'sum_squares': 453908183}
+    >>> print_stats(metadata2["bands"][0]["stats"])
+    count=9.692e+04 max=377 mean=38.22 min=-7 stddev=54.02 sum=3.704e+06 sum_squares=4.539e+08
 
 Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 
@@ -98,8 +105,8 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [13, 21, 13, 13]
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
-    {'count': 1216326, 'max': 95, 'mean': 75.847, 'min': 11, 'stddev': 16.472, 'sum': 92254953, 'sum_squares': 7415259309}
+    >>> print_stats(metadata3["bands"][0]["stats"])
+    count=1.216e+06 max=95 mean=75.85 min=11 stddev=16.47 sum=9.225e+07 sum_squares=7.415e+09
 
 Test case "geotiff-discreteloss_2023.tif"
 
@@ -118,8 +125,8 @@ Test case "geotiff-discreteloss_2023.tif"
     >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
     [13, 21, 13, 13]
 
-    >>> {k: round(v, 3) for k, v in sorted(metadata4["bands"][0]["stats"].items())}
-    {'count': 27364, 'max': 1, 'mean': 1.0, 'min': 1, 'stddev': 0.0, 'sum': 27364, 'sum_squares': 27364}
+    >>> print_stats(metadata4["bands"][0]["stats"])
+    count=2.736e+04 max=1 mean=1 min=1 stddev=0 sum=2.736e+04 sum_squares=2.736e+04
 
 """
 
