@@ -13,7 +13,7 @@ Required packages:
 Test case "europe.tif"
 
     >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
-    >>> main("examples/europe.tif", raquet_tempfile)
+    >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO)
     >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table1)
     17
@@ -49,9 +49,9 @@ Test case "europe.tif"
     >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
     {'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
 
-Test case "n37_w123_1arc_v2-cog.tif"
+Test case "n37_w123_1arc_v2.tif"
 
-    >>> main("tests/n37_w123_1arc_v2-cog.tif", raquet_tempfile)
+    >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER)
     >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table2)
     5
@@ -76,11 +76,11 @@ Test case "n37_w123_1arc_v2-cog.tif"
     {'band_1': 'int16'}
 
     >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-    {'count': 96292, 'max': 373, 'mean': 38.37413285, 'min': -6, 'stddev': 53.93091144, 'sum': 3695122, 'sum_squares': 451479336}
+    {'count': 96921, 'max': 377, 'mean': 38.21853881, 'min': -7, 'stddev': 54.01632447, 'sum': 3704179, 'sum_squares': 453908183}
 
-Test case "Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif"
+Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
 
-    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif", raquet_tempfile)
+    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER)
     >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table3)
     43
@@ -96,11 +96,11 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0-cog.tif"
     [13, 21, 13, 13]
 
     >>> {k: round(v, 8) for k, v in sorted(metadata3["bands"][0]["stats"].items())}
-    {'count': 1216387, 'max': 95, 'mean': 75.8494443, 'min': 11, 'stddev': 13.76276756, 'sum': 92262278, 'sum_squares': 7317519948}
+    {'count': 1216326, 'max': 95, 'mean': 75.84772257, 'min': 11, 'stddev': 14.05245063, 'sum': 92255557, 'sum_squares': 7326386701}
 
-Test case "geotiff-discreteloss_2023-cog.tif"
+Test case "geotiff-discreteloss_2023.tif"
 
-    >>> main("tests/geotiff-discreteloss_2023-cog.tif", raquet_tempfile)
+    >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER)
     >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table4)
     26
@@ -116,12 +116,13 @@ Test case "geotiff-discreteloss_2023-cog.tif"
     [13, 21, 13, 13]
 
     >>> {k: round(v, 8) for k, v in sorted(metadata4["bands"][0]["stats"].items())}
-    {'count': 27325, 'max': 1, 'mean': 1.0, 'min': 1, 'stddev': 0.0, 'sum': 27325, 'sum_squares': 27325}
+    {'count': 27364, 'max': 1, 'mean': 1.0, 'min': 1, 'stddev': 0.0, 'sum': 27364, 'sum_squares': 27364}
 
 """
 
 import argparse
 import dataclasses
+import enum
 import gzip
 import itertools
 import json
@@ -145,6 +146,17 @@ DECM_PRECISION = 11
 # List of acceptable ground resolutions for whole-number Web Mercator zooms
 # See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
 VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
+
+
+class ZoomStrategy(enum.StrEnum):
+    """Switch for web mercator zoom level selection
+
+    See ZOOM_LEVEL_STRATEGY at https://gdal.org/en/stable/drivers/raster/cog.html#reprojection-related-creation-options
+    """
+
+    AUTO = "auto"
+    LOWER = "lower"
+    UPPER = "upper"
 
 
 @dataclasses.dataclass
@@ -318,7 +330,19 @@ def find_resolution(
     return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
 
 
-def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
+def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
+    """Calculate web mercator zoom from a raw meters/pixel resolution"""
+    raw_zoom = math.log(mercantile.CE / 256 / resolution) / math.log(2)
+    if zoom_strategy is ZoomStrategy.UPPER:
+        zoom = math.ceil(raw_zoom)
+    elif zoom_strategy is ZoomStrategy.LOWER:
+        zoom = math.floor(raw_zoom)
+    else:
+        zoom = round(raw_zoom)
+    return int(zoom)
+
+
+def read_geotiff(geotiff_filename: str, zoom_strategy: ZoomStrategy, pipe_in, pipe_out):
     """Worker process that accesses a GeoTIFF through pipes.
 
     Args:
@@ -364,7 +388,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
 
         tx3857 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), web_mercator)
         resolution = find_resolution(ds, tx3857)
-        zoom = round(math.log(mercantile.CE / 256 / resolution) / math.log(2))
+        zoom = find_zoom(resolution, zoom_strategy)
 
         raster_geometry = RasterGeometry(
             [
@@ -503,7 +527,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         pipe_out.close()
 
 
-def open_geotiff_in_process(geotiff_filename: str):
+def open_geotiff_in_process(geotiff_filename: str, zoom_strategy: ZoomStrategy):
     """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
     Returns:
@@ -515,7 +539,8 @@ def open_geotiff_in_process(geotiff_filename: str):
 
     # Start worker process
     process = multiprocessing.Process(
-        target=read_geotiff, args=(geotiff_filename, child_recv, child_send)
+        target=read_geotiff,
+        args=(geotiff_filename, zoom_strategy, child_recv, child_send),
     )
     process.start()
 
@@ -565,14 +590,17 @@ def get_raquet_dimensions(
     }
 
 
-def main(geotiff_filename, raquet_filename):
+def main(geotiff_filename: str, raquet_filename: str, zoom_strategy: ZoomStrategy):
     """Read GeoTIFF datasource and write to a RaQuet file
 
     Args:
         geotiff_filename: GeoTIFF filename
         raquet_filename: RaQuet filename
+        zoom_strategy: ZoomStrategy member
     """
-    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
+    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(
+        geotiff_filename, zoom_strategy
+    )
 
     try:
         band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
@@ -692,9 +720,15 @@ parser.add_argument("raquet_filename")
 parser.add_argument(
     "-v", "--verbose", action="store_true", help="Enable verbose output"
 )
+parser.add_argument(
+    "--zoom-strategy",
+    help="Strategy to determine zoom, see also https://gdal.org/en/stable/drivers/raster/cog.html#reprojection-related-creation-options",
+    choices=list(ZoomStrategy),
+    default=ZoomStrategy.AUTO,
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
-    main(args.geotiff_filename, args.raquet_filename)
+    main(args.geotiff_filename, args.raquet_filename, ZoomStrategy(args.zoom_strategy))
