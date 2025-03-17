@@ -176,10 +176,14 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
+def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats) -> RasterStats:
     """Combine two RasterStats into one"""
+
     if prev_stats is None:
         return curr_stats
+    
+    if curr_stats is None: #if there is any NODATA block after proper block, skip
+        return prev_stats
 
     next_count = prev_stats.count + curr_stats.count
     prev_weight = prev_stats.count / next_count
@@ -206,17 +210,8 @@ def read_statistics(
     if nodata is not None:
         values = [val for val in values if val != nodata]
 
-    if len(values) == 0:
-        #if values are not available to calculate stats, return 0 for all so non-zero NODATA value wont affects combined stats
-        return RasterStats(
-            count=0,
-            min=0,
-            max=0,
-            mean=0,
-            stddev=0,
-            sum=0,
-            sum_squares=0,
-        )
+    if len(values) == 0:  #if values are not available to calculate stats, return None
+        return None
 
     return RasterStats(
         count=len(values),
