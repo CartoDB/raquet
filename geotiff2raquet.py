@@ -106,7 +106,7 @@ DECM_PRECISION = 11
 # List of acceptable ground resolutions for whole-number Web Mercator zooms
 # See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
 VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
-
+breakpoint()
 
 @dataclasses.dataclass
 class RasterGeometry:
@@ -206,6 +206,18 @@ def read_statistics(
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
         values = [val for val in values if val != nodata]
+
+    if len(values) == 0:
+        #if values are not available to calculate stats, return 0 for all so non-zero NODATA value wont affects combined stats
+        return RasterStats(
+            count=0,
+            min=0,
+            max=0,
+            mean=0,
+            stddev=0,
+            sum=0,
+            sum_squares=0,
+        )
 
     return RasterStats(
         count=len(values),
