@@ -91,6 +91,7 @@ import math
 import multiprocessing
 import statistics
 import struct
+import enum
 
 import mercantile
 import pyarrow.compute
@@ -111,7 +112,8 @@ VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in rang
 class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
-    bandtypes: list[str]
+    bandtypes: list[int]
+    bandcolorinterp: list[int]
     nodata: int | float | None
     width: int
     height: int
@@ -331,6 +333,10 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
             [
                 gdaltype_bandtypes[ds.GetRasterBand(band_num).DataType].name
                 for band_num in range(1, 1 + ds.RasterCount)
+            ],
+            [
+                ds.GetRasterBand(band_num).GetColorInterpretation()
+                for band_num in range(1, 1+ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
             ds.RasterXSize,
@@ -581,9 +587,9 @@ def main(geotiff_filename, raquet_filename):
             "num_blocks": num_blocks,
             "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
             "bands": [
-                {"type": btype, "name": bname, "stats": stats.__dict__}
-                for btype, bname, stats in zip(
-                    raster_geometry.bandtypes, band_names, band_stats
+                {"type": btype, "name": bname, "colorinterp":bcolorinterp, "stats": stats.__dict__}
+                for btype, bname, bcolorinterp, stats in zip(
+                    raster_geometry.bandtypes, band_names, raster_geometry.bandcolorinterp, band_stats
                 )
             ],
             **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
