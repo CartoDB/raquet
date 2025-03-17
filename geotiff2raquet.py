@@ -106,7 +106,6 @@ DECM_PRECISION = 11
 # List of acceptable ground resolutions for whole-number Web Mercator zooms
 # See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
 VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
-breakpoint()
 
 @dataclasses.dataclass
 class RasterGeometry:
