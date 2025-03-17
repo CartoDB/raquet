@@ -112,7 +112,7 @@ VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in rang
 class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
-    bandtypes: list[int]
+    bandtypes: list[str]
     bandcolorinterp: list[int]
     nodata: int | float | None
     width: int
