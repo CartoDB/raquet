@@ -139,7 +139,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                         metadata["block_height"],
                         block_datum,
                     )
-                    band.SetColorInterpretation(metadata["bands"][i]["colorinterp"])
+                    band.SetColorInterpretation(osgeo.gdal.GetColorInterpretationByName(str(metadata["bands"][i]["colorinterp"])))
                     
             except EOFError:
                 break
