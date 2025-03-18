@@ -113,7 +113,7 @@ class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
     bandtypes: list[str]
-    bandcolorinterp: list[int]
+    bandcolorinterp: list[str]
     nodata: int | float | None
     width: int
     height: int
@@ -335,7 +335,7 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 for band_num in range(1, 1 + ds.RasterCount)
             ],
             [
-                ds.GetRasterBand(band_num).GetColorInterpretation()
+                osgeo.gdal.GetColorInterpretationName(ds.GetRasterBand(band_num).GetColorInterpretation())
                 for band_num in range(1, 1+ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
