@@ -35,6 +35,41 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
+GDAL_COLOR_INTERP= {
+    "Undefined": "GCI_Undefined",
+    "Gray": "GCI_GrayIndex",
+    "Palette": "GCI_PaletteIndex",
+    "Red": "GCI_RedBand",
+    "Green": "GCI_GreenBand",
+    "Blue": "GCI_BlueBand",
+    "Alpha": "GCI_AlphaBand",
+    "Hue": "GCI_HueBand",
+    "Saturation": "GCI_SaturationBand",
+    "Lightness": "GCI_LightnessBand",
+    "Cyan": "GCI_CyanBand",
+    "Magenta": "GCI_MagentaBand",
+    "Yellow": "GCI_YellowBand",
+    "Black": "GCI_BlackBand",
+    "Pan": "GCI_PanBand",
+    "Coastal": "GCI_CoastalBand",
+    "RedEdge": "GCI_RedEdgeBand",
+    "NIR": "GCI_NIRBand",
+    "SWIR": "GCI_SWIRBand",
+    "MWIR": "GCI_MWIRBand",
+    "LWIR": "GCI_LWIRBand",
+    "TIR": "GCI_TIRBand",
+    "OtherIR": "GCI_OtherIRBand",
+    "SAR_Ka": "GCI_SAR_Ka_Band",
+    "SAR_K": "GCI_SAR_K_Band",
+    "SAR_Ku": "GCI_SAR_Ku_Band",
+    "SAR_X": "GCI_SAR_X_Band",
+    "SAR_C": "GCI_SAR_C_Band",
+    "SAR_S": "GCI_SAR_S_Band",
+    "SAR_L": "GCI_SAR_L_Band",
+    "SAR_P": "GCI_SAR_P_Band"
+}
+
+
 
 def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
     """Worker process that writes a GeoTIFF through pipes.
