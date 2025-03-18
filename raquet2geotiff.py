@@ -165,8 +165,20 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                 # Write to raster
                 for i, block_datum in enumerate(block_data):
                     band = raster.GetRasterBand(i + 1)
-                    if metadata.get("nodata") is not None:
+
+                    if metadata.get("nodata") is not None and band.GetNoDataValue() is None:
                         band.SetNoDataValue(metadata["nodata"])
+
+                    if metadata.get("bands")[i]["colortable"] is not None and band.GetColorTable() is None:
+                        color_dict=metadata["bands"][i]["colortable"]
+                        colorTable= osgeo.gdal.ColorTable()
+                        for index, rgba in color_dict.items():
+                            colorTable.SetColorEntry(int(index), tuple(rgba))
+                        band.SetColorTable(colorTable)
+
+                    if metadata.get("bands")[i]["colorinterp"] is not None:
+                        band.SetColorInterpretation(osgeo.gdal.GetColorInterpretationByName(str(metadata["bands"][i]["colorinterp"])))
+                    
                     band.WriteRaster(
                         xoff,
                         yoff,
@@ -174,7 +186,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                         metadata["block_height"],
                         block_datum,
                     )
-                    band.SetColorInterpretation(osgeo.gdal.GetColorInterpretationByName(str(metadata["bands"][i]["colorinterp"])))
+                    
                     
             except EOFError:
                 break
