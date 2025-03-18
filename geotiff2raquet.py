@@ -114,6 +114,7 @@ class RasterGeometry:
 
     bandtypes: list[str]
     bandcolorinterp: list[str]
+    bandcolortable:list[dict]
     nodata: int | float | None
     width: int
     height: int
@@ -176,6 +177,14 @@ def generate_tiles(rg: RasterGeometry):
 
     for x, y in itertools.product(range(ulx, lrx + 1), range(uly, lry + 1)):
         yield mercantile.Tile(x, y, rg.zoom)
+
+
+def mapColors(colorTable:"osgeo.gdal.ColorTable"):
+    color_dict={}
+    for i in range(colorTable.GetCount()):
+        color_dict.update({str(i):list(colorTable.GetColorEntry(i))})
+
+    return color_dict
 
 
 def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats) -> RasterStats:
@@ -336,6 +345,10 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
             ],
             [
                 osgeo.gdal.GetColorInterpretationName(ds.GetRasterBand(band_num).GetColorInterpretation())
+                for band_num in range(1, 1+ds.RasterCount)
+            ],
+            [
+                mapColors(ds.GetRasterBand(band_num).GetColorTable()) if ds.GetRasterBand(band_num).GetColorTable() else None
                 for band_num in range(1, 1+ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
@@ -587,9 +600,9 @@ def main(geotiff_filename, raquet_filename):
             "num_blocks": num_blocks,
             "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
             "bands": [
-                {"type": btype, "name": bname, "colorinterp":bcolorinterp, "stats": stats.__dict__}
-                for btype, bname, bcolorinterp, stats in zip(
-                    raster_geometry.bandtypes, band_names, raster_geometry.bandcolorinterp, band_stats
+                {"type": btype, "name": bname, "colorinterp":bcolorinterp, "colortable":bcolortable, "stats": stats.__dict__}
+                for btype, bname, bcolorinterp, bcolortable, stats in zip(
+                    raster_geometry.bandtypes, band_names, raster_geometry.bandcolorinterp, raster_geometry.bandcolortable, band_stats
                 )
             ],
             **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
