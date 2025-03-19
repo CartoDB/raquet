@@ -91,7 +91,6 @@ import math
 import multiprocessing
 import statistics
 import struct
-import enum
 
 import mercantile
 import pyarrow.compute
@@ -179,7 +178,7 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def mapColors(colorTable:"osgeo.gdal.ColorTable"):
+def mapColors(colorTable:"osgeo.gdal.ColorTable"): # noqa: F821 (Color table type safely imported in mapColors())
     color_dict={}
     for i in range(colorTable.GetCount()):
         color_dict.update({str(i):list(colorTable.GetColorEntry(i))})
