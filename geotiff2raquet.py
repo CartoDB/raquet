@@ -11,6 +11,7 @@ Required packages:
     - quadbin <https://pypi.org/project/quadbin/>
 
 >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+>>> from itertools import islice
 
 Test case "europe.tif"
 
@@ -50,6 +51,9 @@ Test case "europe.tif"
 >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
 {'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
 
+>>> {b["name"]: b["colorinterp"] for b in metadata1["bands"]}
+{'band_1': 'Red', 'band_2': 'Green', 'band_3': 'Blue', 'band_4': 'Alpha'}
+
 Test case "san-francisco.tif"
 
 >>> main("examples/san-francisco.tif", raquet_tempfile)
@@ -78,6 +82,22 @@ Test case "san-francisco.tif"
 
 >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
 {'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
+
+Test case "colored.tif"
+
+>>> main("examples/colored.tif", raquet_tempfile)
+
+>>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
+
+>>> metadata3 = read_metadata(table3)
+
+>>> {b["name"]: b["colorinterp"] for b in metadata3["bands"]}
+{'band_1': 'Palette'}
+
+>>> color_dict= metadata3["bands"][0]["colortable"]
+
+>>> {k:list(v) for k, v in islice(color_dict.items(),6)}
+{'0': [0, 0, 0, 0], '1': [0, 255, 0, 255], '2': [0, 0, 255, 255], '3': [255, 255, 0, 255], '4': [255, 165, 0, 255], '5': [255, 0, 0, 255]}
 
 """
 
