@@ -53,37 +53,37 @@ import pyarrow.parquet
 import quadbin
 
 GDAL_COLOR_INTERP= {
-    "Undefined": "GCI_Undefined",
-    "Gray": "GCI_GrayIndex",
-    "Palette": "GCI_PaletteIndex",
-    "Red": "GCI_RedBand",
-    "Green": "GCI_GreenBand",
-    "Blue": "GCI_BlueBand",
-    "Alpha": "GCI_AlphaBand",
-    "Hue": "GCI_HueBand",
-    "Saturation": "GCI_SaturationBand",
-    "Lightness": "GCI_LightnessBand",
-    "Cyan": "GCI_CyanBand",
-    "Magenta": "GCI_MagentaBand",
-    "Yellow": "GCI_YellowBand",
-    "Black": "GCI_BlackBand",
-    "Pan": "GCI_PanBand",
-    "Coastal": "GCI_CoastalBand",
-    "RedEdge": "GCI_RedEdgeBand",
-    "NIR": "GCI_NIRBand",
-    "SWIR": "GCI_SWIRBand",
-    "MWIR": "GCI_MWIRBand",
-    "LWIR": "GCI_LWIRBand",
-    "TIR": "GCI_TIRBand",
-    "OtherIR": "GCI_OtherIRBand",
-    "SAR_Ka": "GCI_SAR_Ka_Band",
-    "SAR_K": "GCI_SAR_K_Band",
-    "SAR_Ku": "GCI_SAR_Ku_Band",
-    "SAR_X": "GCI_SAR_X_Band",
-    "SAR_C": "GCI_SAR_C_Band",
-    "SAR_S": "GCI_SAR_S_Band",
-    "SAR_L": "GCI_SAR_L_Band",
-    "SAR_P": "GCI_SAR_P_Band"
+    "Undefined": 0,
+    "Gray": 1,
+    "Palette": 2,
+    "Red": 3,
+    "Green": 4,
+    "Blue": 5,
+    "Alpha": 6,
+    "Hue": 7,
+    "Saturation": 8,
+    "Lightness": 9,
+    "Cyan": 10,
+    "Magenta": 11,
+    "Yellow": 12,
+    "Black": 13,
+    "Pan": 14,
+    "Coastal": 15,
+    "RedEdge": 16,
+    "NIR": 17,
+    "SWIR": 18,
+    "MWIR": 19,
+    "LWIR": 20,
+    "TIR": 21,
+    "OtherIR": 22,
+    "SAR_Ka": 23,
+    "SAR_K": 24,
+    "SAR_Ku": 25,
+    "SAR_X": 26,
+    "SAR_C": 27,
+    "SAR_S": 28,
+    "SAR_L": 29,
+    "SAR_P": 30
 }
 
 
@@ -194,7 +194,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                         band.SetColorTable(colorTable)
 
                     if "colorinterp" in metadata.get("bands")[i] and metadata.get("bands")[i]["colorinterp"] is not None:
-                        band.SetColorInterpretation(osgeo.gdal.GetColorInterpretationByName(str(metadata["bands"][i]["colorinterp"])))
+                        band.SetColorInterpretation(GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]])
                     
                     band.WriteRaster(
                         xoff,
