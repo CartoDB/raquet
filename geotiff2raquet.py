@@ -370,20 +370,17 @@ def read_geotiff(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
-    pipe_in: multiprocessing.Pipe,
-    pipe_out: multiprocessing.Pipe,
+    pipe: multiprocessing.Pipe,
 ):
     """Worker process that accesses a GeoTIFF through pipes.
 
-    Send RasterGeometry via pipe_out first, then respond to (band, tile) tuples on
-    pipe_in with (data bytes, RasterStats instances) tuples on pipe_out.
+    Send RasterGeometry via pipe first then follow with (tile, data, stats) tuples.
 
     Args:
         geotiff_filename: Name of GeoTIFF file to open
         zoom_strategy: Web mercator zoom level selection
         resampling_algorithm: Resampling method to use
-        pipe_in: Connection to receive data from parent
-        pipe_out: Connection to send data to parent
+        pipe: Connection to send data to parent
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -467,94 +464,84 @@ def read_geotiff(
             maxlon,
         )
 
-        pipe_out.send(raster_geometry)
+        pipe.send(raster_geometry)
 
         tile_ds, prev_tile = None, None
 
-        while True:
-            try:
-                received = pipe_in.recv()
-                if received is None:
-                    # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
-                    raise EOFError
+        for tile in generate_tiles(raster_geometry):
+            # Initialize warped tile dataset and its bands
+            tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
+                "/vsimem/tile.tif",
+                2**BLOCK_ZOOM,
+                2**BLOCK_ZOOM,
+                ds.RasterCount,
+                ds.GetRasterBand(1).DataType,
+            )
+            tile_ds.SetProjection(web_mercator.ExportToWkt())
 
-                # Expand message to an intended raster area to retrieve
-                band_num, tile = received
+            for i in range(1, 1 + ds.RasterCount):
+                if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
+                    tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
 
-                # Overwrite tile_ds if needed
-                if tile != prev_tile:
-                    prev_tile = tile
+            # Convert mercator coordinates to pixel coordinates
+            xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
+            px_width = (xmax - xmin) / tile_ds.RasterXSize
+            px_height = (ymax - ymin) / tile_ds.RasterYSize
+            tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
 
-                    # Initialize warped tile dataset and its bands
-                    tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
-                        "/vsimem/tile.tif",
-                        2**BLOCK_ZOOM,
-                        2**BLOCK_ZOOM,
-                        ds.RasterCount,
-                        ds.GetRasterBand(1).DataType,
-                    )
-                    tile_ds.SetProjection(web_mercator.ExportToWkt())
+            osgeo.gdal.Warp(
+                destNameOrDestDS=tile_ds,
+                srcDSOrSrcDSTab=ds,
+                options=osgeo.gdal.WarpOptions(
+                    resampleAlg=resampling_algorithms[resampling_algorithm],
+                ),
+            )
 
-                    for i in range(1, 1 + ds.RasterCount):
-                        if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
-                            tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
+            block_data, block_stats = [], []
 
-                    # Convert mercator coordinates to pixel coordinates
-                    xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
-                    px_width = (xmax - xmin) / tile_ds.RasterXSize
-                    px_height = (ymax - ymin) / tile_ds.RasterYSize
-                    tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
-
-                    osgeo.gdal.Warp(
-                        destNameOrDestDS=tile_ds,
-                        srcDSOrSrcDSTab=ds,
-                        options=osgeo.gdal.WarpOptions(
-                            resampleAlg=resampling_algorithms[resampling_algorithm],
-                        ),
-                    )
-
+            for band_num in range(1, 1 + ds.RasterCount):
                 band = tile_ds.GetRasterBand(band_num)
                 data, stats = read_rasterband(band, gdaltype_bandtypes[band.DataType])
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
 
-                pipe_out.send((gzip.compress(data), stats))
-            except EOFError:
-                break
+                block_data.append(gzip.compress(data))
+                block_stats.append(stats)
+
+            pipe.send((tile, block_data, block_stats))
     finally:
-        pipe_in.close()
-        pipe_out.close()
+        # Send a None to signal end of messages
+        pipe.send(None)
+        pipe.close()
 
 
 def open_geotiff_in_process(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
-) -> tuple[RasterGeometry, multiprocessing.Pipe, multiprocessing.Pipe]:
+) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
     Returns:
         Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
     """
-    # Create bidirectional pipes
+    # Create communication pipe
     parent_recv, child_send = multiprocessing.Pipe(duplex=False)
-    child_recv, parent_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    args = geotiff_filename, zoom_strategy, resampling_algorithm, child_recv, child_send
+    args = geotiff_filename, zoom_strategy, resampling_algorithm, child_send
     process = multiprocessing.Process(target=read_geotiff, args=args)
     process.start()
 
-    # Close child ends in parent process
+    # Close child end in parent process
     child_send.close()
-    child_recv.close()
 
     # The first message received is expected to be a RasterGeometry
     raster_geometry = parent_recv.recv()
     assert isinstance(raster_geometry, RasterGeometry)
 
-    return raster_geometry, parent_send, parent_recv
+    return raster_geometry, parent_recv
 
 
 def read_metadata(table) -> dict:
@@ -605,7 +592,7 @@ def main(
         raquet_filename: RaQuet filename
         zoom_strategy: ZoomStrategy member
     """
-    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(
+    raster_geometry, pipe = open_geotiff_in_process(
         geotiff_filename, zoom_strategy, resampling_algorithm
     )
 
@@ -630,7 +617,15 @@ def main(
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
 
-        for tile in generate_tiles(raster_geometry):
+        while True:
+            received = pipe.recv()
+            if received is None:
+                # Use a signal value to stop expecting further tiles
+                break
+
+            # Expand message to block to retrieve
+            tile, block_data, block_stats = received
+
             logging.info(
                 "Tile z=%s x=%s y=%s quadkey=%s bounds=%s",
                 tile.z,
@@ -639,16 +634,6 @@ def main(
                 hex(quadbin.tile_to_cell((tile.x, tile.y, tile.z))),
                 mercantile.bounds(tile),
             )
-
-            block_data, block_stats = [], []
-
-            for band_num in range(1, 1 + len(raster_geometry.bandtypes)):
-                pipe_send.send((band_num, tile))
-                block_datum, block_stat = pipe_recv.recv()
-
-                # Append data to list for this band
-                block_data.append(block_datum)
-                block_stats.append(block_stat)
 
             if all(block_datum is None for block_datum in block_data):
                 continue
@@ -724,11 +709,7 @@ def main(
         writer.close()
 
     finally:
-        # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
-        pipe_send.send(None)
-
-        pipe_send.close()
-        pipe_recv.close()
+        pipe.close()
 
 
 parser = argparse.ArgumentParser()
