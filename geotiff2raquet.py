@@ -431,6 +431,7 @@ def read_geotiff(
 
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
+        band_nums = list(range(1, 1 + ds.RasterCount))
 
         tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
         minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
@@ -442,19 +443,19 @@ def read_geotiff(
         raster_geometry = RasterGeometry(
             [
                 gdaltype_bandtypes[ds.GetRasterBand(band_num).DataType].name
-                for band_num in range(1, 1 + ds.RasterCount)
+                for band_num in band_nums
             ],
             [
                 osgeo.gdal.GetColorInterpretationName(
                     ds.GetRasterBand(band_num).GetColorInterpretation()
                 )
-                for band_num in range(1, 1 + ds.RasterCount)
+                for band_num in band_nums
             ],
             [
                 mapColors(ds.GetRasterBand(band_num).GetColorTable())
                 if ds.GetRasterBand(band_num).GetColorTable()
                 else None
-                for band_num in range(1, 1 + ds.RasterCount)
+                for band_num in band_nums
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
             zoom,
@@ -479,9 +480,9 @@ def read_geotiff(
             )
             tile_ds.SetProjection(web_mercator.ExportToWkt())
 
-            for i in range(1, 1 + ds.RasterCount):
-                if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
-                    tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
+            for band_num in band_nums:
+                if (nodata := ds.GetRasterBand(band_num).GetNoDataValue()) is not None:
+                    tile_ds.GetRasterBand(band_num).SetNoDataValue(nodata)
 
             # Convert mercator coordinates to pixel coordinates
             xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
@@ -497,15 +498,15 @@ def read_geotiff(
                 ),
             )
 
+            # Read data and stats from warped bands and send them to parent process
             block_data, block_stats = [], []
 
-            for band_num in range(1, 1 + ds.RasterCount):
+            for band_num in band_nums:
                 band = tile_ds.GetRasterBand(band_num)
                 data, stats = read_rasterband(band, gdaltype_bandtypes[band.DataType])
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
-
                 block_data.append(gzip.compress(data))
                 block_stats.append(stats)
 
