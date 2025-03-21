@@ -461,8 +461,6 @@ def read_geotiff(
 
         pipe.send(raster_geometry)
 
-        tile_ds, prev_tile = None, None
-
         for tile in generate_tiles(raster_geometry):
             # Initialize warped tile dataset and its bands
             tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
