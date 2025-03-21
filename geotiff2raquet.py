@@ -11,6 +11,7 @@ Required packages:
     - quadbin <https://pypi.org/project/quadbin/>
 
 >>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+>>> from itertools import islice
 
 Test case "europe.tif"
 
@@ -50,6 +51,9 @@ Test case "europe.tif"
 >>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
 {'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
 
+>>> {b["name"]: b["colorinterp"] for b in metadata1["bands"]}
+{'band_1': 'Red', 'band_2': 'Green', 'band_3': 'Blue', 'band_4': 'Alpha'}
+
 Test case "san-francisco.tif"
 
 >>> main("examples/san-francisco.tif", raquet_tempfile)
@@ -79,6 +83,22 @@ Test case "san-francisco.tif"
 >>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
 {'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
 
+Test case "colored.tif"
+
+>>> main("examples/colored.tif", raquet_tempfile)
+
+>>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
+
+>>> metadata3 = read_metadata(table3)
+
+>>> {b["name"]: b["colorinterp"] for b in metadata3["bands"]}
+{'band_1': 'Palette'}
+
+>>> color_dict= metadata3["bands"][0]["colortable"]
+
+>>> {k:list(v) for k, v in islice(color_dict.items(),6)}
+{'0': [0, 0, 0, 0], '1': [0, 255, 0, 255], '2': [0, 0, 255, 255], '3': [255, 255, 0, 255], '4': [255, 165, 0, 255], '5': [255, 0, 0, 255]}
+
 """
 
 import argparse
@@ -107,12 +127,13 @@ DECM_PRECISION = 11
 # See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
 VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
 
-
 @dataclasses.dataclass
 class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
     bandtypes: list[str]
+    bandcolorinterp: list[str]
+    bandcolortable:list[dict]
     nodata: int | float | None
     width: int
     height: int
@@ -177,10 +198,22 @@ def generate_tiles(rg: RasterGeometry):
         yield mercantile.Tile(x, y, rg.zoom)
 
 
-def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats):
+def mapColors(colorTable:"osgeo.gdal.ColorTable"): # noqa: F821 (Color table type safely imported in mapColors())
+    color_dict={}
+    for i in range(colorTable.GetCount()):
+        color_dict.update({str(i):list(colorTable.GetColorEntry(i))})
+
+    return color_dict
+
+
+def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats) -> RasterStats:
     """Combine two RasterStats into one"""
+
     if prev_stats is None:
         return curr_stats
+    
+    if curr_stats is None: #if there is any NODATA block after proper block, skip
+        return prev_stats
 
     next_count = prev_stats.count + curr_stats.count
     prev_weight = prev_stats.count / next_count
@@ -206,6 +239,9 @@ def read_statistics(
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
         values = [val for val in values if val != nodata]
+
+    if len(values) == 0:  #if values are not available to calculate stats, return None
+        return None
 
     return RasterStats(
         count=len(values),
@@ -325,6 +361,14 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
             [
                 gdaltype_bandtypes[ds.GetRasterBand(band_num).DataType].name
                 for band_num in range(1, 1 + ds.RasterCount)
+            ],
+            [
+                osgeo.gdal.GetColorInterpretationName(ds.GetRasterBand(band_num).GetColorInterpretation())
+                for band_num in range(1, 1+ds.RasterCount)
+            ],
+            [
+                mapColors(ds.GetRasterBand(band_num).GetColorTable()) if ds.GetRasterBand(band_num).GetColorTable() else None
+                for band_num in range(1, 1+ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
             ds.RasterXSize,
@@ -575,9 +619,9 @@ def main(geotiff_filename, raquet_filename):
             "num_blocks": num_blocks,
             "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
             "bands": [
-                {"type": btype, "name": bname, "stats": stats.__dict__}
-                for btype, bname, stats in zip(
-                    raster_geometry.bandtypes, band_names, band_stats
+                {"type": btype, "name": bname, "colorinterp":bcolorinterp, "colortable":bcolortable, "stats": stats.__dict__}
+                for btype, bname, bcolorinterp, bcolortable, stats in zip(
+                    raster_geometry.bandtypes, band_names, raster_geometry.bandcolorinterp, raster_geometry.bandcolortable, band_stats
                 )
             ],
             **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
