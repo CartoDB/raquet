@@ -133,7 +133,7 @@ Test case "geotiff-discreteloss_2023.tif"
 
 Test case "colored.tif"
 
-    >>> main("examples/colored.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.NearestNeighbour)
+    >>> main("tests/colored.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.NearestNeighbour)
     >>> table5 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> metadata5 = read_metadata(table5)
 
@@ -141,7 +141,6 @@ Test case "colored.tif"
     {'band_1': 'Palette'}
 
     >>> color_dict= metadata5["bands"][0]["colortable"]
-
     >>> {k:list(v) for k, v in itertools.islice(color_dict.items(),6)}
     {'0': [0, 0, 0, 0], '1': [0, 255, 0, 255], '2': [0, 0, 255, 255], '3': [255, 255, 0, 255], '4': [255, 165, 0, 255], '5': [255, 0, 0, 255]}
 

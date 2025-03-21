@@ -27,7 +27,7 @@ Test case "europe.parquet"
 
 Test case "colored.parquet"
 
->>> main("examples/colored.parquet", geotiff_tempfile)
+>>> main("tests/colored.parquet", geotiff_tempfile)
 >>> geotiff_info = read_geotiff_info(geotiff_tempfile)
 
 >>> band = geotiff_info["bands"][0]
