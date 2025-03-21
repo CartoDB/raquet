@@ -249,11 +249,11 @@ def generate_tiles(rg: RasterGeometry):
         yield tile
 
 
-def mapColors(colorTable: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in mapColors())
-    color_dict = {}
-    for i in range(colorTable.GetCount()):
-        color_dict.update({str(i): list(colorTable.GetColorEntry(i))})
-
+def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_geotiff)
+    color_dict = {
+        str(i): list(color_table.GetColorEntry(i))
+        for i in range(color_table.GetCount())
+    }
     return color_dict
 
 
@@ -432,6 +432,7 @@ def read_geotiff(
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
         band_nums = list(range(1, 1 + ds.RasterCount))
+        bands = [ds.GetRasterBand(band_num) for band_num in band_nums]
 
         tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
         minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
@@ -441,21 +442,14 @@ def read_geotiff(
         zoom = find_zoom(resolution, zoom_strategy)
 
         raster_geometry = RasterGeometry(
+            [gdaltype_bandtypes[band.DataType].name for band in bands],
             [
-                gdaltype_bandtypes[ds.GetRasterBand(band_num).DataType].name
-                for band_num in band_nums
+                osgeo.gdal.GetColorInterpretationName(band.GetColorInterpretation())
+                for band in bands
             ],
             [
-                osgeo.gdal.GetColorInterpretationName(
-                    ds.GetRasterBand(band_num).GetColorInterpretation()
-                )
-                for band_num in band_nums
-            ],
-            [
-                mapColors(ds.GetRasterBand(band_num).GetColorTable())
-                if ds.GetRasterBand(band_num).GetColorTable()
-                else None
-                for band_num in band_nums
+                get_colortable_dict(b.GetColorTable()) if b.GetColorTable() else None
+                for b in bands
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
             zoom,
