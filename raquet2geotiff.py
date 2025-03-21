@@ -11,6 +11,9 @@ Required packages:
     - quadbin <https://pypi.org/project/quadbin/>
 
 >>> import tempfile; _, geotiff_tempfile = tempfile.mkstemp(suffix=".tif")
+
+Test case "europe.parquet"
+
 >>> main("examples/europe.parquet", geotiff_tempfile)
 >>> geotiff_info = read_geotiff_info(geotiff_tempfile)
 >>> geotiff_info["size"]
@@ -21,6 +24,20 @@ Required packages:
 
 >>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
 [([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
+
+Test case "colored.parquet"
+
+>>> main("examples/colored.parquet", geotiff_tempfile)
+>>> geotiff_info = read_geotiff_info(geotiff_tempfile)
+
+>>> band = geotiff_info["bands"][0]
+
+>>> band["colorInterpretation"]
+'Palette'
+
+>>> [colorEntry for colorEntry in band["colorTable"]["entries"][:6]]
+[[0, 0, 0, 0], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255], [255, 165, 0, 255], [255, 0, 0, 255]]
+
 
 """
 
@@ -34,6 +51,40 @@ import mercantile
 import pyarrow.compute
 import pyarrow.parquet
 import quadbin
+
+GDAL_COLOR_INTERP = {
+    "Undefined": 0,
+    "Gray": 1,
+    "Palette": 2,
+    "Red": 3,
+    "Green": 4,
+    "Blue": 5,
+    "Alpha": 6,
+    "Hue": 7,
+    "Saturation": 8,
+    "Lightness": 9,
+    "Cyan": 10,
+    "Magenta": 11,
+    "Yellow": 12,
+    "Black": 13,
+    "Pan": 14,
+    "Coastal": 15,
+    "RedEdge": 16,
+    "NIR": 17,
+    "SWIR": 18,
+    "MWIR": 19,
+    "LWIR": 20,
+    "TIR": 21,
+    "OtherIR": 22,
+    "SAR_Ka": 23,
+    "SAR_K": 24,
+    "SAR_Ku": 25,
+    "SAR_X": 26,
+    "SAR_C": 27,
+    "SAR_S": 28,
+    "SAR_L": 29,
+    "SAR_P": 30,
+}
 
 
 def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
@@ -130,8 +181,33 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                 # Write to raster
                 for i, block_datum in enumerate(block_data):
                     band = raster.GetRasterBand(i + 1)
-                    if metadata.get("nodata") is not None:
+
+                    if (
+                        "nodata" in metadata
+                        and metadata.get("nodata") is not None
+                        and band.GetNoDataValue() is None
+                    ):
                         band.SetNoDataValue(metadata["nodata"])
+
+                    if (
+                        "colortable" in metadata.get("bands")[i]
+                        and metadata.get("bands")[i]["colortable"] is not None
+                        and band.GetColorTable() is None
+                    ):
+                        color_dict = metadata["bands"][i]["colortable"]
+                        colorTable = osgeo.gdal.ColorTable()
+                        for index, rgba in color_dict.items():
+                            colorTable.SetColorEntry(int(index), tuple(rgba))
+                        band.SetColorTable(colorTable)
+
+                    if (
+                        "colorinterp" in metadata.get("bands")[i]
+                        and metadata.get("bands")[i]["colorinterp"] is not None
+                    ):
+                        band.SetColorInterpretation(
+                            GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]]
+                        )
+
                     band.WriteRaster(
                         xoff,
                         yoff,
@@ -139,6 +215,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                         metadata["block_height"],
                         block_datum,
                     )
+
             except EOFError:
                 break
 
