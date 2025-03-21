@@ -4,107 +4,152 @@
 Usage:
     geotiff2raquet.py <geotiff_filename> <raquet_filename>
 
+Help:
+    geotiff2raquet.py --help
+
 Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 
->>> import tempfile; _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
->>> from itertools import islice
+Tests
+
+    >>> import tempfile, itertools
+    >>> _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
+
+    >>> def print_stats(d):
+    ...     print(*[f'{k}={v:.4g}' for k, v in sorted(d.items())])
 
 Test case "europe.tif"
 
->>> main("examples/europe.tif", raquet_tempfile)
->>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
->>> len(table1)
-17
+    >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.CubicSpline)
+    >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table1)
+    17
 
->>> table1.column_names
-['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
+    >>> table1.column_names
+    ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
 
->>> metadata1 = read_metadata(table1)
->>> [metadata1[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
-['gzip', 1024, 1024, 16, 1048576, None]
+    >>> metadata1 = read_metadata(table1)
+    >>> [metadata1[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1024, 1024, 16, 1048576, None]
 
->>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-[5, 13, 5, 5]
+    >>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [5, 13, 5, 5]
 
->>> [round(b, 8) for b in metadata1["bounds"]]
-[0.0, 40.97989807, 45.0, 66.51326044]
+    >>> [round(b, 3) for b in metadata1["bounds"]]
+    [0.0, 40.98, 45.0, 66.513]
 
->>> [round(b, 8) for b in metadata1["center"]]
-[22.5, 53.74657926, 5]
+    >>> [round(b, 3) for b in metadata1["center"]]
+    [22.5, 53.747, 5]
 
->>> {b["name"]: b["type"] for b in metadata1["bands"]}
-{'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
+    >>> {b["name"]: b["type"] for b in metadata1["bands"]}
+    {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][0]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 166.05272293, 'min': 13, 'stddev': 59.86040623, 'sum': 174118900, 'sum_squares': 34651971296}
+    >>> {b["name"]: b["colorinterp"] for b in metadata1["bands"]}
+    {'band_1': 'Red', 'band_2': 'Green', 'band_3': 'Blue', 'band_4': 'Alpha'}
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][1]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 152.49030876, 'min': 15, 'stddev': 73.9501475, 'sum': 159897678, 'sum_squares': 32764948700}
+    >>> print_stats(metadata1["bands"][0]["stats"])
+    count=1.049e+06 max=255 mean=104.7 min=0 stddev=63.24 sum=1.098e+08 sum_squares=1.827e+10
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][2]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 185.30587387, 'min': 15, 'stddev': 50.48477702, 'sum': 194307292, 'sum_squares': 39814764632}
+    >>> print_stats(metadata1["bands"][1]["stats"])
+    count=1.049e+06 max=255 mean=91.15 min=0 stddev=58.76 sum=9.558e+07 sum_squares=1.642e+10
 
->>> {k: round(v, 8) for k, v in sorted(metadata1["bands"][3]["stats"].items())}
-{'count': 1048576, 'max': 255, 'mean': 189.74769783, 'min': 0, 'stddev': 83.36095331, 'sum': 198964882, 'sum_squares': 50531863662}
+    >>> print_stats(metadata1["bands"][2]["stats"])
+    count=1.049e+06 max=255 mean=124 min=0 stddev=68.08 sum=1.3e+08 sum_squares=2.342e+10
 
->>> {b["name"]: b["colorinterp"] for b in metadata1["bands"]}
-{'band_1': 'Red', 'band_2': 'Green', 'band_3': 'Blue', 'band_4': 'Alpha'}
+    >>> print_stats(metadata1["bands"][3]["stats"])
+    count=1.049e+06 max=255 mean=189.7 min=0 stddev=83.36 sum=1.99e+08 sum_squares=5.053e+10
 
-Test case "san-francisco.tif"
+Test case "n37_w123_1arc_v2.tif"
 
->>> main("examples/san-francisco.tif", raquet_tempfile)
->>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
->>> len(table2)
-5
+    >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER, ResamplingAlgorithm.CubicSpline)
+    >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table2)
+    5
 
->>> table2.column_names
-['block', 'metadata', 'band_1']
+    >>> table2.column_names
+    ['block', 'metadata', 'band_1']
 
->>> metadata2 = read_metadata(table2)
->>> [metadata2[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
-['gzip', 512, 512, 4, 262144, -32767.0]
+    >>> metadata2 = read_metadata(table2)
+    >>> [metadata2[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 512, 512, 4, 262144, -32767.0]
 
->>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-[11, 19, 11, 11]
+    >>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [11, 19, 11, 11]
 
->>> [round(b, 8) for b in metadata2["bounds"]]
-[-122.6953125, 37.57941251, -122.34375, 37.85750716]
+    >>> [round(b, 3) for b in metadata2["bounds"]]
+    [-122.695, 37.579, -122.344, 37.858]
 
->>> [round(b, 8) for b in metadata2["center"]]
-[-122.51953125, 37.71845983, 11]
+    >>> [round(b, 3) for b in metadata2["center"]]
+    [-122.52, 37.718, 11]
 
->>> {b["name"]: b["type"] for b in metadata2["bands"]}
-{'band_1': 'int16'}
+    >>> {b["name"]: b["type"] for b in metadata2["bands"]}
+    {'band_1': 'int16'}
 
->>> {k: round(v, 8) for k, v in sorted(metadata2["bands"][0]["stats"].items())}
-{'count': 96292, 'max': 376, 'mean': 38.37549329, 'min': -8, 'stddev': 54.04986343, 'sum': 3695253, 'sum_squares': 453048595}
+    >>> print_stats(metadata2["bands"][0]["stats"])
+    count=9.692e+04 max=377 mean=38.22 min=-7 stddev=54.02 sum=3.704e+06 sum_squares=4.539e+08
+
+Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
+
+    >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
+    >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table3)
+    43
+
+    >>> table3.column_names
+    ['block', 'metadata', 'band_1']
+
+    >>> metadata3 = read_metadata(table3)
+    >>> [metadata3[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1536, 1792, 42, 2752512, 250.0]
+
+    >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [13, 21, 13, 13]
+
+    >>> print_stats(metadata3["bands"][0]["stats"])
+    count=1.216e+06 max=95 mean=75.85 min=11 stddev=16.47 sum=9.225e+07 sum_squares=7.415e+09
+
+Test case "geotiff-discreteloss_2023.tif"
+
+    >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
+    >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> len(table4)
+    26
+
+    >>> table4.column_names
+    ['block', 'metadata', 'band_1']
+
+    >>> metadata4 = read_metadata(table4)
+    >>> [metadata4[k] for k in ["compression", "width", "height", "num_blocks", "num_pixels", "nodata"]]
+    ['gzip', 1280, 1280, 25, 1638400, 0.0]
+
+    >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
+    [13, 21, 13, 13]
+
+    >>> print_stats(metadata4["bands"][0]["stats"])
+    count=2.736e+04 max=1 mean=1 min=1 stddev=0 sum=2.736e+04 sum_squares=2.736e+04
 
 Test case "colored.tif"
 
->>> main("examples/colored.tif", raquet_tempfile)
+    >>> main("tests/colored.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.NearestNeighbour)
+    >>> table5 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> metadata5 = read_metadata(table5)
 
->>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
+    >>> {b["name"]: b["colorinterp"] for b in metadata5["bands"]}
+    {'band_1': 'Palette'}
 
->>> metadata3 = read_metadata(table3)
-
->>> {b["name"]: b["colorinterp"] for b in metadata3["bands"]}
-{'band_1': 'Palette'}
-
->>> color_dict= metadata3["bands"][0]["colortable"]
-
->>> {k:list(v) for k, v in islice(color_dict.items(),6)}
-{'0': [0, 0, 0, 0], '1': [0, 255, 0, 255], '2': [0, 0, 255, 255], '3': [255, 255, 0, 255], '4': [255, 165, 0, 255], '5': [255, 0, 0, 255]}
+    >>> color_dict= metadata5["bands"][0]["colortable"]
+    >>> {k:list(v) for k, v in itertools.islice(color_dict.items(),6)}
+    {'0': [0, 0, 0, 0], '1': [0, 255, 0, 255], '2': [0, 0, 255, 255], '3': [255, 255, 0, 255], '4': [255, 165, 0, 255], '5': [255, 0, 0, 255]}
 
 """
 
 import argparse
 import dataclasses
+import enum
 import gzip
-import itertools
 import json
 import logging
 import math
@@ -120,12 +165,39 @@ import quadbin
 # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
 BLOCK_ZOOM = 8
 
-# Decimal precision needed for resolution comparisons
-DECM_PRECISION = 11
 
-# List of acceptable ground resolutions for whole-number Web Mercator zooms
-# See also https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system
-VALID_RESOLUTIONS = [round(mercantile.CE / (2**i), DECM_PRECISION) for i in range(32)]
+class ZoomStrategy(enum.StrEnum):
+    """Switch for web mercator zoom level selection
+
+    See ZOOM_LEVEL_STRATEGY at https://gdal.org/en/stable/drivers/raster/cog.html#reprojection-related-creation-options
+    """
+
+    AUTO = "auto"
+    LOWER = "lower"
+    UPPER = "upper"
+
+
+class ResamplingAlgorithm(enum.StrEnum):
+    """Resampling method to use
+
+    See -r option at https://gdal.org/en/stable/programs/gdalwarp.html#cmdoption-gdalwarp-r
+    """
+
+    NearestNeighbour = "near"
+    Average = "average"
+    Bilinear = "bilinear"
+    Cubic = "cubic"
+    CubicSpline = "cubicspline"
+    Lanczos = "lanczos"
+    Max = "max"
+    Med = "med"
+    Min = "min"
+    Mode = "mode"
+    Q1 = "q1"
+    Q3 = "q3"
+    RMS = "rms"
+    Sum = "sum"
+
 
 @dataclasses.dataclass
 class RasterGeometry:
@@ -133,21 +205,13 @@ class RasterGeometry:
 
     bandtypes: list[str]
     bandcolorinterp: list[str]
-    bandcolortable:list[dict]
+    bandcolortable: list[dict]
     nodata: int | float | None
-    width: int
-    height: int
     zoom: int
     minlat: float
     minlon: float
     maxlat: float
     maxlon: float
-    xoff: float
-    xres: float
-    gt2: float
-    yoff: float
-    gt4: float
-    yres: float
 
 
 @dataclasses.dataclass
@@ -179,40 +243,32 @@ def generate_tiles(rg: RasterGeometry):
     Args:
         rg: RasterGeometry instance
 
-    Returns:
-        Generator of tiles
+    Yields: tile
     """
-    logging.info("xoff %s yoff %s zoom %s", rg.xoff, rg.yoff, rg.zoom)
-    earth_circumference = mercantile.CE
-
-    tileres = earth_circumference / 2**rg.zoom
-    ulx = int((rg.xoff + earth_circumference / 2) / tileres)
-    uly = int((earth_circumference / 2 - rg.yoff) / tileres)
-    logging.info("tileres %s ulx %s uly %s", tileres, ulx, uly)
-
-    lrx = int((rg.xoff + rg.width * rg.xres + earth_circumference / 2) / tileres)
-    lry = int((earth_circumference / 2 - (rg.yoff + rg.height * rg.yres)) / tileres)
-    logging.info("lrx %s lry %s", lrx, lry)
-
-    for x, y in itertools.product(range(ulx, lrx + 1), range(uly, lry + 1)):
-        yield mercantile.Tile(x, y, rg.zoom)
+    for tile in mercantile.tiles(rg.minlon, rg.minlat, rg.maxlon, rg.maxlat, rg.zoom):
+        yield tile
 
 
-def mapColors(colorTable:"osgeo.gdal.ColorTable"): # noqa: F821 (Color table type safely imported in mapColors())
-    color_dict={}
+def mapColors(colorTable: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in mapColors())
+    color_dict = {}
     for i in range(colorTable.GetCount()):
-        color_dict.update({str(i):list(colorTable.GetColorEntry(i))})
+        color_dict.update({str(i): list(colorTable.GetColorEntry(i))})
 
     return color_dict
 
 
-def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats) -> RasterStats:
+def combine_stats(
+    prev_stats: RasterStats | None, curr_stats: RasterStats | None
+) -> RasterStats | None:
     """Combine two RasterStats into one"""
 
     if prev_stats is None:
         return curr_stats
-    
-    if curr_stats is None: #if there is any NODATA block after proper block, skip
+
+    if curr_stats is None:  # if there is any NODATA block after proper block, skip
+        return prev_stats
+
+    if curr_stats is None:
         return prev_stats
 
     next_count = prev_stats.count + curr_stats.count
@@ -229,7 +285,6 @@ def combine_stats(prev_stats: RasterStats | None, curr_stats: RasterStats) -> Ra
         sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
     )
 
-    logging.info("%s + %s = %s", prev_stats, curr_stats, next_stats)
     return next_stats
 
 
@@ -240,7 +295,7 @@ def read_statistics(
     if nodata is not None:
         values = [val for val in values if val != nodata]
 
-    if len(values) == 0:  #if values are not available to calculate stats, return None
+    if len(values) == 0:
         return None
 
     return RasterStats(
@@ -255,55 +310,78 @@ def read_statistics(
 
 
 def read_rasterband(
-    band: "osgeo.gdal.Band",  # noqa: F821 (Band type safely imported in read_geotiff)
-    bbox: tuple[int, int, int, int],
-    xpads: tuple[int, int],
-    ypads: tuple[int, int],
+    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     band_type: BandType,
 ) -> tuple[bytes, RasterStats]:
-    """Return uncompressed raster bytes padded to full tile size.
-
-    Acts like numpy.pad() without requiring numpy dependency
-    """
-    data1 = band.ReadRaster(*bbox)
-    pixel_values = struct.unpack(band_type.fmt * bbox[2] * bbox[3], data1)
+    """Return uncompressed raster bytes and stats"""
+    data = band.ReadRaster(0, 0, band.XSize, band.YSize)
+    pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
     stats = read_statistics(pixel_values, band.GetNoDataValue())
 
-    # Return early if no padding to be done
-    if (xpads, ypads) == ((0, 0), (0, 0)):
-        return data1, stats
+    return data, stats
 
-    # Prepare nodata cell value in expected format
-    if (_nodata := band.GetNoDataValue()) is not None:
-        nodata = struct.pack(band_type.fmt, band_type.typ(_nodata))
+
+def find_bounds(
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+) -> tuple[float, float, float, float]:
+    """Return outer bounds for raster in a given transformation"""
+    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
+    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff, yoff + ydim * yres)
+    x3, y3, _ = transform.TransformPoint(xoff + xdim * xres, yoff)
+    x4, y4, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+
+    x5, y5 = min(x1, x2, x3, x4), min(y1, y2, y3, y4)
+    x6, y6 = max(x1, x2, x3, x4), max(y1, y2, y3, y4)
+
+    return (x5, y5, x6, y6)
+
+
+def find_resolution(
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+) -> float:
+    """Return units per pixel for raster via a given transformation"""
+    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
+    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+
+    return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
+
+
+def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
+    """Calculate web mercator zoom from a raw meters/pixel resolution"""
+    raw_zoom = math.log(mercantile.CE / 256 / resolution) / math.log(2)
+    if zoom_strategy is ZoomStrategy.UPPER:
+        zoom = math.ceil(raw_zoom)
+    elif zoom_strategy is ZoomStrategy.LOWER:
+        zoom = math.floor(raw_zoom)
     else:
-        nodata = struct.pack(band_type.fmt, band_type.typ(0))
-
-    # Pad start and end of each row if needed
-    data2 = [data1]
-
-    if xpads != (0, 0):
-        rowsize = bbox[2] * band_type.size
-        offsets = range(0, len(data1), rowsize)
-        rowprefix, rowsuffix = nodata * xpads[0], nodata * xpads[1]
-        data2 = [rowprefix + data1[off : off + rowsize] + rowsuffix for off in offsets]
-
-    # Pad start and end of full table if needed
-    data3 = data2
-
-    if ypads != (0, 0):
-        emptyrow = nodata * (xpads[0] + bbox[2] + xpads[1])
-        data3 = [emptyrow] * ypads[0] + data2 + [emptyrow] * ypads[1]
-
-    # Concatenate raw bytes and return
-    return b"".join(data3), stats
+        zoom = round(raw_zoom)
+    return int(zoom)
 
 
-def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
+def read_geotiff(
+    geotiff_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    pipe_in: multiprocessing.Pipe,
+    pipe_out: multiprocessing.Pipe,
+):
     """Worker process that accesses a GeoTIFF through pipes.
+
+    Send RasterGeometry via pipe_out first, then respond to (band, tile) tuples on
+    pipe_in with (data bytes, RasterStats instances) tuples on pipe_out.
 
     Args:
         geotiff_filename: Name of GeoTIFF file to open
+        zoom_strategy: Web mercator zoom level selection
+        resampling_algorithm: Resampling method to use
         pipe_in: Connection to receive data from parent
         pipe_out: Connection to send data to parent
     """
@@ -312,6 +390,13 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
     import osgeo.osr
 
     osgeo.gdal.UseExceptions()
+
+    wgs84 = osgeo.osr.SpatialReference()
+    wgs84.ImportFromEPSG(4326)
+    wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+    web_mercator = osgeo.osr.SpatialReference()
+    web_mercator.ImportFromEPSG(3857)
 
     gdaltype_bandtypes: dict[int, BandType] = {
         osgeo.gdal.GDT_Byte: BandType("B", 1, int, "uint8"),
@@ -330,32 +415,32 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         osgeo.gdal.GDT_UInt64: BandType("Q", 8, int, "uint64"),
     }
 
+    resampling_algorithms: dict[str, int] = {
+        ResamplingAlgorithm.Average: osgeo.gdal.GRA_Average,
+        ResamplingAlgorithm.Bilinear: osgeo.gdal.GRA_Bilinear,
+        ResamplingAlgorithm.Cubic: osgeo.gdal.GRA_Cubic,
+        ResamplingAlgorithm.CubicSpline: osgeo.gdal.GRA_CubicSpline,
+        ResamplingAlgorithm.Lanczos: osgeo.gdal.GRA_Lanczos,
+        ResamplingAlgorithm.Max: osgeo.gdal.GRA_Max,
+        ResamplingAlgorithm.Med: osgeo.gdal.GRA_Med,
+        ResamplingAlgorithm.Min: osgeo.gdal.GRA_Min,
+        ResamplingAlgorithm.Mode: osgeo.gdal.GRA_Mode,
+        ResamplingAlgorithm.NearestNeighbour: osgeo.gdal.GRA_NearestNeighbour,
+        ResamplingAlgorithm.Q1: osgeo.gdal.GRA_Q1,
+        ResamplingAlgorithm.Q3: osgeo.gdal.GRA_Q3,
+        ResamplingAlgorithm.RMS: osgeo.gdal.GRA_RMS,
+        ResamplingAlgorithm.Sum: osgeo.gdal.GRA_Sum,
+    }
+
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
-        sref = ds.GetSpatialRef()
-        xmin, xres, _, ymax, _, yres = ds.GetGeoTransform()
 
-        web_mercator = osgeo.osr.SpatialReference()
-        web_mercator.ImportFromEPSG(3857)
-        if sref.ExportToProj4() != web_mercator.ExportToProj4():
-            raise ValueError("Source SRS is not EPSG:3857")
+        tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
+        minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
 
-        if round(-yres, DECM_PRECISION) not in VALID_RESOLUTIONS:
-            raise ValueError(f"Vertical pixel size {-yres} is not a valid scale")
-        if round(xres, DECM_PRECISION) not in VALID_RESOLUTIONS:
-            raise ValueError(f"Horizontal pixel size {xres} is not a valid scale")
-
-        zoom = VALID_RESOLUTIONS.index(round(xres, DECM_PRECISION)) - BLOCK_ZOOM
-        xmax = xmin + ds.RasterXSize * xres
-        ymin = ymax + ds.RasterYSize * yres
-
-        wgs84 = osgeo.osr.SpatialReference()
-        wgs84.ImportFromEPSG(4326)  # WGS84
-        wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-        transform = osgeo.osr.CoordinateTransformation(web_mercator, wgs84)
-
-        minlon, minlat, _ = transform.TransformPoint(xmin, ymin)
-        maxlon, maxlat, _ = transform.TransformPoint(xmax, ymax)
+        tx3857 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), web_mercator)
+        resolution = find_resolution(ds, tx3857)
+        zoom = find_zoom(resolution, zoom_strategy)
 
         raster_geometry = RasterGeometry(
             [
@@ -363,25 +448,28 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 for band_num in range(1, 1 + ds.RasterCount)
             ],
             [
-                osgeo.gdal.GetColorInterpretationName(ds.GetRasterBand(band_num).GetColorInterpretation())
-                for band_num in range(1, 1+ds.RasterCount)
+                osgeo.gdal.GetColorInterpretationName(
+                    ds.GetRasterBand(band_num).GetColorInterpretation()
+                )
+                for band_num in range(1, 1 + ds.RasterCount)
             ],
             [
-                mapColors(ds.GetRasterBand(band_num).GetColorTable()) if ds.GetRasterBand(band_num).GetColorTable() else None
-                for band_num in range(1, 1+ds.RasterCount)
+                mapColors(ds.GetRasterBand(band_num).GetColorTable())
+                if ds.GetRasterBand(band_num).GetColorTable()
+                else None
+                for band_num in range(1, 1 + ds.RasterCount)
             ],
             ds.GetRasterBand(1).GetNoDataValue(),
-            ds.RasterXSize,
-            ds.RasterYSize,
             zoom,
             minlat,
             minlon,
             maxlat,
             maxlon,
-            *ds.GetGeoTransform(),
         )
 
         pipe_out.send(raster_geometry)
+
+        tile_ds, prev_tile = None, None
 
         while True:
             try:
@@ -393,64 +481,43 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
                 # Expand message to an intended raster area to retrieve
                 band_num, tile = received
 
-                # Convert mercator coordinates to pixel coordinates
-                xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
-                txoff = int(round((xmin - raster_geometry.xoff) / raster_geometry.xres))
-                tyoff = int(
-                    round((raster_geometry.yoff - ymax) / -raster_geometry.yres)
-                )
-                txsize = int(round((xmax - xmin) / raster_geometry.xres))
-                tysize = int(round((ymax - ymin) / -raster_geometry.yres))
-                expected_count = tysize * txsize
+                # Overwrite tile_ds if needed
+                if tile != prev_tile:
+                    prev_tile = tile
 
-                # Respond with an empty block if requested area is too far east or north
-                if txoff >= ds.RasterXSize or tyoff >= ds.RasterYSize:
-                    pipe_out.send((None, None))
-                    continue
+                    # Initialize warped tile dataset and its bands
+                    tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
+                        "/vsimem/tile.tif",
+                        2**BLOCK_ZOOM,
+                        2**BLOCK_ZOOM,
+                        ds.RasterCount,
+                        ds.GetRasterBand(1).DataType,
+                    )
+                    tile_ds.SetProjection(web_mercator.ExportToWkt())
 
-                # Adjust raster area to within valid values
-                xpad_before, xpad_after, ypad_before, ypad_after = 0, 0, 0, 0
-                if txoff < 0:
-                    txoff, txsize, xpad_before = 0, txsize + txoff, -txoff
-                if tyoff < 0:
-                    tyoff, tysize, ypad_before = 0, tysize + tyoff, -tyoff
-                if txoff + txsize > ds.RasterXSize:
-                    xpad_after = txsize - (ds.RasterXSize - txoff)
-                    txsize = ds.RasterXSize - txoff
-                if tyoff + tysize > ds.RasterYSize:
-                    ypad_after = tysize - (ds.RasterYSize - tyoff)
-                    tysize = ds.RasterYSize - tyoff
+                    for i in range(1, 1 + ds.RasterCount):
+                        if (nodata := ds.GetRasterBand(i).GetNoDataValue()) is not None:
+                            tile_ds.GetRasterBand(i).SetNoDataValue(nodata)
 
-                # Respond with an empty block if requested area is zero width or height
-                if txsize == 0 or tysize == 0:
-                    pipe_out.send((None, None))
-                    continue
+                    # Convert mercator coordinates to pixel coordinates
+                    xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
+                    px_width = (xmax - xmin) / tile_ds.RasterXSize
+                    px_height = (ymax - ymin) / tile_ds.RasterYSize
+                    tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
 
-                logging.info(
-                    "Band %s nodata value: %s",
-                    band_num,
-                    ds.GetRasterBand(band_num).GetNoDataValue(),
-                )
+                    osgeo.gdal.Warp(
+                        destNameOrDestDS=tile_ds,
+                        srcDSOrSrcDSTab=ds,
+                        options=osgeo.gdal.WarpOptions(
+                            resampleAlg=resampling_algorithms[resampling_algorithm],
+                        ),
+                    )
 
-                # Read raster data for this tile
-                band = ds.GetRasterBand(band_num)
-                logging.info(
-                    "txoff %s tyoff %s txsize %s tysize %s",
-                    txoff,
-                    tyoff,
-                    txsize,
-                    tysize,
-                )
-
-                # Pad to full tile size with NODATA fill if needed
-                bbox = (txoff, tyoff, txsize, tysize)
-                xpads, ypads = (xpad_before, xpad_after), (ypad_before, ypad_after)
-                band_type = gdaltype_bandtypes[band.DataType]
-                data, stats = read_rasterband(band, bbox, xpads, ypads, band_type)
+                band = tile_ds.GetRasterBand(band_num)
+                data, stats = read_rasterband(band, gdaltype_bandtypes[band.DataType])
                 logging.info(
                     "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
                 )
-                assert len(data) == expected_count * band_type.size
 
                 pipe_out.send((gzip.compress(data), stats))
             except EOFError:
@@ -460,7 +527,11 @@ def read_geotiff(geotiff_filename: str, pipe_in, pipe_out):
         pipe_out.close()
 
 
-def open_geotiff_in_process(geotiff_filename: str):
+def open_geotiff_in_process(
+    geotiff_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+) -> tuple[RasterGeometry, multiprocessing.Pipe, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
     Returns:
@@ -471,9 +542,8 @@ def open_geotiff_in_process(geotiff_filename: str):
     child_recv, parent_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    process = multiprocessing.Process(
-        target=read_geotiff, args=(geotiff_filename, child_recv, child_send)
-    )
+    args = geotiff_filename, zoom_strategy, resampling_algorithm, child_recv, child_send
+    process = multiprocessing.Process(target=read_geotiff, args=args)
     process.start()
 
     # Close child ends in parent process
@@ -522,17 +592,24 @@ def get_raquet_dimensions(
     }
 
 
-def main(geotiff_filename, raquet_filename):
+def main(
+    geotiff_filename: str,
+    raquet_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+):
     """Read GeoTIFF datasource and write to a RaQuet file
 
     Args:
         geotiff_filename: GeoTIFF filename
         raquet_filename: RaQuet filename
+        zoom_strategy: ZoomStrategy member
     """
-    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(geotiff_filename)
+    raster_geometry, pipe_send, pipe_recv = open_geotiff_in_process(
+        geotiff_filename, zoom_strategy, resampling_algorithm
+    )
 
     try:
-        assert raster_geometry.gt2 == 0 and raster_geometry.gt4 == 0, "Expect no skew"
         band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
 
         # Create table schema based on band count
@@ -619,9 +696,19 @@ def main(geotiff_filename, raquet_filename):
             "num_blocks": num_blocks,
             "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
             "bands": [
-                {"type": btype, "name": bname, "colorinterp":bcolorinterp, "colortable":bcolortable, "stats": stats.__dict__}
+                {
+                    "type": btype,
+                    "name": bname,
+                    "colorinterp": bcolorinterp,
+                    "colortable": bcolortable,
+                    "stats": stats.__dict__,
+                }
                 for btype, bname, bcolorinterp, bcolortable, stats in zip(
-                    raster_geometry.bandtypes, band_names, raster_geometry.bandcolorinterp, raster_geometry.bandcolortable, band_stats
+                    raster_geometry.bandtypes,
+                    band_names,
+                    raster_geometry.bandcolorinterp,
+                    raster_geometry.bandcolortable,
+                    band_stats,
                 )
             ],
             **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
@@ -650,9 +737,26 @@ parser.add_argument("raquet_filename")
 parser.add_argument(
     "-v", "--verbose", action="store_true", help="Enable verbose output"
 )
+parser.add_argument(
+    "--zoom-strategy",
+    help="Strategy to determine zoom, see also https://gdal.org/en/stable/drivers/raster/cog.html#reprojection-related-creation-options",
+    choices=list(ZoomStrategy),
+    default=ZoomStrategy.AUTO,
+)
+parser.add_argument(
+    "--resampling-algorithm",
+    help="Resampling method to use, see also https://gdal.org/en/stable/programs/gdalwarp.html#cmdoption-gdalwarp-r",
+    choices=list(ResamplingAlgorithm),
+    default=ResamplingAlgorithm.NearestNeighbour,
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
-    main(args.geotiff_filename, args.raquet_filename)
+    main(
+        args.geotiff_filename,
+        args.raquet_filename,
+        ZoomStrategy(args.zoom_strategy),
+        ResamplingAlgorithm(args.resampling_algorithm),
+    )

@@ -27,7 +27,7 @@ Test case "europe.parquet"
 
 Test case "colored.parquet"
 
->>> main("examples/colored.parquet", geotiff_tempfile)
+>>> main("tests/colored.parquet", geotiff_tempfile)
 >>> geotiff_info = read_geotiff_info(geotiff_tempfile)
 
 >>> band = geotiff_info["bands"][0]
@@ -52,7 +52,7 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
-GDAL_COLOR_INTERP= {
+GDAL_COLOR_INTERP = {
     "Undefined": 0,
     "Gray": 1,
     "Palette": 2,
@@ -83,9 +83,8 @@ GDAL_COLOR_INTERP= {
     "SAR_C": 27,
     "SAR_S": 28,
     "SAR_L": 29,
-    "SAR_P": 30
+    "SAR_P": 30,
 }
-
 
 
 def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
@@ -183,19 +182,32 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                 for i, block_datum in enumerate(block_data):
                     band = raster.GetRasterBand(i + 1)
 
-                    if "nodata" in metadata and metadata.get("nodata") is not None and band.GetNoDataValue() is None:
+                    if (
+                        "nodata" in metadata
+                        and metadata.get("nodata") is not None
+                        and band.GetNoDataValue() is None
+                    ):
                         band.SetNoDataValue(metadata["nodata"])
 
-                    if "colortable" in metadata.get("bands")[i] and metadata.get("bands")[i]["colortable"] is not None and band.GetColorTable() is None:
-                        color_dict=metadata["bands"][i]["colortable"]
-                        colorTable= osgeo.gdal.ColorTable()
+                    if (
+                        "colortable" in metadata.get("bands")[i]
+                        and metadata.get("bands")[i]["colortable"] is not None
+                        and band.GetColorTable() is None
+                    ):
+                        color_dict = metadata["bands"][i]["colortable"]
+                        colorTable = osgeo.gdal.ColorTable()
                         for index, rgba in color_dict.items():
                             colorTable.SetColorEntry(int(index), tuple(rgba))
                         band.SetColorTable(colorTable)
 
-                    if "colorinterp" in metadata.get("bands")[i] and metadata.get("bands")[i]["colorinterp"] is not None:
-                        band.SetColorInterpretation(GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]])
-                    
+                    if (
+                        "colorinterp" in metadata.get("bands")[i]
+                        and metadata.get("bands")[i]["colorinterp"] is not None
+                    ):
+                        band.SetColorInterpretation(
+                            GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]]
+                        )
+
                     band.WriteRaster(
                         xoff,
                         yoff,
@@ -203,8 +215,7 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
                         metadata["block_height"],
                         block_datum,
                     )
-                    
-                    
+
             except EOFError:
                 break
 
