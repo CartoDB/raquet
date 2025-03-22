@@ -243,37 +243,24 @@ class BandType:
 
 @dataclasses.dataclass
 class Frame:
+    """Tile wrapper to track pixels and overviews when descending from 0/0/0"""
+
     tile: mercantile.Tile
     inputs: list[mercantile.Tile]
     outputs: list["osgeo.gdal.Dataset"]  # noqa: F821 (Color table type safely imported in read_geotiff)
 
     @staticmethod
-    def create(parent: mercantile.Tile, rg: RasterGeometry) -> "Frame":
-        minlon, minlat, maxlon, maxlat = intersect(mercantile.bounds(parent), rg)
+    def create(parent: mercantile.Tile, raster_geometry: RasterGeometry) -> "Frame":
+        """Generate a new frame with expected inputs and empty outputs"""
+        parent_bbox = mercantile.bounds(parent)
+        minlon, minlat, maxlon, maxlat = (
+            max(parent_bbox.west, raster_geometry.minlon),
+            max(parent_bbox.south, raster_geometry.minlat),
+            min(parent_bbox.east, raster_geometry.maxlon),
+            min(parent_bbox.north, raster_geometry.maxlat),
+        )
         children = mercantile.tiles(minlon, minlat, maxlon, maxlat, parent.z + 1)
         return Frame(parent, list(children), [])
-
-
-def generate_tiles(rg: RasterGeometry):
-    """Generate tiles for a given zoom level
-
-    Args:
-        rg: RasterGeometry instance
-
-    Yields: tile
-    """
-    for tile in mercantile.tiles(rg.minlon, rg.minlat, rg.maxlon, rg.maxlat, rg.zoom):
-        yield tile
-
-
-def intersect(bb: mercantile.LngLatBbox, rg: RasterGeometry) -> mercantile.LngLatBbox:
-    """Return intersection of two spatial bounding rectangles"""
-    return mercantile.LngLatBbox(
-        max(bb.west, rg.minlon),
-        max(bb.south, rg.minlat),
-        min(bb.east, rg.maxlon),
-        min(bb.north, rg.maxlat),
-    )
 
 
 def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_geotiff)
@@ -532,6 +519,11 @@ def read_geotiff(
 
         pipe.send(raster_geometry)
 
+        # Options for the warps to come
+        opts = osgeo.gdal.WarpOptions(
+            resampleAlg=resampling_algorithms[resampling_algorithm]
+        )
+
         # Start with the world tile
         frames = [Frame.create(mercantile.Tile(0, 0, 0), raster_geometry)]
 
@@ -540,40 +532,36 @@ def read_geotiff(
             tile_ds: osgeo.gdal.Dataset | None = None
 
             if frame.tile.z == raster_geometry.zoom:
+                # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
                 tile_ds = create_tile_ds(
                     osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
                 )
                 osgeo.gdal.Warp(
-                    destNameOrDestDS=tile_ds,
-                    srcDSOrSrcDSTab=ds,
-                    options=osgeo.gdal.WarpOptions(
-                        resampleAlg=resampling_algorithms[resampling_algorithm],
-                    ),
+                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=ds, options=opts
                 )
                 data, stats = read_raster_data_stats(tile_ds, gdaltype_bandtypes)
                 pipe.send((frame.tile, data, stats))
             elif not frame.inputs:
+                # Read overview pixels from earlier outputs
                 logging.info("Overview %s from %s", frame.tile, frame.outputs)
                 tile_ds = create_tile_ds(
                     osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
                 )
-                for subtile_ds in frame.outputs:
+                for sub_ds in frame.outputs:
                     osgeo.gdal.Warp(
-                        destNameOrDestDS=tile_ds,
-                        srcDSOrSrcDSTab=subtile_ds,
-                        options=osgeo.gdal.WarpOptions(
-                            resampleAlg=resampling_algorithms[resampling_algorithm],
-                        ),
+                        destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
                     )
                 data, stats = read_raster_data_stats(tile_ds, None, include_stats=False)
                 pipe.send((frame.tile, data, stats))
             else:
+                # Descend deeper into tile hierarchy
                 next_tile = frame.inputs.pop()
                 logging.info("Extend %s with %s", frame.tile, next_tile)
                 frames.extend([frame, Frame.create(next_tile, raster_geometry)])
 
             if tile_ds is not None and frames:
+                # Save current output for future overviews
                 frames[-1].outputs.append(tile_ds)
     finally:
         # Send a None to signal end of messages
