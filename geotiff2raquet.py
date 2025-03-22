@@ -366,6 +366,35 @@ def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
     return int(zoom)
 
 
+def create_tile_ds(
+    driver: "osgeo.gdal.Driver",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    tile: mercantile.Tile,
+) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    # Initialize warped tile dataset and its bands
+    tile_ds = driver.Create(
+        "/vsimem/tile.tif",
+        2**BLOCK_ZOOM,
+        2**BLOCK_ZOOM,
+        ds.RasterCount,
+        ds.GetRasterBand(1).DataType,
+    )
+    tile_ds.SetProjection(web_mercator.ExportToWkt())
+
+    for band_num in range(1, 1 + ds.RasterCount):
+        if (nodata := ds.GetRasterBand(band_num).GetNoDataValue()) is not None:
+            tile_ds.GetRasterBand(band_num).SetNoDataValue(nodata)
+
+    # Convert mercator coordinates to pixel coordinates
+    xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
+    px_width = (xmax - xmin) / tile_ds.RasterXSize
+    px_height = (ymax - ymin) / tile_ds.RasterYSize
+    tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
+
+    return tile_ds
+
+
 def read_geotiff(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
@@ -462,25 +491,9 @@ def read_geotiff(
         pipe.send(raster_geometry)
 
         for tile in generate_tiles(raster_geometry):
-            # Initialize warped tile dataset and its bands
-            tile_ds = osgeo.gdal.GetDriverByName("GTiff").Create(
-                "/vsimem/tile.tif",
-                2**BLOCK_ZOOM,
-                2**BLOCK_ZOOM,
-                ds.RasterCount,
-                ds.GetRasterBand(1).DataType,
+            tile_ds = create_tile_ds(
+                osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, tile
             )
-            tile_ds.SetProjection(web_mercator.ExportToWkt())
-
-            for band_num in band_nums:
-                if (nodata := ds.GetRasterBand(band_num).GetNoDataValue()) is not None:
-                    tile_ds.GetRasterBand(band_num).SetNoDataValue(nodata)
-
-            # Convert mercator coordinates to pixel coordinates
-            xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
-            px_width = (xmax - xmin) / tile_ds.RasterXSize
-            px_height = (ymax - ymin) / tile_ds.RasterYSize
-            tile_ds.SetGeoTransform([xmin, px_width, 0, ymax, 0, -px_height])
 
             osgeo.gdal.Warp(
                 destNameOrDestDS=tile_ds,
