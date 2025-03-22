@@ -378,18 +378,6 @@ def read_statistics(
     )
 
 
-def read_rasterband(
-    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    band_type: BandType,
-) -> tuple[bytes, RasterStats]:
-    """Return uncompressed raster bytes and stats"""
-    data = band.ReadRaster(0, 0, band.XSize, band.YSize)
-    pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
-    stats = read_statistics(pixel_values, band.GetNoDataValue())
-
-    return data, stats
-
-
 def find_bounds(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
@@ -464,6 +452,28 @@ def create_tile_ds(
     return tile_ds
 
 
+def read_raster_data_stats(
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    gdaltype_bandtypes: dict[int, BandType],
+) -> tuple[list[bytes], list[RasterStats]]:
+    """Read data and stats from warped bands"""
+    block_data, block_stats = [], []
+
+    for band_num in range(1, 1 + ds.RasterCount):
+        band = ds.GetRasterBand(band_num)
+        data = band.ReadRaster(0, 0, band.XSize, band.YSize)
+        band_type = gdaltype_bandtypes[band.DataType]
+        pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
+        stats = read_statistics(pixel_values, band.GetNoDataValue())
+        logging.info(
+            "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
+        )
+        block_data.append(gzip.compress(data))
+        block_stats.append(stats)
+
+    return block_data, block_stats
+
+
 def read_geotiff(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
@@ -529,8 +539,7 @@ def read_geotiff(
 
     try:
         ds = osgeo.gdal.Open(geotiff_filename)
-        band_nums = list(range(1, 1 + ds.RasterCount))
-        bands = [ds.GetRasterBand(band_num) for band_num in band_nums]
+        bands = [ds.GetRasterBand(n) for n in list(range(1, 1 + ds.RasterCount))]
 
         tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
         minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
@@ -573,18 +582,7 @@ def read_geotiff(
             )
 
             # Read data and stats from warped bands and send them to parent process
-            block_data, block_stats = [], []
-
-            for band_num in band_nums:
-                band = tile_ds.GetRasterBand(band_num)
-                data, stats = read_rasterband(band, gdaltype_bandtypes[band.DataType])
-                logging.info(
-                    "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
-                )
-                block_data.append(gzip.compress(data))
-                block_stats.append(stats)
-
-            pipe.send((tile, block_data, block_stats))
+            pipe.send((tile, *read_raster_data_stats(tile_ds, gdaltype_bandtypes)))
     finally:
         # Send a None to signal end of messages
         pipe.send(None)
