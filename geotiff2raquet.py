@@ -241,7 +241,7 @@ class BandType:
 class Frame:
     tile: mercantile.Tile
     inputs: list[mercantile.Tile]
-    outputs: list
+    outputs: list["osgeo.gdal.Dataset"]  # noqa: F821 (Color table type safely imported in read_geotiff)
 
     @staticmethod
     def create(parent: mercantile.Tile, rg: RasterGeometry) -> "Frame":
@@ -263,59 +263,13 @@ def generate_tiles(rg: RasterGeometry):
 
 
 def intersect(bb: mercantile.LngLatBbox, rg: RasterGeometry) -> mercantile.LngLatBbox:
-    """ """
+    """Return intersection of two spatial bounding rectangles"""
     return mercantile.LngLatBbox(
         max(bb.west, rg.minlon),
         max(bb.south, rg.minlat),
         min(bb.east, rg.maxlon),
         min(bb.north, rg.maxlat),
     )
-
-
-def generate_tiles2(tile: mercantile.Tile, rg: RasterGeometry):
-    """ """
-    if tile.z < rg.zoom:
-        bb = mercantile.bounds(tile)
-        children = list(mercantile.tiles(*intersect(bb, rg), tile.z + 1))
-        for child in children:
-            generate_tiles2(child, rg)
-        print("==>", tile, "from", children)
-    else:
-        print("-->", tile, "from original")
-
-
-def generate_tiles3(rg: RasterGeometry):
-    """ """
-    frames = [Frame.create(mercantile.Tile(0, 0, 0), rg)]
-
-    while frames:
-        frame = frames.pop()
-        print(
-            len(frames),
-            "frames",
-            sum(len(f.inputs) for f in frames),
-            "inputs",
-            sum(len(f.outputs) for f in frames),
-            "outputs",
-            end=" -- ",
-        )
-
-        tile_ds: bool
-
-        if frame.tile.z == rg.zoom:
-            print("warp", frame.tile, "from original ds")
-            tile_ds = True
-        elif not frame.inputs:
-            print("overview", frame.tile, "from", frame.outputs)
-            tile_ds = True
-        else:
-            next_tile = frame.inputs.pop()
-            print("extend", frame.tile, "with", next_tile)
-            frames.extend([frame, Frame.create(next_tile, rg)])
-            tile_ds = False
-
-        if tile_ds and frames:
-            frames[-1].outputs.append((frame.tile, tile_ds))
 
 
 def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_geotiff)
@@ -431,7 +385,7 @@ def create_tile_ds(
 ) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_geotiff)
     # Initialize warped tile dataset and its bands
     tile_ds = driver.Create(
-        "/vsimem/tile.tif",
+        f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif",
         2**BLOCK_ZOOM,
         2**BLOCK_ZOOM,
         ds.RasterCount,
@@ -454,20 +408,24 @@ def create_tile_ds(
 
 def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    gdaltype_bandtypes: dict[int, BandType],
-) -> tuple[list[bytes], list[RasterStats]]:
+    gdaltype_bandtypes: dict[int, BandType] | None,
+    include_stats: bool = True,
+) -> tuple[list[bytes], list[RasterStats | None]]:
     """Read data and stats from warped bands"""
     block_data, block_stats = [], []
 
     for band_num in range(1, 1 + ds.RasterCount):
         band = ds.GetRasterBand(band_num)
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
-        band_type = gdaltype_bandtypes[band.DataType]
-        pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
-        stats = read_statistics(pixel_values, band.GetNoDataValue())
-        logging.info(
-            "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
-        )
+        if gdaltype_bandtypes is not None and include_stats:
+            band_type = gdaltype_bandtypes[band.DataType]
+            pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
+            stats = read_statistics(pixel_values, band.GetNoDataValue())
+            logging.info(
+                "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
+            )
+        else:
+            stats = None
         block_data.append(gzip.compress(data))
         block_stats.append(stats)
 
@@ -568,21 +526,49 @@ def read_geotiff(
 
         pipe.send(raster_geometry)
 
-        for tile in generate_tiles(raster_geometry):
-            tile_ds = create_tile_ds(
-                osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, tile
-            )
+        # Start with the world tile
+        frames = [Frame.create(mercantile.Tile(0, 0, 0), raster_geometry)]
 
-            osgeo.gdal.Warp(
-                destNameOrDestDS=tile_ds,
-                srcDSOrSrcDSTab=ds,
-                options=osgeo.gdal.WarpOptions(
-                    resampleAlg=resampling_algorithms[resampling_algorithm],
-                ),
-            )
+        while frames:
+            frame = frames.pop()
+            tile_ds: osgeo.gdal.Dataset | None = None
 
-            # Read data and stats from warped bands and send them to parent process
-            pipe.send((tile, *read_raster_data_stats(tile_ds, gdaltype_bandtypes)))
+            if frame.tile.z == raster_geometry.zoom:
+                logging.info("Warp %s from original dataset", frame.tile)
+                tile_ds = create_tile_ds(
+                    osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
+                )
+                osgeo.gdal.Warp(
+                    destNameOrDestDS=tile_ds,
+                    srcDSOrSrcDSTab=ds,
+                    options=osgeo.gdal.WarpOptions(
+                        resampleAlg=resampling_algorithms[resampling_algorithm],
+                    ),
+                )
+                data, stats = read_raster_data_stats(tile_ds, gdaltype_bandtypes)
+                pipe.send((frame.tile, data, stats))
+            elif not frame.inputs:
+                logging.info("Overview %s from %s", frame.tile, frame.outputs)
+                tile_ds = create_tile_ds(
+                    osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
+                )
+                for subtile_ds in frame.outputs:
+                    osgeo.gdal.Warp(
+                        destNameOrDestDS=tile_ds,
+                        srcDSOrSrcDSTab=subtile_ds,
+                        options=osgeo.gdal.WarpOptions(
+                            resampleAlg=resampling_algorithms[resampling_algorithm],
+                        ),
+                    )
+                data, stats = read_raster_data_stats(tile_ds, None, include_stats=False)
+                pipe.send((frame.tile, data, stats))
+            else:
+                next_tile = frame.inputs.pop()
+                logging.info("Extend %s with %s", frame.tile, next_tile)
+                frames.extend([frame, Frame.create(next_tile, raster_geometry)])
+
+            if tile_ds is not None and frames:
+                frames[-1].outputs.append(tile_ds)
     finally:
         # Send a None to signal end of messages
         pipe.send(None)
@@ -720,11 +706,6 @@ def main(
                 }
             )
 
-            # Accumulate band statistics and real bounds based on included tiles
-            band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
-            xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
-            xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
-
             # Write a row group when we hit the size limit
             if len(rows) >= row_group_size:
                 rows_dict = {k: [row[k] for row in rows] for k in schema.names}
@@ -733,6 +714,15 @@ def main(
                     pyarrow.Table.from_pydict(rows_dict, schema=schema),
                     row_group_size=row_group_size,
                 )
+
+            # Skip stats from overview tiles?
+            if tile.z < raster_geometry.zoom:
+                continue
+
+            # Accumulate band statistics and real bounds based on included tiles
+            band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
+            xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
+            xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
 
         # Write remaining rows
         rows_dict = {k: [row[k] for row in rows] for k in schema.names}
@@ -751,8 +741,8 @@ def main(
             "minresolution": raster_geometry.zoom,
             "maxresolution": raster_geometry.zoom,
             "nodata": raster_geometry.nodata,
-            "num_blocks": num_blocks,
-            "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
+            "num_blocks": num_blocks,  # todo: fix this calculation
+            "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),  # todo: fix this calculation
             "bands": [
                 {
                     "type": btype,
