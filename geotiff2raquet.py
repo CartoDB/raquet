@@ -532,12 +532,15 @@ def read_geotiff(
 
         pipe.send(raster_geometry)
 
-        # Options for the warps to come
+        # Driver and options for the warps to come
+        gtiff_driver = osgeo.gdal.GetDriverByName("GTiff")
         opts = osgeo.gdal.WarpOptions(
             resampleAlg=resampling_algorithms[resampling_algorithm]
         )
 
-        # Start with the world tile
+        # Start with the world tile, then model a recursive descent into all child tiles
+        # using a stack of frames. If we reach the maximum zoom read pixels from the
+        # original raster, otherwise stack child tiles and build overviews prior pixels.
         frames = [Frame.create(mercantile.Tile(0, 0, 0), raster_geometry)]
 
         while frames:
@@ -547,9 +550,7 @@ def read_geotiff(
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
-                tile_ds = create_tile_ds(
-                    osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
-                )
+                tile_ds = create_tile_ds(gtiff_driver, web_mercator, ds, frame.tile)
                 osgeo.gdal.Warp(
                     destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=ds, options=opts
                 )
@@ -558,9 +559,7 @@ def read_geotiff(
             elif not frame.inputs:
                 # Read overview pixels from earlier outputs
                 logging.info("Overview %s from %s", frame.tile, frame.outputs)
-                tile_ds = create_tile_ds(
-                    osgeo.gdal.GetDriverByName("GTiff"), web_mercator, ds, frame.tile
-                )
+                tile_ds = create_tile_ds(gtiff_driver, web_mercator, ds, frame.tile)
                 for sub_ds in frame.outputs:
                     osgeo.gdal.Warp(
                         destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
