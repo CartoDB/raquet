@@ -19,14 +19,14 @@ Tests
     >>> _, raquet_tempfile = tempfile.mkstemp(suffix=".parquet")
 
     >>> def print_stats(d):
-    ...     print(*[f'{k}={v:.4g}' for k, v in sorted(d.items())])
+    ...     print(*[f'{k}={v:.4g}' for k, v in sorted(d.items()) if k != "blocks"])
 
 Test case "europe.tif"
 
     >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.CubicSpline)
     >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table1)
-    17
+    25
 
     >>> table1.column_names
     ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
@@ -67,7 +67,7 @@ Test case "n37_w123_1arc_v2.tif"
     >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER, ResamplingAlgorithm.CubicSpline)
     >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table2)
-    5
+    19
 
     >>> table2.column_names
     ['block', 'metadata', 'band_1']
@@ -96,7 +96,7 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table3)
-    43
+    73
 
     >>> table3.column_names
     ['block', 'metadata', 'band_1']
@@ -116,7 +116,7 @@ Test case "geotiff-discreteloss_2023.tif"
     >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table4)
-    26
+    50
 
     >>> table4.column_names
     ['block', 'metadata', 'band_1']
@@ -147,6 +147,7 @@ Test case "colored.tif"
 """
 
 import argparse
+import copy
 import dataclasses
 import enum
 import gzip
@@ -226,6 +227,9 @@ class RasterStats:
     sum: int | float
     sum_squares: int | float
 
+    # Special value for counting instances of block stats in combine_stats()
+    blocks: int = 1
+
 
 @dataclasses.dataclass
 class BandType:
@@ -286,13 +290,14 @@ def combine_stats(
     """Combine two RasterStats into one"""
 
     if prev_stats is None:
+        # Likely to represent an initial None value, don't count blocks
         return curr_stats
 
-    if curr_stats is None:  # if there is any NODATA block after proper block, skip
-        return prev_stats
-
     if curr_stats is None:
-        return prev_stats
+        # Likely to represent a nodata tile, count its blocks
+        next_stats = copy.deepcopy(prev_stats)
+        next_stats.blocks += 1
+        return next_stats
 
     next_count = prev_stats.count + curr_stats.count
     prev_weight = prev_stats.count / next_count
@@ -306,6 +311,7 @@ def combine_stats(
         stddev=prev_stats.stddev * prev_weight + curr_stats.stddev * curr_weight,
         sum=prev_stats.sum + curr_stats.sum,
         sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
+        blocks=prev_stats.blocks + curr_stats.blocks,
     )
 
     return next_stats
@@ -668,7 +674,7 @@ def main(
         )
 
         # Initialize empty lists to collect rows and stats
-        rows, num_blocks, row_group_size = [], 0, 1000
+        rows, row_group_size = [], 1000
         band_stats = [None for _ in raster_geometry.bandtypes]
 
         # Initialize the parquet writer
@@ -709,7 +715,7 @@ def main(
             # Write a row group when we hit the size limit
             if len(rows) >= row_group_size:
                 rows_dict = {k: [row[k] for row in rows] for k in schema.names}
-                rows, num_blocks = [], num_blocks + len(rows)
+                rows = []
                 writer.write_table(
                     pyarrow.Table.from_pydict(rows_dict, schema=schema),
                     row_group_size=row_group_size,
@@ -726,7 +732,7 @@ def main(
 
         # Write remaining rows
         rows_dict = {k: [row[k] for row in rows] for k in schema.names}
-        rows, num_blocks = [], num_blocks + len(rows)
+        rows = []
         writer.write_table(
             pyarrow.Table.from_pydict(rows_dict, schema=schema),
             row_group_size=row_group_size,
@@ -741,8 +747,8 @@ def main(
             "minresolution": raster_geometry.zoom,
             "maxresolution": raster_geometry.zoom,
             "nodata": raster_geometry.nodata,
-            "num_blocks": num_blocks,  # todo: fix this calculation
-            "num_pixels": num_blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),  # todo: fix this calculation
+            "num_blocks": band_stats[0].blocks,
+            "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
             "bands": [
                 {
                     "type": btype,
