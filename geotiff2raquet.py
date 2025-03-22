@@ -237,6 +237,19 @@ class BandType:
     name: str
 
 
+@dataclasses.dataclass
+class Frame:
+    tile: mercantile.Tile
+    inputs: list[mercantile.Tile]
+    outputs: list
+
+    @staticmethod
+    def create(parent: mercantile.Tile, rg: RasterGeometry) -> "Frame":
+        minlon, minlat, maxlon, maxlat = intersect(mercantile.bounds(parent), rg)
+        children = mercantile.tiles(minlon, minlat, maxlon, maxlat, parent.z + 1)
+        return Frame(parent, list(children), [])
+
+
 def generate_tiles(rg: RasterGeometry):
     """Generate tiles for a given zoom level
 
@@ -247,6 +260,62 @@ def generate_tiles(rg: RasterGeometry):
     """
     for tile in mercantile.tiles(rg.minlon, rg.minlat, rg.maxlon, rg.maxlat, rg.zoom):
         yield tile
+
+
+def intersect(bb: mercantile.LngLatBbox, rg: RasterGeometry) -> mercantile.LngLatBbox:
+    """ """
+    return mercantile.LngLatBbox(
+        max(bb.west, rg.minlon),
+        max(bb.south, rg.minlat),
+        min(bb.east, rg.maxlon),
+        min(bb.north, rg.maxlat),
+    )
+
+
+def generate_tiles2(tile: mercantile.Tile, rg: RasterGeometry):
+    """ """
+    if tile.z < rg.zoom:
+        bb = mercantile.bounds(tile)
+        children = list(mercantile.tiles(*intersect(bb, rg), tile.z + 1))
+        for child in children:
+            generate_tiles2(child, rg)
+        print("==>", tile, "from", children)
+    else:
+        print("-->", tile, "from original")
+
+
+def generate_tiles3(rg: RasterGeometry):
+    """ """
+    frames = [Frame.create(mercantile.Tile(0, 0, 0), rg)]
+
+    while frames:
+        frame = frames.pop()
+        print(
+            len(frames),
+            "frames",
+            sum(len(f.inputs) for f in frames),
+            "inputs",
+            sum(len(f.outputs) for f in frames),
+            "outputs",
+            end=" -- ",
+        )
+
+        tile_ds: bool
+
+        if frame.tile.z == rg.zoom:
+            print("warp", frame.tile, "from original ds")
+            tile_ds = True
+        elif not frame.inputs:
+            print("overview", frame.tile, "from", frame.outputs)
+            tile_ds = True
+        else:
+            next_tile = frame.inputs.pop()
+            print("extend", frame.tile, "with", next_tile)
+            frames.extend([frame, Frame.create(next_tile, rg)])
+            tile_ds = False
+
+        if tile_ds and frames:
+            frames[-1].outputs.append((frame.tile, tile_ds))
 
 
 def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_geotiff)
