@@ -232,6 +232,13 @@ class RasterStats:
 
 
 @dataclasses.dataclass
+class NoDataStats:
+    """Special case of raster statistics on an all-nodata raster"""
+
+    blocks: int = 1
+
+
+@dataclasses.dataclass
 class BandType:
     """Convenience wrapper for details of band data type"""
 
@@ -272,7 +279,7 @@ def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Co
 
 
 def combine_stats(
-    prev_stats: RasterStats | None, curr_stats: RasterStats | None
+    prev_stats: RasterStats | NoDataStats | None, curr_stats: RasterStats | NoDataStats
 ) -> RasterStats | None:
     """Combine two RasterStats into one"""
 
@@ -280,10 +287,16 @@ def combine_stats(
         # Likely to represent an initial None value, don't count blocks
         return curr_stats
 
-    if curr_stats is None:
-        # Likely to represent a nodata tile, count its blocks
+    if isinstance(prev_stats, NoDataStats):
+        # Count just the blocks on previous nodata stats
+        next_stats = copy.deepcopy(curr_stats)
+        next_stats.blocks += prev_stats.blocks
+        return next_stats
+
+    if isinstance(curr_stats, NoDataStats):
+        # Count just the blocks on current nodata stats
         next_stats = copy.deepcopy(prev_stats)
-        next_stats.blocks += 1
+        next_stats.blocks += curr_stats.blocks
         return next_stats
 
     next_count = prev_stats.count + curr_stats.count
@@ -306,13 +319,13 @@ def combine_stats(
 
 def read_statistics(
     values: list[int | float], nodata: int | float | None
-) -> RasterStats:
+) -> RasterStats | NoDataStats:
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
         values = [val for val in values if val != nodata]
 
     if len(values) == 0:
-        return None
+        return NoDataStats()
 
     return RasterStats(
         count=len(values),
@@ -403,7 +416,7 @@ def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     gdaltype_bandtypes: dict[int, BandType] | None,
     include_stats: bool = True,
-) -> tuple[list[bytes], list[RasterStats | None]]:
+) -> tuple[list[bytes], list[RasterStats | NoDataStats]]:
     """Read data and stats from warped bands"""
     block_data, block_stats = [], []
 
@@ -418,7 +431,7 @@ def read_raster_data_stats(
                 "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
             )
         else:
-            stats = None
+            stats = NoDataStats()
         block_data.append(gzip.compress(data))
         block_stats.append(stats)
 
@@ -717,6 +730,9 @@ def main(
             band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
             xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
             xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
+
+        for i, stats in enumerate(band_stats):
+            logging.info("Band %s %s", i + 1, stats)
 
         # Write remaining rows
         rows_dict = {k: [row[k] for row in rows] for k in schema.names}
