@@ -502,27 +502,28 @@ def read_geotiff(
     }
 
     try:
-        ds = osgeo.gdal.Open(geotiff_filename)
-        bands = [ds.GetRasterBand(n) for n in list(range(1, 1 + ds.RasterCount))]
+        src_ds = osgeo.gdal.Open(geotiff_filename)
+        src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
+        src_sref = src_ds.GetSpatialRef()
 
-        tx4326 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), wgs84)
-        minlon, minlat, maxlon, maxlat = find_bounds(ds, tx4326)
+        tx4326 = osgeo.osr.CoordinateTransformation(src_sref, wgs84)
+        minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326)
 
-        tx3857 = osgeo.osr.CoordinateTransformation(ds.GetSpatialRef(), web_mercator)
-        resolution = find_resolution(ds, tx3857)
+        tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
+        resolution = find_resolution(src_ds, tx3857)
         zoom = find_zoom(resolution, zoom_strategy)
 
         raster_geometry = RasterGeometry(
-            [gdaltype_bandtypes[band.DataType].name for band in bands],
+            [gdaltype_bandtypes[band.DataType].name for band in src_bands],
             [
                 osgeo.gdal.GetColorInterpretationName(band.GetColorInterpretation())
-                for band in bands
+                for band in src_bands
             ],
             [
                 get_colortable_dict(b.GetColorTable()) if b.GetColorTable() else None
-                for b in bands
+                for b in src_bands
             ],
-            ds.GetRasterBand(1).GetNoDataValue(),
+            src_ds.GetRasterBand(1).GetNoDataValue(),
             zoom,
             minlat,
             minlon,
@@ -550,16 +551,16 @@ def read_geotiff(
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
-                tile_ds = create_tile_ds(gtiff_driver, web_mercator, ds, frame.tile)
+                tile_ds = create_tile_ds(gtiff_driver, web_mercator, src_ds, frame.tile)
                 osgeo.gdal.Warp(
-                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=ds, options=opts
+                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts
                 )
                 data, stats = read_raster_data_stats(tile_ds, gdaltype_bandtypes)
                 pipe.send((frame.tile, data, stats))
             elif not frame.inputs:
                 # Read overview pixels from earlier outputs
                 logging.info("Overview %s from %s", frame.tile, frame.outputs)
-                tile_ds = create_tile_ds(gtiff_driver, web_mercator, ds, frame.tile)
+                tile_ds = create_tile_ds(gtiff_driver, web_mercator, src_ds, frame.tile)
                 for sub_ds in frame.outputs:
                     osgeo.gdal.Warp(
                         destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
@@ -700,6 +701,7 @@ def main(
                 mercantile.bounds(tile),
             )
 
+            # No data in any band means we can skip this row
             if all(block_datum is None for block_datum in block_data):
                 continue
 
@@ -714,8 +716,7 @@ def main(
 
             # Write a row group when we hit the size limit
             if len(rows) >= row_group_size:
-                rows_dict = {k: [row[k] for row in rows] for k in schema.names}
-                rows = []
+                rows_dict, rows = {k: [r[k] for r in rows] for k in schema.names}, []
                 writer.write_table(
                     pyarrow.Table.from_pydict(rows_dict, schema=schema),
                     row_group_size=row_group_size,
@@ -735,7 +736,6 @@ def main(
 
         # Write remaining rows
         rows_dict = {k: [row[k] for row in rows] for k in schema.names}
-        rows = []
         writer.write_table(
             pyarrow.Table.from_pydict(rows_dict, schema=schema),
             row_group_size=row_group_size,
