@@ -36,7 +36,7 @@ Test case "europe.tif"
     ['gzip', 1024, 1024, 16, 1048576, None]
 
     >>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [5, 13, 5, 5]
+    [5, 13, 0, 5]
 
     >>> [round(b, 3) for b in metadata1["bounds"]]
     [0.0, 40.98, 45.0, 66.513]
@@ -77,7 +77,7 @@ Test case "n37_w123_1arc_v2.tif"
     ['gzip', 512, 512, 4, 262144, -32767.0]
 
     >>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [11, 19, 11, 11]
+    [11, 19, 0, 11]
 
     >>> [round(b, 3) for b in metadata2["bounds"]]
     [-122.695, 37.579, -122.344, 37.858]
@@ -106,7 +106,7 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     ['gzip', 1536, 1792, 42, 2752512, 250.0]
 
     >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [13, 21, 13, 13]
+    [13, 21, 0, 13]
 
     >>> print_stats(metadata3["bands"][0]["stats"])
     count=1.216e+06 max=95 mean=75.85 min=11 stddev=16.47 sum=9.225e+07 sum_squares=7.415e+09
@@ -126,7 +126,7 @@ Test case "geotiff-discreteloss_2023.tif"
     ['gzip', 1280, 1280, 25, 1638400, 0.0]
 
     >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [13, 21, 13, 13]
+    [13, 21, 0, 13]
 
     >>> print_stats(metadata4["bands"][0]["stats"])
     count=2.736e+04 max=1 mean=1 min=1 stddev=0 sum=2.736e+04 sum_squares=2.736e+04
@@ -747,7 +747,7 @@ def main(
             "version": "0.1.0",
             "compression": "gzip",
             "block_resolution": raster_geometry.zoom,
-            "minresolution": raster_geometry.zoom,
+            "minresolution": 0,
             "maxresolution": raster_geometry.zoom,
             "nodata": raster_geometry.nodata,
             "num_blocks": band_stats[0].blocks,
