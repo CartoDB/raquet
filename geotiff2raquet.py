@@ -48,7 +48,7 @@ Test case "europe.tif"
     {'band_1': 'uint8', 'band_2': 'uint8', 'band_3': 'uint8', 'band_4': 'uint8'}
 
     >>> {b["name"]: b["colorinterp"] for b in metadata1["bands"]}
-    {'band_1': 'Red', 'band_2': 'Green', 'band_3': 'Blue', 'band_4': 'Alpha'}
+    {'band_1': 'red', 'band_2': 'green', 'band_3': 'blue', 'band_4': 'alpha'}
 
     >>> print_stats(metadata1["bands"][0]["stats"])
     count=1.049e+06 max=255 mean=104.7 min=0 stddev=63.24 sum=1.098e+08 sum_squares=1.827e+10
@@ -138,7 +138,7 @@ Test case "colored.tif"
     >>> metadata5 = read_metadata(table5)
 
     >>> {b["name"]: b["colorinterp"] for b in metadata5["bands"]}
-    {'band_1': 'Palette'}
+    {'band_1': 'palette'}
 
     >>> color_dict= metadata5["bands"][0]["colortable"]
     >>> {k:list(v) for k, v in itertools.islice(color_dict.items(),6)}
@@ -516,7 +516,9 @@ def read_geotiff(
         raster_geometry = RasterGeometry(
             [gdaltype_bandtypes[band.DataType].name for band in src_bands],
             [
-                osgeo.gdal.GetColorInterpretationName(band.GetColorInterpretation())
+                osgeo.gdal.GetColorInterpretationName(
+                    band.GetColorInterpretation()
+                ).lower()
                 for band in src_bands
             ],
             [
