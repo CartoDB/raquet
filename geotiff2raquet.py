@@ -26,7 +26,7 @@ Test case "europe.tif"
     >>> main("examples/europe.tif", raquet_tempfile, ZoomStrategy.AUTO, ResamplingAlgorithm.CubicSpline)
     >>> table1 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table1)
-    25
+    23
 
     >>> table1.column_names
     ['block', 'metadata', 'band_1', 'band_2', 'band_3', 'band_4']
@@ -36,7 +36,7 @@ Test case "europe.tif"
     ['gzip', 1024, 1024, 16, 1048576, None]
 
     >>> [metadata1[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [5, 13, 0, 5]
+    [5, 13, 2, 5]
 
     >>> [round(b, 3) for b in metadata1["bounds"]]
     [0.0, 40.98, 45.0, 66.513]
@@ -67,7 +67,7 @@ Test case "n37_w123_1arc_v2.tif"
     >>> main("tests/n37_w123_1arc_v2.tif", raquet_tempfile, ZoomStrategy.LOWER, ResamplingAlgorithm.CubicSpline)
     >>> table2 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table2)
-    19
+    7
 
     >>> table2.column_names
     ['block', 'metadata', 'band_1']
@@ -77,7 +77,7 @@ Test case "n37_w123_1arc_v2.tif"
     ['gzip', 512, 512, 4, 262144, -32767.0]
 
     >>> [metadata2[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [11, 19, 0, 11]
+    [11, 19, 10, 11]
 
     >>> [round(b, 3) for b in metadata2["bounds"]]
     [-122.695, 37.579, -122.344, 37.858]
@@ -96,7 +96,7 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     >>> main("tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table3 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table3)
-    73
+    63
 
     >>> table3.column_names
     ['block', 'metadata', 'band_1']
@@ -106,7 +106,7 @@ Test case "Annual_NLCD_LndCov_2023_CU_C1V0.tif"
     ['gzip', 1536, 1792, 42, 2752512, 250.0]
 
     >>> [metadata3[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [13, 21, 0, 13]
+    [13, 21, 10, 13]
 
     >>> print_stats(metadata3["bands"][0]["stats"])
     count=1.216e+06 max=95 mean=75.85 min=11 stddev=16.47 sum=9.225e+07 sum_squares=7.415e+09
@@ -116,7 +116,7 @@ Test case "geotiff-discreteloss_2023.tif"
     >>> main("tests/geotiff-discreteloss_2023.tif", raquet_tempfile, ZoomStrategy.UPPER, ResamplingAlgorithm.NearestNeighbour)
     >>> table4 = pyarrow.parquet.read_table(raquet_tempfile)
     >>> len(table4)
-    50
+    40
 
     >>> table4.column_names
     ['block', 'metadata', 'band_1']
@@ -126,7 +126,7 @@ Test case "geotiff-discreteloss_2023.tif"
     ['gzip', 1280, 1280, 25, 1638400, 0.0]
 
     >>> [metadata4[k] for k in ["block_resolution", "pixel_resolution", "minresolution", "maxresolution"]]
-    [13, 21, 0, 13]
+    [13, 21, 10, 13]
 
     >>> print_stats(metadata4["bands"][0]["stats"])
     count=2.736e+04 max=1 mean=1 min=1 stddev=0 sum=2.736e+04 sum_squares=2.736e+04
@@ -165,6 +165,9 @@ import quadbin
 
 # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
 BLOCK_ZOOM = 8
+
+# Pixel dimensions of ideal minimum size
+TARGET_MIN_SIZE = 128
 
 
 class ZoomStrategy(enum.StrEnum):
@@ -371,6 +374,17 @@ def find_resolution(
     return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
 
 
+def find_minzoom(rg: RasterGeometry) -> int:
+    """Calculate minimum zoom for a reasonable image size 128px from raster geometry"""
+    big_zoom = 32
+    ul = mercantile.tile(lat=rg.maxlat, lng=rg.minlon, zoom=big_zoom)
+    lr = mercantile.tile(lat=rg.minlat, lng=rg.maxlon, zoom=big_zoom)
+    high_hypot = math.hypot(lr.x - ul.x, lr.y - ul.y)
+    target_hypot = math.hypot(TARGET_MIN_SIZE, TARGET_MIN_SIZE)
+    min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - BLOCK_ZOOM
+    return int(round(min_zoom))
+
+
 def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
     """Calculate web mercator zoom from a raw meters/pixel resolution"""
     raw_zoom = math.log(mercantile.CE / 256 / resolution) / math.log(2)
@@ -541,10 +555,20 @@ def read_geotiff(
             resampleAlg=resampling_algorithms[resampling_algorithm]
         )
 
-        # Start with the world tile, then model a recursive descent into all child tiles
-        # using a stack of frames. If we reach the maximum zoom read pixels from the
-        # original raster, otherwise stack child tiles and build overviews prior pixels.
-        frames = [Frame.create(mercantile.Tile(0, 0, 0), raster_geometry)]
+        # Start with a reasonable minimum zoom, then model a recursive descent into all
+        # child tiles using a stack of frames. If we reach the maximum zoom read pixels
+        # out of the original raster, otherwise stack child tiles and build overviews
+        # from prior pixels.
+        frames = [
+            Frame.create(t, raster_geometry)
+            for t in mercantile.tiles(
+                raster_geometry.minlon,
+                raster_geometry.minlat,
+                raster_geometry.maxlon,
+                raster_geometry.maxlat,
+                find_minzoom(raster_geometry),
+            )
+        ]
 
         while frames:
             frame = frames.pop()
@@ -684,6 +708,7 @@ def main(
         writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
+        minresolution = math.inf
 
         while True:
             received = pipe.recv()
@@ -693,6 +718,7 @@ def main(
 
             # Expand message to block to retrieve
             tile, block_data, block_stats = received
+            minresolution = min(minresolution, tile.z)
 
             logging.info(
                 "Tile z=%s x=%s y=%s quadkey=%s bounds=%s",
@@ -749,7 +775,7 @@ def main(
             "version": "0.1.0",
             "compression": "gzip",
             "block_resolution": raster_geometry.zoom,
-            "minresolution": 0,
+            "minresolution": minresolution,
             "maxresolution": raster_geometry.zoom,
             "nodata": raster_geometry.nodata,
             "num_blocks": band_stats[0].blocks,
