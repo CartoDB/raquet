@@ -53,48 +53,47 @@ import pyarrow.parquet
 import quadbin
 
 GDAL_COLOR_INTERP = {
-    "Undefined": 0,
-    "Gray": 1,
-    "Palette": 2,
-    "Red": 3,
-    "Green": 4,
-    "Blue": 5,
-    "Alpha": 6,
-    "Hue": 7,
-    "Saturation": 8,
-    "Lightness": 9,
-    "Cyan": 10,
-    "Magenta": 11,
-    "Yellow": 12,
-    "Black": 13,
-    "Pan": 14,
-    "Coastal": 15,
-    "RedEdge": 16,
-    "NIR": 17,
-    "SWIR": 18,
-    "MWIR": 19,
-    "LWIR": 20,
-    "TIR": 21,
-    "OtherIR": 22,
-    "SAR_Ka": 23,
-    "SAR_K": 24,
-    "SAR_Ku": 25,
-    "SAR_X": 26,
-    "SAR_C": 27,
-    "SAR_S": 28,
-    "SAR_L": 29,
-    "SAR_P": 30,
+    "undefined": 0,
+    "gray": 1,
+    "palette": 2,
+    "red": 3,
+    "green": 4,
+    "blue": 5,
+    "alpha": 6,
+    "hue": 7,
+    "saturation": 8,
+    "lightness": 9,
+    "cyan": 10,
+    "magenta": 11,
+    "yellow": 12,
+    "black": 13,
+    "pan": 14,
+    "coastal": 15,
+    "rededge": 16,
+    "nir": 17,
+    "swir": 18,
+    "mwir": 19,
+    "lwir": 20,
+    "tir": 21,
+    "otherir": 22,
+    "sar_ka": 23,
+    "sar_k": 24,
+    "sar_ku": 25,
+    "sar_x": 26,
+    "sar_c": 27,
+    "sar_s": 28,
+    "sar_l": 29,
+    "sar_p": 30,
 }
 
 
-def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
+def write_geotiff(metadata: dict, geotiff_filename: str, pipe: multiprocessing.Pipe):
     """Worker process that writes a GeoTIFF through pipes.
 
     Args:
         metadata: dictionary of RaQuet metadata
         geotiff_filename: Name of GeoTIFF file to write
-        pipe_in: Connection to receive data from parent
-        pipe_out: Connection to send data to parent
+        pipe: Connection to receive data from parent
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -163,65 +162,52 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe_in, pipe_out):
         raster.SetGeoTransform(geotransform)
 
         while True:
-            try:
-                received = pipe_in.recv()
-                if received is None:
-                    # Use this signal value because pipe.close() doesn't raise EOFError here on Linux
-                    raise EOFError
-
-                tile, *block_data = received
-
-                # Get mercator corner coordinates for this tile
-                ulx, _, _, uly = mercantile.xy_bounds(tile)
-
-                # Convert mercator coordinates to pixel coordinates
-                xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
-                yoff = int(round((uly - geotransform[3]) / geotransform[5]))
-
-                # Write to raster
-                for i, block_datum in enumerate(block_data):
-                    band = raster.GetRasterBand(i + 1)
-
-                    if (
-                        "nodata" in metadata
-                        and metadata.get("nodata") is not None
-                        and band.GetNoDataValue() is None
-                    ):
-                        band.SetNoDataValue(metadata["nodata"])
-
-                    if (
-                        "colortable" in metadata.get("bands")[i]
-                        and metadata.get("bands")[i]["colortable"] is not None
-                        and band.GetColorTable() is None
-                    ):
-                        color_dict = metadata["bands"][i]["colortable"]
-                        colorTable = osgeo.gdal.ColorTable()
-                        for index, rgba in color_dict.items():
-                            colorTable.SetColorEntry(int(index), tuple(rgba))
-                        band.SetColorTable(colorTable)
-
-                    if (
-                        "colorinterp" in metadata.get("bands")[i]
-                        and metadata.get("bands")[i]["colorinterp"] is not None
-                    ):
-                        band.SetColorInterpretation(
-                            GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]]
-                        )
-
-                    band.WriteRaster(
-                        xoff,
-                        yoff,
-                        metadata["block_width"],
-                        metadata["block_height"],
-                        block_datum,
-                    )
-
-            except EOFError:
+            received = pipe.recv()
+            if received is None:
+                # Use a signal value to stop expecting further tiles
                 break
 
+            tile, *block_data = received
+
+            # Get mercator corner coordinates for this tile
+            ulx, _, _, uly = mercantile.xy_bounds(tile)
+
+            # Convert mercator coordinates to pixel coordinates
+            xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
+            yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+
+            # Write to raster
+            for i, block_datum in enumerate(block_data):
+                band = raster.GetRasterBand(i + 1)
+
+                if metadata.get("nodata") is not None and band.GetNoDataValue() is None:
+                    band.SetNoDataValue(metadata["nodata"])
+
+                if (
+                    metadata.get("bands")[i].get("colortable") is not None
+                    and band.GetColorTable() is None
+                ):
+                    color_dict = metadata["bands"][i]["colortable"]
+                    colorTable = osgeo.gdal.ColorTable()
+                    for index, rgba in color_dict.items():
+                        colorTable.SetColorEntry(int(index), tuple(rgba))
+                    band.SetColorTable(colorTable)
+
+                if metadata.get("bands")[i].get("colorinterp") is not None:
+                    band.SetColorInterpretation(
+                        GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]]
+                    )
+
+                band.WriteRaster(
+                    xoff,
+                    yoff,
+                    metadata["block_width"],
+                    metadata["block_height"],
+                    block_datum,
+                )
+
     finally:
-        pipe_in.close()
-        pipe_out.close()
+        pipe.close()
 
 
 def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
@@ -230,21 +216,19 @@ def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
     Returns:
         Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
     """
-    # Create bidirectional pipes
-    parent_recv, child_send = multiprocessing.Pipe(duplex=False)
+    # Create a communication pipe
     child_recv, parent_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
     process = multiprocessing.Process(
-        target=write_geotiff, args=(metadata, geotiff_filename, child_recv, child_send)
+        target=write_geotiff, args=(metadata, geotiff_filename, child_recv)
     )
     process.start()
 
-    # Close child ends in parent process
-    child_send.close()
+    # Close child end in parent process
     child_recv.close()
 
-    return parent_send, parent_recv
+    return parent_send
 
 
 def read_geotiff(geotiff_filename: str, pipe_out):
@@ -314,7 +298,7 @@ def main(raquet_filename, geotiff_filename):
     table = table.sort_by("block")
     metadata = read_metadata(table)
 
-    pipe_send, pipe_recv = open_geotiff_in_process(metadata, geotiff_filename)
+    pipe = open_geotiff_in_process(metadata, geotiff_filename)
 
     try:
         # Process table one row at a time
@@ -333,13 +317,11 @@ def main(raquet_filename, geotiff_filename):
             if metadata.get("compression") == "gzip":
                 block_data = [gzip.decompress(d) for d in block_data]
 
-            pipe_send.send((mercantile.Tile(x, y, z), *block_data))
+            pipe.send((mercantile.Tile(x, y, z), *block_data))
     finally:
-        # Send a None because pipe.close() doesn't raise EOFError at the other end on Linux
-        pipe_send.send(None)
-
-        pipe_send.close()
-        pipe_recv.close()
+        # Send a None to signal end of tiles
+        pipe.send(None)
+        pipe.close()
 
 
 parser = argparse.ArgumentParser(description="Convert RaQuet file to GeoTIFF output")
