@@ -1,0 +1,16 @@
+[project]
+name = "raquet"
+version = "0.1.0"
+dependencies = [
+    "GDAL>=3",
+    "mercantile>=1",
+    "pyarrow>=19",
+    "quadbin>=0.2.2",
+]
+
+[tool.setuptools]
+py-modules = ["raquet"]
+
+[project.scripts]
+geotiff2raquet = "raquet.__init__:geotiff2raquet_main"
+raquet2geotiff = "raquet.__init__:raquet2geotiff_main"
