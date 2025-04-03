@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["raquet"]
+packages = ["raquet"]
 
 [project.scripts]
 geotiff2raquet = "raquet.__init__:geotiff2raquet_main"
