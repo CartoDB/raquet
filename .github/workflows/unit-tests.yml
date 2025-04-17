@@ -31,7 +31,7 @@ jobs:
     - name: Run doctests
       run: |
         python -m unittest raquet-tests/test-geotiff2raquet.py
-        python -m doctest raquet2geotiff.py
+        python -m unittest raquet-tests/test-raquet2geotiff.py
 
     - name: Check formatting
       run: |
