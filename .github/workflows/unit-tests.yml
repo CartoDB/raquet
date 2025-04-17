@@ -28,7 +28,7 @@ jobs:
         python -m pip install GDAL==$(gdal-config --version)
         python -m pip install ruff .
         
-    - name: Run doctests
+    - name: Run unit tests
       run: |
         python -m unittest raquet-tests/test-geotiff2raquet.py
         python -m unittest raquet-tests/test-raquet2geotiff.py
@@ -36,3 +36,4 @@ jobs:
     - name: Check formatting
       run: |
         ruff check raquet
+        ruff check raquet-tests
