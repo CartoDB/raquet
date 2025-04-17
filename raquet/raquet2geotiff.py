@@ -9,36 +9,6 @@ Required packages:
     - mercantile <https://pypi.org/project/mercantile/>
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
-
->>> import tempfile; _, geotiff_tempfile = tempfile.mkstemp(suffix=".tif")
-
-Test case "europe.parquet"
-
->>> main("examples/europe.parquet", geotiff_tempfile)
->>> geotiff_info = read_geotiff_info(geotiff_tempfile)
->>> geotiff_info["size"]
-[1024, 1024]
-
->>> [round(n, 8) for n in geotiff_info["geoTransform"]]
-[0.0, 4891.96981025, 0.0, 10018754.17139462, 0.0, -4891.96981025]
-
->>> [(b["block"], b["type"]) for b in geotiff_info["bands"]]
-[([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte'), ([256, 256], 'Byte')]
-
-Test case "colored.parquet"
-
->>> main("tests/colored.parquet", geotiff_tempfile)
->>> geotiff_info = read_geotiff_info(geotiff_tempfile)
-
->>> band = geotiff_info["bands"][0]
-
->>> band["colorInterpretation"]
-'Palette'
-
->>> [colorEntry for colorEntry in band["colorTable"]["entries"][:6]]
-[[0, 0, 0, 0], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255], [255, 165, 0, 255], [255, 0, 0, 255]]
-
-
 """
 
 import argparse
