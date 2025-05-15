@@ -603,9 +603,16 @@ def create_metadata(
     return metadata_json
 
 
-def convert_rows_dict(names: list[str], rows: list[dict]) -> tuple[dict, list]:
-    """Return a dictionary of lists and an empty replacement for the input list"""
-    return {key: [row[key] for row in rows] for key in names}, []
+def write_and_clear_rows(
+    writer: pyarrow.parquet.ParquetWriter, schema: pyarrow.lib.Schema, rows: list[dict]
+):
+    """Write a list of rows then destructively clear it in-place"""
+    rows_dict = {key: [row[key] for row in rows] for key in schema.names}
+    table = pyarrow.Table.from_pydict(rows_dict, schema=schema)
+    writer.write_table(table, row_group_size=len(rows))
+
+    # Destroy content of rows
+    rows.clear()
 
 
 def main(
@@ -698,16 +705,12 @@ def convert_to_raquet_files(
 
             # Write a row group when we hit the row count limit
             if len(rows) >= max_rowcount:
-                rows_dict, rows = convert_rows_dict(schema.names, rows)
-                writer.write_table(
-                    pyarrow.Table.from_pydict(rows_dict, schema=schema),
-                    row_group_size=max_rowcount,
-                )
+                write_and_clear_rows(writer, schema, rows)
 
-            # Write and yield a whole file when hit the sizeof limit
+            # Write and yield a whole file when we hit the sizeof limit
             if sizeof_so_far >= max_sizeof:
-                rows_dict, rows = convert_rows_dict(schema.names, rows)
-                writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
+                if rows:
+                    write_and_clear_rows(writer, schema, rows)
                 writer.close()
                 yield rfname
 
@@ -728,13 +731,9 @@ def convert_to_raquet_files(
             logging.info("Band %s %s", i + 1, stats)
 
         # Write remaining rows
-        rows_dict, rows = convert_rows_dict(schema.names, rows)
-        writer.write_table(
-            pyarrow.Table.from_pydict(rows_dict, schema=schema),
-            row_group_size=max_rowcount,
-        )
+        write_and_clear_rows(writer, schema, rows)
 
-        # Finish writing with metadata row
+        # Finish writing with a single metadata row
         metadata_json = create_metadata(
             raster_geometry,
             band_names,
@@ -745,12 +744,12 @@ def convert_to_raquet_files(
             xmax,
             ymax,
         )
-        rows_dict = {
-            "block": [0],
-            "metadata": [json.dumps(metadata_json)],
-            **{bname: [None] for bname in band_names},
+        metadata_row = {
+            "block": 0,
+            "metadata": json.dumps(metadata_json),
+            **{bname: None for bname in band_names},
         }
-        writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
+        write_and_clear_rows(writer, schema, [metadata_row])
         writer.close()
         yield rfname
 
