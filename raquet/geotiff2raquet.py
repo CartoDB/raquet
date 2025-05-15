@@ -555,6 +555,51 @@ def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
     return schema, band_names
 
 
+def create_metadata(
+    rg: RasterGeometry,
+    band_names: list[str],
+    band_stats: list[RasterStats | None],
+    minresolution: int,
+    xmin: float,
+    ymin: float,
+    xmax: float,
+    ymax: float,
+) -> dict:
+    """Create a dictionary of RaQuet metadata
+
+    See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
+    """
+    metadata_json = {
+        "version": "0.1.0",
+        "compression": "gzip",
+        "block_resolution": rg.zoom,
+        "minresolution": minresolution,
+        "maxresolution": rg.zoom,
+        "nodata": rg.nodata,
+        "num_blocks": band_stats[0].blocks,
+        "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
+        "bands": [
+            {
+                "type": btype,
+                "name": bname,
+                "colorinterp": bcolorinterp,
+                "colortable": bcolortable,
+                "stats": stats.__dict__,
+            }
+            for btype, bname, bcolorinterp, bcolortable, stats in zip(
+                rg.bandtypes,
+                band_names,
+                rg.bandcolorinterp,
+                rg.bandcolortable,
+                band_stats,
+            )
+        ],
+        **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax),
+    }
+
+    return metadata_json
+
+
 def main(
     geotiff_filename: str,
     raquet_filename: str,
@@ -643,37 +688,17 @@ def main(
             row_group_size=row_group_size,
         )
 
-        # Define RaQuet metadata
-        # See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
-        metadata_json = {
-            "version": "0.1.0",
-            "compression": "gzip",
-            "block_resolution": raster_geometry.zoom,
-            "minresolution": minresolution,
-            "maxresolution": raster_geometry.zoom,
-            "nodata": raster_geometry.nodata,
-            "num_blocks": band_stats[0].blocks,
-            "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
-            "bands": [
-                {
-                    "type": btype,
-                    "name": bname,
-                    "colorinterp": bcolorinterp,
-                    "colortable": bcolortable,
-                    "stats": stats.__dict__,
-                }
-                for btype, bname, bcolorinterp, bcolortable, stats in zip(
-                    raster_geometry.bandtypes,
-                    band_names,
-                    raster_geometry.bandcolorinterp,
-                    raster_geometry.bandcolortable,
-                    band_stats,
-                )
-            ],
-            **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
-        }
-
         # Finish writing with metadata row
+        metadata_json = create_metadata(
+            raster_geometry,
+            band_names,
+            band_stats,
+            minresolution,
+            xmin,
+            ymin,
+            xmax,
+            ymax,
+        )
         rows_dict = {
             "block": [0],
             "metadata": [json.dumps(metadata_json)],
