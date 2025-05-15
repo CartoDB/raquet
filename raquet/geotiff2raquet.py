@@ -2,7 +2,7 @@
 """Convert GeoTIFF file to RaQuet output
 
 Usage:
-    geotiff2raquet.py <geotiff_filename> <raquet_filename>
+    geotiff2raquet.py <geotiff_filename> <raquet_destination>
 
 Help:
     geotiff2raquet.py --help
@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import multiprocessing
+import os
 import statistics
 import struct
 import sys
@@ -617,24 +618,34 @@ def write_and_clear_rows(
 
 def main(
     geotiff_filename: str,
-    raquet_filename: str,
+    raquet_destination: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    max_size: int | None = None,
 ):
     """Read GeoTIFF datasource and write to RaQuet
 
     Args:
         geotiff_filename: GeoTIFF filename
-        raquet_filename: RaQuet filename
+        raquet_destination: RaQuet destination, file or dirname depending on max_size
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
     """
-    raquet_destinations = itertools.repeat((raquet_filename, math.inf))
+    if max_size is None:
+        raquet_destinations = itertools.repeat((raquet_destination, math.inf))
+    else:
+        if not os.path.isdir(raquet_destination):
+            os.mkdir(raquet_destination)
+        # Prepare a generator of sequential file names
+        raquet_destinations = (
+            (os.path.join(raquet_destination, f"part{i:03d}.parquet"), max_size)
+            for i in itertools.count()
+        )
 
     for raquet_filename in convert_to_raquet_files(
         geotiff_filename, raquet_destinations, zoom_strategy, resampling_algorithm
     ):
-        print("-->", raquet_filename)
+        logging.info("Wrote %s", raquet_filename)
 
 
 def convert_to_raquet_files(
@@ -759,7 +770,7 @@ def convert_to_raquet_files(
 
 parser = argparse.ArgumentParser()
 parser.add_argument("geotiff_filename")
-parser.add_argument("raquet_filename")
+parser.add_argument("raquet_destination")
 parser.add_argument(
     "-v", "--verbose", action="store_true", help="Enable verbose output"
 )
@@ -775,6 +786,11 @@ parser.add_argument(
     choices=list(ResamplingAlgorithm),
     default=ResamplingAlgorithm.NearestNeighbour,
 )
+parser.add_argument(
+    "--max-size",
+    help="Maximum byte size of all rows in each parquet file",
+    type=int,
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -782,7 +798,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
     main(
         args.geotiff_filename,
-        args.raquet_filename,
+        args.raquet_destination,
         ZoomStrategy(args.zoom_strategy),
         ResamplingAlgorithm(args.resampling_algorithm),
     )

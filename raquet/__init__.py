@@ -10,9 +10,10 @@ def geotiff2raquet_main():
         logging.basicConfig(level=logging.INFO)
     geotiff2raquet.main(
         args.geotiff_filename,
-        args.raquet_filename,
+        args.raquet_destination,
         geotiff2raquet.ZoomStrategy(args.zoom_strategy),
         geotiff2raquet.ResamplingAlgorithm(args.resampling_algorithm),
+        args.max_size,
     )
 
 
