@@ -539,6 +539,22 @@ def get_raquet_dimensions(
     }
 
 
+def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
+    """Create table schema and band column names for RasterGeometry instance"""
+    band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
+
+    # Create table schema based on band count
+    schema = pyarrow.schema(
+        [
+            ("block", pyarrow.uint64()),
+            ("metadata", pyarrow.string()),
+            *[(bname, pyarrow.binary()) for bname in band_names],
+        ]
+    )
+
+    return schema, band_names
+
+
 def main(
     geotiff_filename: str,
     raquet_filename: str,
@@ -557,20 +573,10 @@ def main(
     )
 
     try:
-        band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
-
-        # Create table schema based on band count
-        schema = pyarrow.schema(
-            [
-                ("block", pyarrow.uint64()),
-                ("metadata", pyarrow.string()),
-                *[(bname, pyarrow.binary()) for bname in band_names],
-            ]
-        )
+        schema, band_names = create_schema(raster_geometry)
 
         # Initialize empty lists to collect rows and stats
-        rows, row_group_size = [], 1000
-        band_stats = [None for _ in raster_geometry.bandtypes]
+        row_group_size, rows, band_stats = 1000, [], [None for _ in band_names]
 
         # Initialize the parquet writer
         writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
