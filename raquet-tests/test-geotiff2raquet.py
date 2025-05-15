@@ -193,7 +193,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
             )
             tables = [
                 pyarrow.parquet.read_table(name)
-                for name in glob.glob(f"{raquet_destination}/*.parquet")
+                for name in sorted(glob.glob(f"{raquet_destination}/*.parquet"))
             ]
 
         self.assertEqual(sum(len(table) for table in tables), 63)
