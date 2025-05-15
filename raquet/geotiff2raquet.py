@@ -654,7 +654,7 @@ def convert_to_raquet_files(
         schema, band_names = create_schema(raster_geometry)
 
         # Initialize empty lists to collect rows and stats
-        row_group_size, rows, band_stats = 1000, [], [None for _ in band_names]
+        max_rowcount, rows, band_stats = 1000, [], [None for _ in band_names]
 
         # Initialize a parquet writer
         rfname, max_sizeof = next(raquet_destinations)
@@ -696,15 +696,15 @@ def convert_to_raquet_files(
             )
             sizeof_so_far += sum(sys.getsizeof(v) for v in rows[-1].values())
 
-            # Write a row group when we hit a size limit
-            if len(rows) >= row_group_size:
+            # Write a row group when we hit the row count limit
+            if len(rows) >= max_rowcount:
                 rows_dict, rows = convert_rows_dict(schema.names, rows)
                 writer.write_table(
                     pyarrow.Table.from_pydict(rows_dict, schema=schema),
-                    row_group_size=row_group_size,
+                    row_group_size=max_rowcount,
                 )
 
-            # Write and yield a whole file when hit a sizeof limit
+            # Write and yield a whole file when hit the sizeof limit
             if sizeof_so_far >= max_sizeof:
                 rows_dict, rows = convert_rows_dict(schema.names, rows)
                 writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
@@ -731,7 +731,7 @@ def convert_to_raquet_files(
         rows_dict, rows = convert_rows_dict(schema.names, rows)
         writer.write_table(
             pyarrow.Table.from_pydict(rows_dict, schema=schema),
-            row_group_size=row_group_size,
+            row_group_size=max_rowcount,
         )
 
         # Finish writing with metadata row
