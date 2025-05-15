@@ -19,12 +19,15 @@ import copy
 import dataclasses
 import enum
 import gzip
+import itertools
 import json
 import logging
 import math
 import multiprocessing
 import statistics
 import struct
+import sys
+import typing
 
 import mercantile
 import pyarrow.compute
@@ -600,18 +603,48 @@ def create_metadata(
     return metadata_json
 
 
+def convert_rows_dict(names: list[str], rows: list[dict]) -> tuple[dict, list]:
+    """Return a dictionary of lists and an empty replacement for the input list"""
+    return {key: [row[key] for row in rows] for key in names}, []
+
+
 def main(
     geotiff_filename: str,
     raquet_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
 ):
-    """Read GeoTIFF datasource and write to a RaQuet file
+    """Read GeoTIFF datasource and write to RaQuet
 
     Args:
         geotiff_filename: GeoTIFF filename
         raquet_filename: RaQuet filename
         zoom_strategy: ZoomStrategy member
+        resampling_algorithm: ResamplingAlgorithm member
+    """
+    raquet_destinations = itertools.repeat((raquet_filename, math.inf))
+
+    for raquet_filename in convert_to_raquet_files(
+        geotiff_filename, raquet_destinations, zoom_strategy, resampling_algorithm
+    ):
+        print("-->", raquet_filename)
+
+
+def convert_to_raquet_files(
+    geotiff_filename: str,
+    raquet_destinations: typing.Generator[tuple[str, float], None, None],
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+) -> typing.Generator[str, None, None]:
+    """Read GeoTIFF datasource and write to RaQuet files
+
+    Args:
+        geotiff_filename: GeoTIFF filename
+        raquet_destinations: tuples of (filename, maximum sizeof)
+        zoom_strategy: ZoomStrategy member
+        resampling_algorithm: ResamplingAlgorithm member
+
+    Yields output filenames as they are written.
     """
     raster_geometry, pipe = open_geotiff_in_process(
         geotiff_filename, zoom_strategy, resampling_algorithm
@@ -623,8 +656,9 @@ def main(
         # Initialize empty lists to collect rows and stats
         row_group_size, rows, band_stats = 1000, [], [None for _ in band_names]
 
-        # Initialize the parquet writer
-        writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
+        # Initialize a parquet writer
+        rfname, max_sizeof = next(raquet_destinations)
+        writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
         minresolution = math.inf
@@ -660,14 +694,26 @@ def main(
                     **{bname: block_data[i] for i, bname in enumerate(band_names)},
                 }
             )
+            sizeof_so_far += sum(sys.getsizeof(v) for v in rows[-1].values())
 
-            # Write a row group when we hit the size limit
+            # Write a row group when we hit a size limit
             if len(rows) >= row_group_size:
-                rows_dict, rows = {k: [r[k] for r in rows] for k in schema.names}, []
+                rows_dict, rows = convert_rows_dict(schema.names, rows)
                 writer.write_table(
                     pyarrow.Table.from_pydict(rows_dict, schema=schema),
                     row_group_size=row_group_size,
                 )
+
+            # Write and yield a whole file when hit a sizeof limit
+            if sizeof_so_far >= max_sizeof:
+                rows_dict, rows = convert_rows_dict(schema.names, rows)
+                writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
+                writer.close()
+                yield rfname
+
+                # Reinitialize the parquet writer
+                rfname, max_sizeof = next(raquet_destinations)
+                writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
             # Skip stats from overview tiles?
             if tile.z < raster_geometry.zoom:
@@ -682,7 +728,7 @@ def main(
             logging.info("Band %s %s", i + 1, stats)
 
         # Write remaining rows
-        rows_dict = {k: [row[k] for row in rows] for k in schema.names}
+        rows_dict, rows = convert_rows_dict(schema.names, rows)
         writer.write_table(
             pyarrow.Table.from_pydict(rows_dict, schema=schema),
             row_group_size=row_group_size,
@@ -706,6 +752,7 @@ def main(
         }
         writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
         writer.close()
+        yield rfname
 
     finally:
         pipe.close()
