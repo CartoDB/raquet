@@ -621,24 +621,25 @@ def main(
     raquet_destination: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
-    max_size: int | None = None,
+    target_size: int | None = None,
 ):
     """Read GeoTIFF datasource and write to RaQuet
 
     Args:
         geotiff_filename: GeoTIFF filename
-        raquet_destination: RaQuet destination, file or dirname depending on max_size
+        raquet_destination: RaQuet destination, file or dirname depending on target_size
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
+        target_size: Integer number of bytes for individual parquet files in raquet_destination
     """
-    if max_size is None:
+    if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
     else:
         if not os.path.isdir(raquet_destination):
             os.mkdir(raquet_destination)
         # Prepare a generator of sequential file names
         raquet_destinations = (
-            (os.path.join(raquet_destination, f"part{i:03d}.parquet"), max_size)
+            (os.path.join(raquet_destination, f"part{i:03d}.parquet"), target_size)
             for i in itertools.count()
         )
 
@@ -658,7 +659,7 @@ def convert_to_raquet_files(
 
     Args:
         geotiff_filename: GeoTIFF filename
-        raquet_destinations: tuples of (filename, maximum sizeof)
+        raquet_destinations: tuples of (filename, target sizeof)
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
 
@@ -675,7 +676,7 @@ def convert_to_raquet_files(
         max_rowcount, rows, band_stats = 1000, [], [None for _ in band_names]
 
         # Initialize a parquet writer
-        rfname, max_sizeof = next(raquet_destinations)
+        rfname, target_sizeof = next(raquet_destinations)
         writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
@@ -719,14 +720,14 @@ def convert_to_raquet_files(
                 write_and_clear_rows(writer, schema, rows)
 
             # Write and yield a whole file when we hit the sizeof limit
-            if sizeof_so_far >= max_sizeof:
+            if sizeof_so_far > target_sizeof:
                 if rows:
                     write_and_clear_rows(writer, schema, rows)
                 writer.close()
                 yield rfname
 
                 # Reinitialize the parquet writer
-                rfname, max_sizeof = next(raquet_destinations)
+                rfname, target_sizeof = next(raquet_destinations)
                 writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
             # Skip stats from overview tiles?
@@ -787,8 +788,8 @@ parser.add_argument(
     default=ResamplingAlgorithm.NearestNeighbour,
 )
 parser.add_argument(
-    "--max-size",
-    help="Maximum byte size of all rows in each parquet file",
+    "--target-size",
+    help="Target byte size of all rows in each parquet file, actual file sizes may be larger",
     type=int,
 )
 

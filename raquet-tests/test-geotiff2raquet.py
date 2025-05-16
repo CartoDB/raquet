@@ -189,7 +189,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_destination,
                 geotiff2raquet.ZoomStrategy.UPPER,
                 geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
-                max_size=64000,
+                target_size=64000,
             )
             tables = [
                 pyarrow.parquet.read_table(name)

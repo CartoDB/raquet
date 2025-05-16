@@ -13,7 +13,7 @@ def geotiff2raquet_main():
         args.raquet_destination,
         geotiff2raquet.ZoomStrategy(args.zoom_strategy),
         geotiff2raquet.ResamplingAlgorithm(args.resampling_algorithm),
-        args.max_size,
+        args.target_size,
     )
 
 
