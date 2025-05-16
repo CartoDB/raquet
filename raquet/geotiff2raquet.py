@@ -2,7 +2,7 @@
 """Convert GeoTIFF file to RaQuet output
 
 Usage:
-    geotiff2raquet.py <geotiff_filename> <raquet_filename>
+    geotiff2raquet.py <geotiff_filename> <raquet_destination>
 
 Help:
     geotiff2raquet.py --help
@@ -19,12 +19,16 @@ import copy
 import dataclasses
 import enum
 import gzip
+import itertools
 import json
 import logging
 import math
 import multiprocessing
+import os
 import statistics
 import struct
+import sys
+import typing
 
 import mercantile
 import pyarrow.compute
@@ -539,41 +543,141 @@ def get_raquet_dimensions(
     }
 
 
+def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
+    """Create table schema and band column names for RasterGeometry instance"""
+    band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
+
+    # Create table schema based on band count
+    schema = pyarrow.schema(
+        [
+            ("block", pyarrow.uint64()),
+            ("metadata", pyarrow.string()),
+            *[(bname, pyarrow.binary()) for bname in band_names],
+        ]
+    )
+
+    return schema, band_names
+
+
+def create_metadata(
+    rg: RasterGeometry,
+    band_names: list[str],
+    band_stats: list[RasterStats | None],
+    minresolution: int,
+    xmin: float,
+    ymin: float,
+    xmax: float,
+    ymax: float,
+) -> dict:
+    """Create a dictionary of RaQuet metadata
+
+    See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
+    """
+    metadata_json = {
+        "version": "0.1.0",
+        "compression": "gzip",
+        "block_resolution": rg.zoom,
+        "minresolution": minresolution,
+        "maxresolution": rg.zoom,
+        "nodata": rg.nodata,
+        "num_blocks": band_stats[0].blocks,
+        "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
+        "bands": [
+            {
+                "type": btype,
+                "name": bname,
+                "colorinterp": bcolorinterp,
+                "colortable": bcolortable,
+                "stats": stats.__dict__,
+            }
+            for btype, bname, bcolorinterp, bcolortable, stats in zip(
+                rg.bandtypes,
+                band_names,
+                rg.bandcolorinterp,
+                rg.bandcolortable,
+                band_stats,
+            )
+        ],
+        **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax),
+    }
+
+    return metadata_json
+
+
+def flush_rows_to_file(
+    writer: pyarrow.parquet.ParquetWriter, schema: pyarrow.lib.Schema, rows: list[dict]
+):
+    """Write a list of rows then destructively clear it in-place"""
+    rows_dict = {key: [row[key] for row in rows] for key in schema.names}
+    table = pyarrow.Table.from_pydict(rows_dict, schema=schema)
+    writer.write_table(table, row_group_size=len(rows))
+
+    # Destroy content of rows
+    rows.clear()
+
+
 def main(
     geotiff_filename: str,
-    raquet_filename: str,
+    raquet_destination: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    target_size: int | None = None,
 ):
-    """Read GeoTIFF datasource and write to a RaQuet file
+    """Read GeoTIFF datasource and write to RaQuet
 
     Args:
         geotiff_filename: GeoTIFF filename
-        raquet_filename: RaQuet filename
+        raquet_destination: RaQuet destination, file or dirname depending on target_size
         zoom_strategy: ZoomStrategy member
+        resampling_algorithm: ResamplingAlgorithm member
+        target_size: Integer number of bytes for individual parquet files in raquet_destination
+    """
+    if target_size is None:
+        raquet_destinations = itertools.repeat((raquet_destination, math.inf))
+    else:
+        if not os.path.isdir(raquet_destination):
+            os.mkdir(raquet_destination)
+        # Prepare a generator of sequential file names
+        raquet_destinations = (
+            (os.path.join(raquet_destination, f"part{i:03d}.parquet"), target_size)
+            for i in itertools.count()
+        )
+
+    for raquet_filename in convert_to_raquet_files(
+        geotiff_filename, raquet_destinations, zoom_strategy, resampling_algorithm
+    ):
+        logging.info("Wrote %s", raquet_filename)
+
+
+def convert_to_raquet_files(
+    geotiff_filename: str,
+    raquet_destinations: typing.Generator[tuple[str, float], None, None],
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+) -> typing.Generator[str, None, None]:
+    """Read GeoTIFF datasource and write to RaQuet files
+
+    Args:
+        geotiff_filename: GeoTIFF filename
+        raquet_destinations: tuples of (filename, target sizeof)
+        zoom_strategy: ZoomStrategy member
+        resampling_algorithm: ResamplingAlgorithm member
+
+    Yields output filenames as they are written.
     """
     raster_geometry, pipe = open_geotiff_in_process(
         geotiff_filename, zoom_strategy, resampling_algorithm
     )
 
     try:
-        band_names = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
-
-        # Create table schema based on band count
-        schema = pyarrow.schema(
-            [
-                ("block", pyarrow.uint64()),
-                ("metadata", pyarrow.string()),
-                *[(bname, pyarrow.binary()) for bname in band_names],
-            ]
-        )
+        schema, band_names = create_schema(raster_geometry)
 
         # Initialize empty lists to collect rows and stats
-        rows, row_group_size = [], 1000
-        band_stats = [None for _ in raster_geometry.bandtypes]
+        max_rowcount, rows, band_stats = 1000, [], [None for _ in band_names]
 
-        # Initialize the parquet writer
-        writer = pyarrow.parquet.ParquetWriter(raquet_filename, schema)
+        # Initialize a parquet writer
+        rfname, target_sizeof = next(raquet_destinations)
+        writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
         minresolution = math.inf
@@ -609,14 +713,23 @@ def main(
                     **{bname: block_data[i] for i, bname in enumerate(band_names)},
                 }
             )
+            sizeof_so_far += sum(sys.getsizeof(v) for v in rows[-1].values())
 
-            # Write a row group when we hit the size limit
-            if len(rows) >= row_group_size:
-                rows_dict, rows = {k: [r[k] for r in rows] for k in schema.names}, []
-                writer.write_table(
-                    pyarrow.Table.from_pydict(rows_dict, schema=schema),
-                    row_group_size=row_group_size,
-                )
+            # Write a row group and recalibrate sizeof_so_far when we hit the row count limit
+            if len(rows) >= max_rowcount:
+                flush_rows_to_file(writer, schema, rows)
+                sizeof_so_far = os.stat(rfname).st_size
+
+            # Write and yield a whole file when we hit the sizeof limit
+            if sizeof_so_far > target_sizeof:
+                if rows:
+                    flush_rows_to_file(writer, schema, rows)
+                writer.close()
+                yield rfname
+
+                # Reinitialize the parquet writer
+                rfname, target_sizeof = next(raquet_destinations)
+                writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
             # Skip stats from overview tiles?
             if tile.z < raster_geometry.zoom:
@@ -631,50 +744,27 @@ def main(
             logging.info("Band %s %s", i + 1, stats)
 
         # Write remaining rows
-        rows_dict = {k: [row[k] for row in rows] for k in schema.names}
-        writer.write_table(
-            pyarrow.Table.from_pydict(rows_dict, schema=schema),
-            row_group_size=row_group_size,
+        flush_rows_to_file(writer, schema, rows)
+
+        # Finish writing with a single metadata row
+        metadata_json = create_metadata(
+            raster_geometry,
+            band_names,
+            band_stats,
+            minresolution,
+            xmin,
+            ymin,
+            xmax,
+            ymax,
         )
-
-        # Define RaQuet metadata
-        # See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
-        metadata_json = {
-            "version": "0.1.0",
-            "compression": "gzip",
-            "block_resolution": raster_geometry.zoom,
-            "minresolution": minresolution,
-            "maxresolution": raster_geometry.zoom,
-            "nodata": raster_geometry.nodata,
-            "num_blocks": band_stats[0].blocks,
-            "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
-            "bands": [
-                {
-                    "type": btype,
-                    "name": bname,
-                    "colorinterp": bcolorinterp,
-                    "colortable": bcolortable,
-                    "stats": stats.__dict__,
-                }
-                for btype, bname, bcolorinterp, bcolortable, stats in zip(
-                    raster_geometry.bandtypes,
-                    band_names,
-                    raster_geometry.bandcolorinterp,
-                    raster_geometry.bandcolortable,
-                    band_stats,
-                )
-            ],
-            **get_raquet_dimensions(raster_geometry.zoom, xmin, ymin, xmax, ymax),
+        metadata_row = {
+            "block": 0,
+            "metadata": json.dumps(metadata_json),
+            **{bname: None for bname in band_names},
         }
-
-        # Finish writing with metadata row
-        rows_dict = {
-            "block": [0],
-            "metadata": [json.dumps(metadata_json)],
-            **{bname: [None] for bname in band_names},
-        }
-        writer.write_table(pyarrow.Table.from_pydict(rows_dict, schema=schema))
+        flush_rows_to_file(writer, schema, [metadata_row])
         writer.close()
+        yield rfname
 
     finally:
         pipe.close()
@@ -682,7 +772,7 @@ def main(
 
 parser = argparse.ArgumentParser()
 parser.add_argument("geotiff_filename")
-parser.add_argument("raquet_filename")
+parser.add_argument("raquet_destination")
 parser.add_argument(
     "-v", "--verbose", action="store_true", help="Enable verbose output"
 )
@@ -698,6 +788,11 @@ parser.add_argument(
     choices=list(ResamplingAlgorithm),
     default=ResamplingAlgorithm.NearestNeighbour,
 )
+parser.add_argument(
+    "--target-size",
+    help="Target byte size of all rows in each parquet file, actual file sizes may be larger",
+    type=int,
+)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -705,7 +800,7 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO)
     main(
         args.geotiff_filename,
-        args.raquet_filename,
+        args.raquet_destination,
         ZoomStrategy(args.zoom_strategy),
         ResamplingAlgorithm(args.resampling_algorithm),
     )
