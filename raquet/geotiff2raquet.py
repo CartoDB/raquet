@@ -604,7 +604,7 @@ def create_metadata(
     return metadata_json
 
 
-def write_and_clear_rows(
+def flush_rows_to_file(
     writer: pyarrow.parquet.ParquetWriter, schema: pyarrow.lib.Schema, rows: list[dict]
 ):
     """Write a list of rows then destructively clear it in-place"""
@@ -715,14 +715,15 @@ def convert_to_raquet_files(
             )
             sizeof_so_far += sum(sys.getsizeof(v) for v in rows[-1].values())
 
-            # Write a row group when we hit the row count limit
+            # Write a row group and recalibrate sizeof_so_far when we hit the row count limit
             if len(rows) >= max_rowcount:
-                write_and_clear_rows(writer, schema, rows)
+                flush_rows_to_file(writer, schema, rows)
+                sizeof_so_far = os.stat(rfname).st_size
 
             # Write and yield a whole file when we hit the sizeof limit
             if sizeof_so_far > target_sizeof:
                 if rows:
-                    write_and_clear_rows(writer, schema, rows)
+                    flush_rows_to_file(writer, schema, rows)
                 writer.close()
                 yield rfname
 
@@ -743,7 +744,7 @@ def convert_to_raquet_files(
             logging.info("Band %s %s", i + 1, stats)
 
         # Write remaining rows
-        write_and_clear_rows(writer, schema, rows)
+        flush_rows_to_file(writer, schema, rows)
 
         # Finish writing with a single metadata row
         metadata_json = create_metadata(
@@ -761,7 +762,7 @@ def convert_to_raquet_files(
             "metadata": json.dumps(metadata_json),
             **{bname: None for bname in band_names},
         }
-        write_and_clear_rows(writer, schema, [metadata_row])
+        flush_rows_to_file(writer, schema, [metadata_row])
         writer.close()
         yield rfname
 
