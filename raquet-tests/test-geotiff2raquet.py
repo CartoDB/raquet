@@ -196,6 +196,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 for name in sorted(glob.glob(f"{raquet_destination}/*.parquet"))
             ]
 
+        self.assertGreater(len(tables), 1)
         self.assertEqual(sum(len(table) for table in tables), 63)
         for table in tables:
             self.assertEqual(table.column_names, ["block", "metadata", "band_1"])
