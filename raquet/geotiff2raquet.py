@@ -642,8 +642,9 @@ def main(
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
     else:
-        if not os.path.isdir(raquet_destination):
-            os.mkdir(raquet_destination)
+        if os.path.exists(raquet_destination):
+            raise ValueError(f"{raquet_destination} already exists")
+        os.mkdir(raquet_destination)
         # Prepare a generator of sequential file names
         raquet_destinations = (
             (os.path.join(raquet_destination, f"part{i:03d}.parquet"), target_size)
