@@ -611,6 +611,9 @@ def flush_rows_to_file(
     writer: pyarrow.parquet.ParquetWriter, schema: pyarrow.lib.Schema, rows: list[dict]
 ):
     """Write a list of rows then destructively clear it in-place"""
+    if not rows:  # Skip writing if rows is empty
+        return
+
     rows_dict = {key: [row[key] for row in rows] for key in schema.names}
     table = pyarrow.Table.from_pydict(rows_dict, schema=schema)
     writer.write_table(table, row_group_size=len(rows))
