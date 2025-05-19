@@ -35,9 +35,6 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
-# Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
-BLOCK_ZOOM = 8
-
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
 
@@ -246,20 +243,21 @@ def find_resolution(
     return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
 
 
-def find_minzoom(rg: RasterGeometry) -> int:
+def find_minzoom(rg: RasterGeometry, block_zoom: int) -> int:
     """Calculate minimum zoom for a reasonable image size 128px from raster geometry"""
     big_zoom = 32
     ul = mercantile.tile(lat=rg.maxlat, lng=rg.minlon, zoom=big_zoom)
     lr = mercantile.tile(lat=rg.minlat, lng=rg.maxlon, zoom=big_zoom)
     high_hypot = math.hypot(lr.x - ul.x, lr.y - ul.y)
     target_hypot = math.hypot(TARGET_MIN_SIZE, TARGET_MIN_SIZE)
-    min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - BLOCK_ZOOM
+    min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - block_zoom
     return int(round(min_zoom))
 
 
-def find_zoom(resolution: float, zoom_strategy: ZoomStrategy) -> int:
+def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -> int:
     """Calculate web mercator zoom from a raw meters/pixel resolution"""
-    raw_zoom = math.log(mercantile.CE / 256 / resolution) / math.log(2)
+    tile_dim = 2**block_zoom
+    raw_zoom = math.log(mercantile.CE / tile_dim / resolution) / math.log(2)
     if zoom_strategy is ZoomStrategy.UPPER:
         zoom = math.ceil(raw_zoom)
     elif zoom_strategy is ZoomStrategy.LOWER:
@@ -274,12 +272,13 @@ def create_tile_ds(
     web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     tile: mercantile.Tile,
+    block_zoom: int,
 ) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_geotiff)
     # Initialize warped tile dataset and its bands
     tile_ds = driver.Create(
         f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif",
-        2**BLOCK_ZOOM,
-        2**BLOCK_ZOOM,
+        2**block_zoom,
+        2**block_zoom,
         ds.RasterCount,
         ds.GetRasterBand(1).DataType,
     )
@@ -328,6 +327,7 @@ def read_geotiff(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
     pipe: multiprocessing.Pipe,
 ):
     """Worker process that accesses a GeoTIFF through pipes.
@@ -397,7 +397,7 @@ def read_geotiff(
 
         tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
         resolution = find_resolution(src_ds, tx3857)
-        zoom = find_zoom(resolution, zoom_strategy)
+        zoom = find_zoom(resolution, zoom_strategy, block_zoom)
 
         raster_geometry = RasterGeometry(
             [gdaltype_bandtypes[band.DataType].name for band in src_bands],
@@ -438,18 +438,19 @@ def read_geotiff(
                 raster_geometry.minlat,
                 raster_geometry.maxlon,
                 raster_geometry.maxlat,
-                find_minzoom(raster_geometry),
+                find_minzoom(raster_geometry, block_zoom),
             )
         ]
 
         while frames:
             frame = frames.pop()
             tile_ds: osgeo.gdal.Dataset | None = None
+            create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
 
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
-                tile_ds = create_tile_ds(gtiff_driver, web_mercator, src_ds, frame.tile)
+                tile_ds = create_tile_ds(*create_args)
                 osgeo.gdal.Warp(
                     destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts
                 )
@@ -458,7 +459,7 @@ def read_geotiff(
             elif not frame.inputs:
                 # Read overview pixels from earlier outputs
                 logging.info("Overview %s from %s", frame.tile, frame.outputs)
-                tile_ds = create_tile_ds(gtiff_driver, web_mercator, src_ds, frame.tile)
+                tile_ds = create_tile_ds(*create_args)
                 for sub_ds in frame.outputs:
                     osgeo.gdal.Warp(
                         destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
@@ -484,6 +485,7 @@ def open_geotiff_in_process(
     geotiff_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a GeoTIFF reader in another process.
 
@@ -494,7 +496,7 @@ def open_geotiff_in_process(
     parent_recv, child_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    args = geotiff_filename, zoom_strategy, resampling_algorithm, child_send
+    args = geotiff_filename, zoom_strategy, resampling_algorithm, block_zoom, child_send
     process = multiprocessing.Process(target=read_geotiff, args=args)
     process.start()
 
@@ -517,7 +519,7 @@ def read_metadata(table) -> dict:
 
 
 def get_raquet_dimensions(
-    zoom: int, xmin: int, ymin: int, xmax: int, ymax: int
+    zoom: int, xmin: int, ymin: int, xmax: int, ymax: int, block_zoom: int
 ) -> dict[str, int]:
     """Get dictionary of basic dimensions for RaQuet metadata from tile bounds"""
     # First and last tile in rectangular coverage
@@ -525,7 +527,7 @@ def get_raquet_dimensions(
     lower_right = mercantile.Tile(x=xmax, y=ymax, z=zoom)
 
     # Pixel dimensions
-    block_width, block_height = 2**BLOCK_ZOOM, 2**BLOCK_ZOOM
+    block_width, block_height = 2**block_zoom, 2**block_zoom
     raster_width = (1 + lower_right.x - upper_left.x) * block_width
     raster_height = (1 + lower_right.y - upper_left.y) * block_height
 
@@ -539,7 +541,7 @@ def get_raquet_dimensions(
         "height": raster_height,
         "block_width": block_width,
         "block_height": block_height,
-        "pixel_resolution": zoom + BLOCK_ZOOM,
+        "pixel_resolution": zoom + block_zoom,
     }
 
 
@@ -568,6 +570,7 @@ def create_metadata(
     ymin: float,
     xmax: float,
     ymax: float,
+    block_zoom: int,
 ) -> dict:
     """Create a dictionary of RaQuet metadata
 
@@ -581,7 +584,7 @@ def create_metadata(
         "maxresolution": rg.zoom,
         "nodata": rg.nodata,
         "num_blocks": band_stats[0].blocks,
-        "num_pixels": band_stats[0].blocks * (2**BLOCK_ZOOM) * (2**BLOCK_ZOOM),
+        "num_pixels": band_stats[0].blocks * (2**block_zoom) * (2**block_zoom),
         "bands": [
             {
                 "type": btype,
@@ -598,7 +601,7 @@ def create_metadata(
                 band_stats,
             )
         ],
-        **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax),
+        **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax, block_zoom),
     }
 
     return metadata_json
@@ -621,6 +624,7 @@ def main(
     raquet_destination: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
     target_size: int | None = None,
 ):
     """Read GeoTIFF datasource and write to RaQuet
@@ -644,7 +648,11 @@ def main(
         )
 
     for raquet_filename in convert_to_raquet_files(
-        geotiff_filename, raquet_destinations, zoom_strategy, resampling_algorithm
+        geotiff_filename,
+        raquet_destinations,
+        zoom_strategy,
+        resampling_algorithm,
+        block_zoom,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -654,6 +662,7 @@ def convert_to_raquet_files(
     raquet_destinations: typing.Generator[tuple[str, float], None, None],
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
 ) -> typing.Generator[str, None, None]:
     """Read GeoTIFF datasource and write to RaQuet files
 
@@ -666,7 +675,7 @@ def convert_to_raquet_files(
     Yields output filenames as they are written.
     """
     raster_geometry, pipe = open_geotiff_in_process(
-        geotiff_filename, zoom_strategy, resampling_algorithm
+        geotiff_filename, zoom_strategy, resampling_algorithm, block_zoom
     )
 
     try:
@@ -756,6 +765,7 @@ def convert_to_raquet_files(
             ymin,
             xmax,
             ymax,
+            block_zoom,
         )
         metadata_row = {
             "block": 0,
@@ -794,13 +804,27 @@ parser.add_argument(
     type=int,
 )
 
+parser.add_argument(
+    "--block-size",
+    help="Size of each square block in pixels, default=256px",
+    choices=(256, 512, 1024),
+    default=256,
+    type=int,
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
+
+    # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
+    block_zoom = int(math.log(args.block_size) / math.log(2))
+
     main(
         args.geotiff_filename,
         args.raquet_destination,
         ZoomStrategy(args.zoom_strategy),
         ResamplingAlgorithm(args.resampling_algorithm),
+        block_zoom,
+        args.target_size,
     )
