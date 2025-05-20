@@ -1,3 +1,4 @@
+import glob
 import itertools
 import os
 import tempfile
@@ -19,6 +20,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.AUTO,
                 geotiff2raquet.ResamplingAlgorithm.CubicSpline,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 
@@ -102,6 +104,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.LOWER,
                 geotiff2raquet.ResamplingAlgorithm.CubicSpline,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 
@@ -139,7 +142,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['sum']:.4g}", "3.704e+06")
         self.assertEqual(f"{stats['sum_squares']:.4g}", "4.539e+08")
 
-    def test_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
+    def test_smalltile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
             PROJDIR, "tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif"
         )
@@ -150,6 +153,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.UPPER,
                 geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 
@@ -157,6 +161,129 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(table.column_names, ["block", "metadata", "band_1"])
 
         metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(metadata["compression"], "gzip")
+        self.assertEqual(metadata["width"], 1536)
+        self.assertEqual(metadata["height"], 1792)
+        self.assertEqual(metadata["num_blocks"], 42)
+        self.assertEqual(metadata["num_pixels"], 1536 * 1792)
+        self.assertEqual(metadata["nodata"], 250.0)
+        self.assertEqual(metadata["block_resolution"], 13)
+        self.assertEqual(metadata["pixel_resolution"], 21)
+        self.assertEqual(metadata["minresolution"], 10)
+        self.assertEqual(metadata["maxresolution"], 13)
+
+        stats = metadata["bands"][0]["stats"]
+        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
+        self.assertEqual(f"{stats['max']:.4g}", "95")
+        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
+        self.assertEqual(f"{stats['min']:.4g}", "11")
+        self.assertEqual(f"{stats['stddev']:.4g}", "16.47")
+        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
+        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+
+    def test_medtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
+        geotiff_filename = os.path.join(
+            PROJDIR, "tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif"
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.UPPER,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                9,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        self.assertEqual(len(table), 22)
+        self.assertEqual(table.column_names, ["block", "metadata", "band_1"])
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(metadata["compression"], "gzip")
+        self.assertEqual(metadata["width"], 1536)
+        self.assertEqual(metadata["height"], 2048)
+        self.assertEqual(metadata["num_blocks"], 12)
+        self.assertEqual(metadata["num_pixels"], 1536 * 2048)
+        self.assertEqual(metadata["nodata"], 250.0)
+        self.assertEqual(metadata["block_resolution"], 12)
+        self.assertEqual(metadata["pixel_resolution"], 21)
+        self.assertEqual(metadata["minresolution"], 9)
+        self.assertEqual(metadata["maxresolution"], 12)
+
+        stats = metadata["bands"][0]["stats"]
+        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
+        self.assertEqual(f"{stats['max']:.4g}", "95")
+        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
+        self.assertEqual(f"{stats['min']:.4g}", "11")
+        self.assertEqual(f"{stats['stddev']:.4g}", "17.25") # "16.47")
+        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
+        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+
+    def test_bigtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
+        geotiff_filename = os.path.join(
+            PROJDIR, "tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif"
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.UPPER,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                10,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        self.assertEqual(len(table), 11)
+        self.assertEqual(table.column_names, ["block", "metadata", "band_1"])
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(metadata["compression"], "gzip")
+        self.assertEqual(metadata["width"], 2048)
+        self.assertEqual(metadata["height"], 3072)
+        self.assertEqual(metadata["num_blocks"], 6)
+        self.assertEqual(metadata["num_pixels"], 2048 * 3072)
+        self.assertEqual(metadata["nodata"], 250.0)
+        self.assertEqual(metadata["block_resolution"], 11)
+        self.assertEqual(metadata["pixel_resolution"], 21)
+        self.assertEqual(metadata["minresolution"], 8)
+        self.assertEqual(metadata["maxresolution"], 11)
+
+        stats = metadata["bands"][0]["stats"]
+        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
+        self.assertEqual(f"{stats['max']:.4g}", "95")
+        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
+        self.assertEqual(f"{stats['min']:.4g}", "11")
+        self.assertEqual(f"{stats['stddev']:.4g}", "18.28") # "16.47")
+        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
+        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+
+    def test_multipart_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
+        geotiff_filename = os.path.join(
+            PROJDIR, "tests/Annual_NLCD_LndCov_2023_CU_C1V0.tif"
+        )
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_destination = os.path.join(tempdir, "out")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_destination,
+                geotiff2raquet.ZoomStrategy.UPPER,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                target_size=64000,
+                block_zoom=8,
+            )
+            tables = [
+                pyarrow.parquet.read_table(name)
+                for name in sorted(glob.glob(f"{raquet_destination}/*.parquet"))
+            ]
+
+        self.assertGreater(len(tables), 1)
+        self.assertEqual(sum(len(table) for table in tables), 63)
+        for table in tables:
+            self.assertEqual(table.column_names, ["block", "metadata", "band_1"])
+
+        metadata = geotiff2raquet.read_metadata(tables[-1])
         self.assertEqual(metadata["compression"], "gzip")
         self.assertEqual(metadata["width"], 1536)
         self.assertEqual(metadata["height"], 1792)
@@ -186,6 +313,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.UPPER,
                 geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 
@@ -222,6 +350,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.AUTO,
                 geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 
