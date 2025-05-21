@@ -11,6 +11,14 @@ PROJDIR = os.path.join(os.path.dirname(__file__), "..")
 
 
 class TestGeotiff2Raquet(unittest.TestCase):
+    def test_find_minzoom(self):
+        rg = geotiff2raquet.RasterGeometry(
+            [], [], [], None, 8, -85.0511287798066, -180.0, 85.0511287798066, 180.0
+        )
+        self.assertEqual(geotiff2raquet.find_minzoom(rg, 6), 1)
+        self.assertEqual(geotiff2raquet.find_minzoom(rg, 7), 0)
+        self.assertEqual(geotiff2raquet.find_minzoom(rg, 8), 0)
+
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")
         with tempfile.TemporaryDirectory() as tempdir:
