@@ -25,10 +25,24 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.min, 1)
         self.assertEqual(stats.max, 99)
         self.assertEqual(stats.mean, 50)
-        self.assertAlmostEqual(stats.stddev, 28.722813233)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
         self.assertEqual(stats.blocks, 1)
+        self.assertAlmostEqual(stats.stddev, 28.722813233)
+
+    def test_read_statistics_numpy(self):
+        import numpy
+
+        arr = numpy.arange(100).reshape(10, 10)
+        stats = geotiff2raquet.read_statistics_numpy(arr, 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertEqual(stats.blocks, 1)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
 
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")

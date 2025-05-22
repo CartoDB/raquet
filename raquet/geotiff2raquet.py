@@ -35,6 +35,13 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
+try:
+    import numpy.ma
+except ImportError:
+    has_numpy = False
+else:
+    has_numpy = True
+
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
 
@@ -207,6 +214,29 @@ def read_statistics(
         stddev=statistics.stdev(values),
         sum=sum(val for val in values),
         sum_squares=sum(val**2 for val in values),
+    )
+
+
+def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
+    """Calculate statistics for array of numeric values and optional nodata value"""
+    if nodata is not None:
+        masked_values = numpy.ma.masked_array(values, values == nodata)
+        value_count = masked_values.count()
+    else:
+        masked_values = values
+        value_count = values.size
+
+    if value_count == 0:
+        return NoDataStats()
+
+    return RasterStats(
+        count=value_count,
+        min=masked_values.min(),
+        max=masked_values.max(),
+        mean=masked_values.mean(),
+        stddev=masked_values.std(),
+        sum=masked_values.sum(),
+        sum_squares=(masked_values * masked_values).sum(),
     )
 
 
