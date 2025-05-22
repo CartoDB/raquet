@@ -3,6 +3,7 @@ import itertools
 import os
 import tempfile
 import unittest
+import unittest.mock
 
 import pyarrow.parquet
 from raquet import geotiff2raquet
@@ -30,19 +31,19 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
-    def test_read_statistics_numpy(self):
-        import numpy
-
-        arr = numpy.arange(100).reshape(10, 10)
-        stats = geotiff2raquet.read_statistics_numpy(arr, 0)
-        self.assertEqual(stats.count, 99)
-        self.assertEqual(stats.min, 1)
-        self.assertEqual(stats.max, 99)
-        self.assertEqual(stats.mean, 50)
-        self.assertEqual(stats.sum, 4950)
-        self.assertEqual(stats.sum_squares, 328350)
+    @unittest.mock.patch("numpy.ma")
+    def test_read_statistics_numpy(self, mock_numpy_ma):
+        input_arr = unittest.mock.Mock()
+        stats = geotiff2raquet.read_statistics_numpy(input_arr, 0)
+        mock_numpy_ma.masked_array.assert_any_call(input_arr, input_arr == 0)
+        masked_arr = mock_numpy_ma.masked_array.return_value
+        self.assertIs(stats.count, masked_arr.count.return_value)
+        self.assertIs(stats.min, masked_arr.min.return_value)
+        self.assertIs(stats.max, masked_arr.max.return_value)
+        self.assertIs(stats.mean, masked_arr.mean.return_value)
+        self.assertIs(stats.sum, masked_arr.sum.return_value)
         self.assertEqual(stats.blocks, 1)
-        self.assertAlmostEqual(stats.stddev, 28.577380332)
+        self.assertIs(stats.stddev, masked_arr.std.return_value)
 
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")
