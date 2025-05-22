@@ -32,7 +32,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
     def test_read_statistics_numpy(self):
-        if geotiff2raquet.has_numpy:
+        if geotiff2raquet.HAS_NUMPY:
             with unittest.mock.patch("numpy.ma") as mock_numpy_ma:
                 input_arr = unittest.mock.Mock()
                 stats = geotiff2raquet.read_statistics_numpy(input_arr, 0)

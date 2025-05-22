@@ -39,9 +39,9 @@ try:
     import numpy
     import numpy.ma
 except ImportError:
-    has_numpy = False
+    HAS_NUMPY = False
 else:
-    has_numpy = True
+    HAS_NUMPY = True
 
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
@@ -346,7 +346,7 @@ def read_raster_data_stats(
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
         if gdaltype_bandtypes is not None and include_stats:
             band_type = gdaltype_bandtypes[band.DataType]
-            if has_numpy:
+            if HAS_NUMPY:
                 pixel_arr = numpy.frombuffer(data, dtype=getattr(numpy, band_type.name))
                 stats = read_statistics_numpy(pixel_arr, band.GetNoDataValue())
             else:
