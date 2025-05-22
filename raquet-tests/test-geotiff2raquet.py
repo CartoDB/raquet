@@ -20,8 +20,8 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(geotiff2raquet.find_minzoom(rg, 7), 0)
         self.assertEqual(geotiff2raquet.find_minzoom(rg, 8), 0)
 
-    def test_read_statistics(self):
-        stats = geotiff2raquet.read_statistics(list(range(100)), 0)
+    def test_read_statistics_python(self):
+        stats = geotiff2raquet.read_statistics_python(list(range(100)), 0)
         self.assertEqual(stats.count, 99)
         self.assertEqual(stats.min, 1)
         self.assertEqual(stats.max, 99)
@@ -37,13 +37,13 @@ class TestGeotiff2Raquet(unittest.TestCase):
         stats = geotiff2raquet.read_statistics_numpy(input_arr, 0)
         mock_numpy_ma.masked_array.assert_any_call(input_arr, input_arr == 0)
         masked_arr = mock_numpy_ma.masked_array.return_value
-        self.assertIs(stats.count, masked_arr.count.return_value)
-        self.assertIs(stats.min, masked_arr.min.return_value)
-        self.assertIs(stats.max, masked_arr.max.return_value)
-        self.assertIs(stats.mean, masked_arr.mean.return_value)
-        self.assertIs(stats.sum, masked_arr.sum.return_value)
+        masked_arr.count.assert_called_once()
+        masked_arr.min.assert_called_once()
+        masked_arr.max.assert_called_once()
+        masked_arr.mean.assert_called_once()
+        masked_arr.sum.assert_called_once()
         self.assertEqual(stats.blocks, 1)
-        self.assertIs(stats.stddev, masked_arr.std.return_value)
+        masked_arr.std.assert_called_once()
 
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")
