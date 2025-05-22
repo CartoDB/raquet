@@ -39,6 +39,7 @@ try:
     import numpy
     import numpy.ma
 except ImportError:
+    logging.info("Optional Numpy package is unavailable, stats calculation may be slow")
     HAS_NUMPY = False
 else:
     HAS_NUMPY = True
