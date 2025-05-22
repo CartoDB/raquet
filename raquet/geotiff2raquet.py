@@ -230,10 +230,10 @@ def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
     if value_count == 0:
         return NoDataStats()
 
-    if masked_values.dtype in (numpy.uint8,):
-        ptype = int
-    else:
+    if masked_values.dtype in (numpy.float16, numpy.float32, numpy.float64):
         ptype = float
+    else:
+        ptype = int
 
     return RasterStats(
         count=value_count,
