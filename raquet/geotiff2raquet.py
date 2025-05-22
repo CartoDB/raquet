@@ -251,7 +251,7 @@ def find_minzoom(rg: RasterGeometry, block_zoom: int) -> int:
     high_hypot = math.hypot(lr.x - ul.x, lr.y - ul.y)
     target_hypot = math.hypot(TARGET_MIN_SIZE, TARGET_MIN_SIZE)
     min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - block_zoom
-    return int(round(min_zoom))
+    return max(0, int(round(min_zoom)))
 
 
 def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -> int:
