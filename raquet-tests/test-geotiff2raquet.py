@@ -31,19 +31,20 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
-    @unittest.mock.patch("numpy.ma")
-    def test_read_statistics_numpy(self, mock_numpy_ma):
-        input_arr = unittest.mock.Mock()
-        stats = geotiff2raquet.read_statistics_numpy(input_arr, 0)
-        mock_numpy_ma.masked_array.assert_any_call(input_arr, input_arr == 0)
-        masked_arr = mock_numpy_ma.masked_array.return_value
-        masked_arr.count.assert_called_once()
-        masked_arr.min.assert_called_once()
-        masked_arr.max.assert_called_once()
-        masked_arr.mean.assert_called_once()
-        masked_arr.sum.assert_called_once()
-        self.assertEqual(stats.blocks, 1)
-        masked_arr.std.assert_called_once()
+    def test_read_statistics_numpy(self):
+        if geotiff2raquet.has_numpy:
+            with unittest.mock.patch("numpy.ma") as mock_numpy_ma:
+                input_arr = unittest.mock.Mock()
+                stats = geotiff2raquet.read_statistics_numpy(input_arr, 0)
+                mock_numpy_ma.masked_array.assert_any_call(input_arr, input_arr == 0)
+                masked_arr = mock_numpy_ma.masked_array.return_value
+            masked_arr.count.assert_called_once()
+            masked_arr.min.assert_called_once()
+            masked_arr.max.assert_called_once()
+            masked_arr.mean.assert_called_once()
+            masked_arr.sum.assert_called_once()
+            self.assertEqual(stats.blocks, 1)
+            masked_arr.std.assert_called_once()
 
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")
