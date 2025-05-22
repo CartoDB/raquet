@@ -242,7 +242,7 @@ def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
         mean=float(masked_values.mean()),
         stddev=float(masked_values.std()),
         sum=ptype(masked_values.sum()),
-        sum_squares=float((masked_values**2).sum()),
+        sum_squares=float((masked_values.astype(ptype) ** 2).sum()),
     )
 
 
