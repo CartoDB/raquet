@@ -19,6 +19,32 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(geotiff2raquet.find_minzoom(rg, 7), 0)
         self.assertEqual(geotiff2raquet.find_minzoom(rg, 8), 0)
 
+    def test_read_statistics_python(self):
+        stats = geotiff2raquet.read_statistics_python(list(range(100)), 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertEqual(stats.blocks, 1)
+        self.assertAlmostEqual(stats.stddev, 28.722813233)
+
+    def test_read_statistics_numpy(self):
+        if not geotiff2raquet.HAS_NUMPY:
+            # Fine, just don't test in this case
+            return
+        arr = geotiff2raquet.numpy.arange(100)
+        stats = geotiff2raquet.read_statistics_numpy(arr, 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertEqual(stats.blocks, 1)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
+
     def test_europe_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "examples/europe.tif")
         with tempfile.TemporaryDirectory() as tempdir:

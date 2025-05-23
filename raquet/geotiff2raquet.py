@@ -35,6 +35,15 @@ import pyarrow.compute
 import pyarrow.parquet
 import quadbin
 
+try:
+    import numpy
+    import numpy.ma
+except ImportError:
+    logging.info("Optional Numpy package is unavailable, stats calculation may be slow")
+    HAS_NUMPY = False
+else:
+    HAS_NUMPY = True
+
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
 
@@ -189,7 +198,7 @@ def combine_stats(
     return next_stats
 
 
-def read_statistics(
+def read_statistics_python(
     values: list[int | float], nodata: int | float | None
 ) -> RasterStats | NoDataStats:
     """Calculate statistics for list of raw band values and optional nodata value"""
@@ -207,6 +216,34 @@ def read_statistics(
         stddev=statistics.stdev(values),
         sum=sum(val for val in values),
         sum_squares=sum(val**2 for val in values),
+    )
+
+
+def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
+    """Calculate statistics for array of numeric values and optional nodata value"""
+    if nodata is not None:
+        masked_values = numpy.ma.masked_array(values, values == nodata)
+        value_count = int(masked_values.count())
+    else:
+        masked_values = values
+        value_count = values.size
+
+    if value_count == 0:
+        return NoDataStats()
+
+    if masked_values.dtype in (numpy.float16, numpy.float32, numpy.float64):
+        ptype = float
+    else:
+        ptype = int
+
+    return RasterStats(
+        count=value_count,
+        min=ptype(masked_values.min()),
+        max=ptype(masked_values.max()),
+        mean=float(masked_values.mean()),
+        stddev=float(masked_values.std()),
+        sum=ptype(masked_values.sum()),
+        sum_squares=float((masked_values.astype(ptype) ** 2).sum()),
     )
 
 
@@ -310,8 +347,12 @@ def read_raster_data_stats(
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
         if gdaltype_bandtypes is not None and include_stats:
             band_type = gdaltype_bandtypes[band.DataType]
-            pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
-            stats = read_statistics(pixel_values, band.GetNoDataValue())
+            if HAS_NUMPY:
+                pixel_arr = numpy.frombuffer(data, dtype=getattr(numpy, band_type.name))
+                stats = read_statistics_numpy(pixel_arr, band.GetNoDataValue())
+            else:
+                pixel_values = struct.unpack(band_type.fmt * band.XSize * band.YSize, data)
+                stats = read_statistics_python(pixel_values, band.GetNoDataValue())
             logging.info(
                 "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
             )
