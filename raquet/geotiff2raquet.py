@@ -110,9 +110,6 @@ class RasterStats:
     sum: int | float
     sum_squares: int | float
 
-    # Special value for counting instances of block stats in combine_stats()
-    blocks: int = 1
-
     def scale_by(self, zoom: int) -> "RasterStats":
         """Return approximate equivalent stats for a higher zoom"""
         return RasterStats(
@@ -189,7 +186,6 @@ def combine_stats(
         stddev=prev_stats.stddev * prev_weight + curr_stats.stddev * curr_weight,
         sum=prev_stats.sum + curr_stats.sum,
         sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
-        blocks=prev_stats.blocks + curr_stats.blocks,
     )
 
     return next_stats

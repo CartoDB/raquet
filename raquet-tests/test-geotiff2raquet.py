@@ -27,7 +27,6 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
     def test_read_statistics_numpy(self):
@@ -42,7 +41,6 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.577380332)
 
     def test_europe_tif(self):
