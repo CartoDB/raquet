@@ -47,6 +47,9 @@ else:
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
 
+# Calculate approximate stats from a lower zoom level
+STATS_ZOOM_OFFSET = -2
+
 
 class ZoomStrategy(enum.StrEnum):
     """Switch for web mercator zoom level selection
@@ -111,12 +114,28 @@ class RasterStats:
     # Special value for counting instances of block stats in combine_stats()
     blocks: int = 1
 
+    def scale_by(self, zoom: int) -> "RasterStats":
+        """Return equivalent stats for an approximate higher zoom"""
+        return RasterStats(
+            self.count * 4**zoom,
+            self.min,
+            self.max,
+            self.mean,
+            self.stddev,
+            self.sum * 4**zoom,
+            self.sum_squares * 4**zoom,
+        )
+
 
 @dataclasses.dataclass
 class NoDataStats:
     """Special case of raster statistics on an all-nodata raster"""
 
     blocks: int = 1
+
+    def scale_by(self, zoom: int) -> "RasterStats":
+        """No-op provided for compatibility"""
+        return self
 
 
 @dataclasses.dataclass
@@ -337,15 +356,22 @@ def create_tile_ds(
 def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     gdaltype_bandtypes: dict[int, BandType] | None,
-    include_stats: bool = True,
-) -> tuple[list[bytes], list[RasterStats | NoDataStats]]:
+    include_stats: bool,
+) -> tuple[list[bytes], list[RasterStats | NoDataStats | None]]:
     """Read data and stats from warped bands"""
     block_data, block_stats = [], []
 
     for band_num in range(1, 1 + ds.RasterCount):
         band = ds.GetRasterBand(band_num)
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
-        if gdaltype_bandtypes is not None and include_stats:
+        if not include_stats:
+            # No stats wanted
+            stats = None
+        elif gdaltype_bandtypes is None:
+            # Stats wanted but not available
+            stats = NoDataStats()
+        else:
+            # Calculate stats
             band_type = gdaltype_bandtypes[band.DataType]
             if HAS_NUMPY:
                 pixel_arr = numpy.frombuffer(data, dtype=getattr(numpy, band_type.name))
@@ -356,8 +382,6 @@ def read_raster_data_stats(
             logging.info(
                 "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
             )
-        else:
-            stats = NoDataStats()
         block_data.append(gzip.compress(data))
         block_stats.append(stats)
 
@@ -468,6 +492,10 @@ def read_geotiff(
             resampleAlg=resampling_algorithms[resampling_algorithm]
         )
 
+        minzoom = find_minzoom(raster_geometry, block_zoom)
+        stats_zoom = max(minzoom, raster_geometry.zoom + STATS_ZOOM_OFFSET)
+        stats_zoom_diff = raster_geometry.zoom - stats_zoom
+
         # Start with a reasonable minimum zoom, then model a recursive descent into all
         # child tiles using a stack of frames. If we reach the maximum zoom read pixels
         # out of the original raster, otherwise stack child tiles and build overviews
@@ -479,7 +507,7 @@ def read_geotiff(
                 raster_geometry.minlat,
                 raster_geometry.maxlon,
                 raster_geometry.maxlat,
-                find_minzoom(raster_geometry, block_zoom),
+                minzoom,
             )
         ]
 
@@ -487,6 +515,7 @@ def read_geotiff(
             frame = frames.pop()
             tile_ds: osgeo.gdal.Dataset | None = None
             create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
+            do_stats = frame.tile.z == stats_zoom
 
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
@@ -495,8 +524,8 @@ def read_geotiff(
                 osgeo.gdal.Warp(
                     destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts
                 )
-                data, stats = read_raster_data_stats(tile_ds, gdaltype_bandtypes)
-                pipe.send((frame.tile, data, stats))
+                d, s = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
+                pipe.send((frame.tile, d, s))
             elif not frame.inputs:
                 # Read overview pixels from earlier outputs
                 logging.info("Overview %s from %s", frame.tile, frame.outputs)
@@ -505,8 +534,9 @@ def read_geotiff(
                     osgeo.gdal.Warp(
                         destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
                     )
-                data, stats = read_raster_data_stats(tile_ds, None, include_stats=False)
-                pipe.send((frame.tile, data, stats))
+                d, s1 = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
+                s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
+                pipe.send((frame.tile, d, s2))
             else:
                 # Descend deeper into tile hierarchy
                 next_tile = frame.inputs.pop()
@@ -606,6 +636,7 @@ def create_metadata(
     rg: RasterGeometry,
     band_names: list[str],
     band_stats: list[RasterStats | None],
+    block_count: int,
     minresolution: int,
     xmin: float,
     ymin: float,
@@ -624,8 +655,8 @@ def create_metadata(
         "minresolution": minresolution,
         "maxresolution": rg.zoom,
         "nodata": rg.nodata,
-        "num_blocks": band_stats[0].blocks,
-        "num_pixels": band_stats[0].blocks * (2**block_zoom) * (2**block_zoom),
+        "num_blocks": block_count,
+        "num_pixels": block_count * (2**block_zoom) * (2**block_zoom),
         "bands": [
             {
                 "type": btype,
@@ -734,7 +765,7 @@ def convert_to_raquet_files(
         writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
-        minresolution = math.inf
+        minresolution, block_count = math.inf, 0
 
         while True:
             received = pipe.recv()
@@ -785,14 +816,15 @@ def convert_to_raquet_files(
                 rfname, target_sizeof = next(raquet_destinations)
                 writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
-            # Skip stats from overview tiles?
-            if tile.z < raster_geometry.zoom:
-                continue
+            if tile.z == raster_geometry.zoom:
+                # Calculate bounds and count blocks only at the highest zoom level
+                xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
+                xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
+                block_count += 1
 
-            # Accumulate band statistics and real bounds based on included tiles
-            band_stats = [combine_stats(p, c) for p, c in zip(band_stats, block_stats)]
-            xmin, ymin = min(xmin, tile.x), min(ymin, tile.y)
-            xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
+            if any(block_stats):
+                # Accumulate band statistics and real bounds based on included tiles
+                band_stats = [combine_stats(*bs) for bs in zip(band_stats, block_stats)]
 
         for i, stats in enumerate(band_stats):
             logging.info("Band %s %s", i + 1, stats)
@@ -805,6 +837,7 @@ def convert_to_raquet_files(
             raster_geometry,
             band_names,
             band_stats,
+            block_count,
             minresolution,
             xmin,
             ymin,
