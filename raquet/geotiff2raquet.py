@@ -128,17 +128,6 @@ class RasterStats:
 
 
 @dataclasses.dataclass
-class NoDataStats:
-    """Special case of raster statistics on an all-nodata raster"""
-
-    blocks: int = 1
-
-    def scale_by(self, zoom: int) -> "RasterStats":
-        """No-op provided for compatibility"""
-        return self
-
-
-@dataclasses.dataclass
 class BandType:
     """Convenience wrapper for details of band data type"""
 
@@ -179,25 +168,15 @@ def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Co
 
 
 def combine_stats(
-    prev_stats: RasterStats | NoDataStats | None, curr_stats: RasterStats | NoDataStats
+    prev_stats: RasterStats | None, curr_stats: RasterStats | None
 ) -> RasterStats | None:
     """Combine two RasterStats into one"""
 
+    # Return stats that might not be None
     if prev_stats is None:
-        # Likely to represent an initial None value, don't count blocks
         return curr_stats
-
-    if isinstance(prev_stats, NoDataStats):
-        # Count just the blocks on previous nodata stats
-        next_stats = copy.deepcopy(curr_stats)
-        next_stats.blocks += prev_stats.blocks
-        return next_stats
-
-    if isinstance(curr_stats, NoDataStats):
-        # Count just the blocks on current nodata stats
-        next_stats = copy.deepcopy(prev_stats)
-        next_stats.blocks += curr_stats.blocks
-        return next_stats
+    elif curr_stats is None:
+        return prev_stats
 
     next_count = prev_stats.count + curr_stats.count
     prev_weight = prev_stats.count / next_count
@@ -219,13 +198,13 @@ def combine_stats(
 
 def read_statistics_python(
     values: list[int | float], nodata: int | float | None
-) -> RasterStats | NoDataStats:
+) -> RasterStats | None:
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
         values = [val for val in values if val != nodata]
 
     if len(values) == 0:
-        return NoDataStats()
+        return None
 
     return RasterStats(
         count=len(values),
@@ -238,7 +217,9 @@ def read_statistics_python(
     )
 
 
-def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
+def read_statistics_numpy(
+    values: "numpy.array", nodata: int | float | None
+) -> RasterStats | None:
     """Calculate statistics for array of numeric values and optional nodata value"""
     if nodata is not None:
         masked_values = numpy.ma.masked_array(values, values == nodata)
@@ -248,7 +229,7 @@ def read_statistics_numpy(values: "numpy.array", nodata: int | float | None):
         value_count = values.size
 
     if value_count == 0:
-        return NoDataStats()
+        return None
 
     if masked_values.dtype in (numpy.float16, numpy.float32, numpy.float64):
         ptype = float
@@ -357,19 +338,16 @@ def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     gdaltype_bandtypes: dict[int, BandType] | None,
     include_stats: bool,
-) -> tuple[list[bytes], list[RasterStats | NoDataStats | None]]:
+) -> tuple[list[bytes], list[RasterStats | None]]:
     """Read data and stats from warped bands"""
     block_data, block_stats = [], []
 
     for band_num in range(1, 1 + ds.RasterCount):
         band = ds.GetRasterBand(band_num)
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
-        if not include_stats:
-            # No stats wanted
+        if not include_stats or gdaltype_bandtypes is None:
+            # No stats wanted, or wanted but not available
             stats = None
-        elif gdaltype_bandtypes is None:
-            # Stats wanted but not available
-            stats = NoDataStats()
         else:
             # Calculate stats
             band_type = gdaltype_bandtypes[band.DataType]

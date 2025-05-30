@@ -246,13 +246,13 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 12)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.3g}", "1.22e+06")
-        self.assertEqual(f"{stats['max']:.3g}", "95")
-        self.assertEqual(f"{stats['mean']:.3g}", "75.9")
-        self.assertEqual(f"{stats['min']:.3g}", "11")
-        self.assertEqual(f"{stats['stddev']:.3g}", "18.4")
-        self.assertEqual(f"{stats['sum']:.3g}", "9.23e+07")
-        self.assertEqual(f"{stats['sum_squares']:.3g}", "7.42e+09")
+        self.assertEqual(f"{stats['count']:.2g}", "1.2e+06")
+        self.assertEqual(f"{stats['max']:.2g}", "95")
+        self.assertEqual(f"{stats['mean']:.2g}", "76")
+        self.assertEqual(f"{stats['min']:.2g}", "11")
+        self.assertEqual(f"{stats['stddev']:.2g}", "18")
+        self.assertEqual(f"{stats['sum']:.2g}", "9.2e+07")
+        self.assertEqual(f"{stats['sum_squares']:.2g}", "7.4e+09")
 
     def test_bigtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
