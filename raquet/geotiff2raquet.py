@@ -15,7 +15,6 @@ Required packages:
 """
 
 import argparse
-import copy
 import dataclasses
 import enum
 import gzip
@@ -115,7 +114,7 @@ class RasterStats:
     blocks: int = 1
 
     def scale_by(self, zoom: int) -> "RasterStats":
-        """Return equivalent stats for an approximate higher zoom"""
+        """Return approximate equivalent stats for a higher zoom"""
         return RasterStats(
             self.count * 4**zoom,
             self.min,
