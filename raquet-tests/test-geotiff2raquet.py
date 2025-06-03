@@ -27,7 +27,6 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
     def test_read_statistics_numpy(self):
@@ -42,7 +41,6 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertEqual(stats.blocks, 1)
         self.assertAlmostEqual(stats.stddev, 28.577380332)
 
     def test_europe_tif(self):
@@ -94,40 +92,40 @@ class TestGeotiff2Raquet(unittest.TestCase):
         )
 
         stats0 = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats0['count']:.4g}", "1.049e+06")
-        self.assertEqual(f"{stats0['max']:.4g}", "255")
-        self.assertEqual(f"{stats0['mean']:.4g}", "104.7")
-        self.assertEqual(f"{stats0['min']:.4g}", "0")
-        self.assertEqual(f"{stats0['stddev']:.4g}", "63.24")
-        self.assertEqual(f"{stats0['sum']:.4g}", "1.098e+08")
-        self.assertEqual(f"{stats0['sum_squares']:.4g}", "1.827e+10")
+        self.assertEqual(f"{stats0['count']:.3g}", "1.05e+06")
+        self.assertEqual(f"{stats0['max']:.3g}", "255")
+        self.assertEqual(f"{stats0['mean']:.3g}", "105")
+        self.assertEqual(f"{stats0['min']:.3g}", "0")
+        self.assertEqual(f"{stats0['stddev']:.3g}", "78.4")
+        self.assertEqual(f"{stats0['sum']:.3g}", "1.1e+08")
+        self.assertEqual(f"{stats0['sum_squares']:.3g}", "1.8e+10")
 
         stats1 = metadata["bands"][1]["stats"]
-        self.assertEqual(f"{stats1['count']:.4g}", "1.049e+06")
-        self.assertEqual(f"{stats1['max']:.4g}", "255")
-        self.assertEqual(f"{stats1['mean']:.4g}", "91.15")
-        self.assertEqual(f"{stats1['min']:.4g}", "0")
-        self.assertEqual(f"{stats1['stddev']:.4g}", "58.76")
-        self.assertEqual(f"{stats1['sum']:.4g}", "9.558e+07")
-        self.assertEqual(f"{stats1['sum_squares']:.4g}", "1.642e+10")
+        self.assertEqual(f"{stats1['count']:.3g}", "1.05e+06")
+        self.assertEqual(f"{stats1['max']:.3g}", "255")
+        self.assertEqual(f"{stats1['mean']:.3g}", "91.3")
+        self.assertEqual(f"{stats1['min']:.3g}", "0")
+        self.assertEqual(f"{stats1['stddev']:.3g}", "84.3")
+        self.assertEqual(f"{stats1['sum']:.3g}", "9.57e+07")
+        self.assertEqual(f"{stats1['sum_squares']:.3g}", "1.62e+10")
 
         stats2 = metadata["bands"][2]["stats"]
-        self.assertEqual(f"{stats2['count']:.4g}", "1.049e+06")
-        self.assertEqual(f"{stats2['max']:.4g}", "255")
-        self.assertEqual(f"{stats2['mean']:.4g}", "124")
-        self.assertEqual(f"{stats2['min']:.4g}", "0")
-        self.assertEqual(f"{stats2['stddev']:.4g}", "68.08")
-        self.assertEqual(f"{stats2['sum']:.4g}", "1.3e+08")
-        self.assertEqual(f"{stats2['sum_squares']:.4g}", "2.342e+10")
+        self.assertEqual(f"{stats2['count']:.3g}", "1.05e+06")
+        self.assertEqual(f"{stats2['max']:.3g}", "255")
+        self.assertEqual(f"{stats2['mean']:.3g}", "124")
+        self.assertEqual(f"{stats2['min']:.3g}", "0")
+        self.assertEqual(f"{stats2['stddev']:.3g}", "81.4")
+        self.assertEqual(f"{stats2['sum']:.3g}", "1.3e+08")
+        self.assertEqual(f"{stats2['sum_squares']:.3g}", "2.31e+10")
 
         stats3 = metadata["bands"][3]["stats"]
-        self.assertEqual(f"{stats3['count']:.4g}", "1.049e+06")
-        self.assertEqual(f"{stats3['max']:.4g}", "255")
-        self.assertEqual(f"{stats3['mean']:.4g}", "189.7")
-        self.assertEqual(f"{stats3['min']:.4g}", "0")
-        self.assertEqual(f"{stats3['stddev']:.4g}", "83.36")
-        self.assertEqual(f"{stats3['sum']:.4g}", "1.99e+08")
-        self.assertEqual(f"{stats3['sum_squares']:.4g}", "5.053e+10")
+        self.assertEqual(f"{stats3['count']:.3g}", "1.05e+06")
+        self.assertEqual(f"{stats3['max']:.3g}", "255")
+        self.assertEqual(f"{stats3['mean']:.3g}", "190")
+        self.assertEqual(f"{stats3['min']:.3g}", "0")
+        self.assertEqual(f"{stats3['stddev']:.3g}", "110")
+        self.assertEqual(f"{stats3['sum']:.3g}", "1.99e+08")
+        self.assertEqual(f"{stats3['sum_squares']:.3g}", "5.06e+10")
 
     def test_n37_w123_1arc_v2_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "tests/n37_w123_1arc_v2.tif")
@@ -168,13 +166,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         )
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "9.692e+04")
-        self.assertEqual(f"{stats['max']:.4g}", "377")
-        self.assertEqual(f"{stats['mean']:.4g}", "38.22")
-        self.assertEqual(f"{stats['min']:.4g}", "-7")
-        self.assertEqual(f"{stats['stddev']:.4g}", "54.02")
-        self.assertEqual(f"{stats['sum']:.4g}", "3.704e+06")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "4.539e+08")
+        self.assertEqual(f"{stats['count']:.3g}", "9.76e+04")
+        self.assertEqual(f"{stats['max']:.3g}", "358")
+        self.assertEqual(f"{stats['mean']:.3g}", "38.1")
+        self.assertEqual(f"{stats['min']:.3g}", "-4")
+        self.assertEqual(f"{stats['stddev']:.3g}", "54.6")
+        self.assertEqual(f"{stats['sum']:.3g}", "3.71e+06")
+        self.assertEqual(f"{stats['sum_squares']:.3g}", "4.5e+08")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_smalltile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -207,13 +206,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 13)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
-        self.assertEqual(f"{stats['max']:.4g}", "95")
-        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
-        self.assertEqual(f"{stats['min']:.4g}", "11")
-        self.assertEqual(f"{stats['stddev']:.4g}", "16.47")
-        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+        self.assertEqual(f"{stats['count']:.3g}", "1.22e+06")
+        self.assertEqual(f"{stats['max']:.3g}", "95")
+        self.assertEqual(f"{stats['mean']:.3g}", "75.8")
+        self.assertEqual(f"{stats['min']:.3g}", "11")
+        self.assertEqual(f"{stats['stddev']:.3g}", "18.3")
+        self.assertEqual(f"{stats['sum']:.3g}", "9.22e+07")
+        self.assertEqual(f"{stats['sum_squares']:.3g}", "7.41e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_medtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -246,13 +246,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 12)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
-        self.assertEqual(f"{stats['max']:.4g}", "95")
-        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
-        self.assertEqual(f"{stats['min']:.4g}", "11")
-        self.assertEqual(f"{stats['stddev']:.4g}", "17.25") # "16.47")
-        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+        self.assertEqual(f"{stats['count']:.2g}", "1.2e+06")
+        self.assertEqual(f"{stats['max']:.2g}", "95")
+        self.assertEqual(f"{stats['mean']:.2g}", "76")
+        self.assertEqual(f"{stats['min']:.2g}", "11")
+        self.assertEqual(f"{stats['stddev']:.2g}", "18")
+        self.assertEqual(f"{stats['sum']:.2g}", "9.2e+07")
+        self.assertEqual(f"{stats['sum_squares']:.2g}", "7.4e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_bigtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -285,13 +286,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 11)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
-        self.assertEqual(f"{stats['max']:.4g}", "95")
-        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
-        self.assertEqual(f"{stats['min']:.4g}", "11")
-        self.assertEqual(f"{stats['stddev']:.4g}", "18.28") # "16.47")
-        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+        self.assertEqual(f"{stats['count']:.3g}", "1.22e+06")
+        self.assertEqual(f"{stats['max']:.3g}", "95")
+        self.assertEqual(f"{stats['mean']:.3g}", "75.8")
+        self.assertEqual(f"{stats['min']:.3g}", "11")
+        self.assertEqual(f"{stats['stddev']:.3g}", "18.5")
+        self.assertEqual(f"{stats['sum']:.3g}", "9.24e+07")
+        self.assertEqual(f"{stats['sum_squares']:.3g}", "7.42e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_multipart_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -330,13 +332,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 13)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "1.216e+06")
-        self.assertEqual(f"{stats['max']:.4g}", "95")
-        self.assertEqual(f"{stats['mean']:.4g}", "75.85")
-        self.assertEqual(f"{stats['min']:.4g}", "11")
-        self.assertEqual(f"{stats['stddev']:.4g}", "16.47")
-        self.assertEqual(f"{stats['sum']:.4g}", "9.225e+07")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "7.415e+09")
+        self.assertEqual(f"{stats['count']:.3g}", "1.22e+06")
+        self.assertEqual(f"{stats['max']:.3g}", "95")
+        self.assertEqual(f"{stats['mean']:.3g}", "75.8")
+        self.assertEqual(f"{stats['min']:.3g}", "11")
+        self.assertEqual(f"{stats['stddev']:.3g}", "18.3")
+        self.assertEqual(f"{stats['sum']:.3g}", "9.22e+07")
+        self.assertEqual(f"{stats['sum_squares']:.3g}", "7.41e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_geotiff_discreteloss_2023_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "tests/geotiff-discreteloss_2023.tif")
@@ -367,13 +370,14 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(metadata["maxresolution"], 13)
 
         stats = metadata["bands"][0]["stats"]
-        self.assertEqual(f"{stats['count']:.4g}", "2.736e+04")
-        self.assertEqual(f"{stats['max']:.4g}", "1")
-        self.assertEqual(f"{stats['mean']:.4g}", "1")
-        self.assertEqual(f"{stats['min']:.4g}", "1")
-        self.assertEqual(f"{stats['stddev']:.4g}", "0")
-        self.assertEqual(f"{stats['sum']:.4g}", "2.736e+04")
-        self.assertEqual(f"{stats['sum_squares']:.4g}", "2.736e+04")
+        self.assertEqual(f"{stats['count']:.3g}", "2.7e+04")
+        self.assertEqual(f"{stats['max']:.3g}", "1")
+        self.assertEqual(f"{stats['mean']:.3g}", "1")
+        self.assertEqual(f"{stats['min']:.3g}", "1")
+        self.assertEqual(f"{stats['stddev']:.3g}", "0")
+        self.assertEqual(f"{stats['sum']:.3g}", "2.7e+04")
+        self.assertEqual(f"{stats['sum_squares']:.3g}", "2.7e+04")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_colored_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "tests/colored.tif")
