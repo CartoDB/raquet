@@ -173,6 +173,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.3g}", "54.6")
         self.assertEqual(f"{stats['sum']:.3g}", "3.71e+06")
         self.assertEqual(f"{stats['sum_squares']:.3g}", "4.5e+08")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_smalltile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -212,6 +213,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.3g}", "18.3")
         self.assertEqual(f"{stats['sum']:.3g}", "9.22e+07")
         self.assertEqual(f"{stats['sum_squares']:.3g}", "7.41e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_medtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -251,6 +253,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.2g}", "18")
         self.assertEqual(f"{stats['sum']:.2g}", "9.2e+07")
         self.assertEqual(f"{stats['sum_squares']:.2g}", "7.4e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_bigtile_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -290,6 +293,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.3g}", "18.5")
         self.assertEqual(f"{stats['sum']:.3g}", "9.24e+07")
         self.assertEqual(f"{stats['sum_squares']:.3g}", "7.42e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_multipart_Annual_NLCD_LndCov_2023_CU_C1V0_tif(self):
         geotiff_filename = os.path.join(
@@ -335,6 +339,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.3g}", "18.3")
         self.assertEqual(f"{stats['sum']:.3g}", "9.22e+07")
         self.assertEqual(f"{stats['sum_squares']:.3g}", "7.41e+09")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_geotiff_discreteloss_2023_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "tests/geotiff-discreteloss_2023.tif")
@@ -372,6 +377,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{stats['stddev']:.3g}", "0")
         self.assertEqual(f"{stats['sum']:.3g}", "2.7e+04")
         self.assertEqual(f"{stats['sum_squares']:.3g}", "2.7e+04")
+        self.assertTrue(stats["approximated_stats"])
 
     def test_colored_tif(self):
         geotiff_filename = os.path.join(PROJDIR, "tests/colored.tif")

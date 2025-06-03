@@ -636,7 +636,7 @@ def create_metadata(
                 "name": bname,
                 "colorinterp": bcolorinterp,
                 "colortable": bcolortable,
-                "stats": stats.__dict__,
+                "stats": dict(approximated_stats=True, **stats.__dict__),
             }
             for btype, bname, bcolorinterp, bcolortable, stats in zip(
                 rg.bandtypes,
