@@ -410,3 +410,35 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 "5": [255, 0, 0, 255],
             },
         )
+
+    def test_big_world(self):
+        geotiff_filename = os.path.join(PROJDIR, "tests/big-world.tif")
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.AUTO,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                2,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(
+            {b["name"]: b["colorinterp"] for b in metadata["bands"]},
+            {"band_1": "palette"},
+        )
+
+        color_dict = metadata["bands"][0]["colortable"]
+        self.assertEqual(
+            {k: list(v) for k, v in itertools.islice(color_dict.items(), 6)},
+            {
+                "0": [0, 0, 0, 0],
+                "1": [0, 255, 0, 255],
+                "2": [0, 0, 255, 255],
+                "3": [255, 255, 0, 255],
+                "4": [255, 165, 0, 255],
+                "5": [255, 0, 0, 255],
+            },
+        )
