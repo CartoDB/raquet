@@ -84,6 +84,16 @@ class ResamplingAlgorithm(enum.StrEnum):
 
 
 @dataclasses.dataclass
+class PixelWindow:
+    """Convenience wrapper for details of valid raster pixel window"""
+
+    xoff: int
+    yoff: int
+    xsize: int
+    ysize: int
+
+
+@dataclasses.dataclass
 class RasterGeometry:
     """Convenience wrapper for details of raster geometry and transformation"""
 
@@ -261,6 +271,54 @@ def find_bounds(
     return (x5, y5, x6, y6)
 
 
+def find_pixel_window(
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    tx3857: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+) -> PixelWindow:
+    """Return units per pixel for raster via a given transformation"""
+    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
+    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+
+    try:
+        x1, y1, _ = tx3857.TransformPoint(xoff, yoff)
+        x2, y2, _ = tx3857.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+    except RuntimeError as e:
+        pass
+    else:
+        return PixelWindow(xoff, yoff, xdim, ydim)
+
+    print("- " * 80)
+    print((xoff, yoff), (xoff + xdim * xres, yoff + ydim * yres))
+    inv = tx3857.GetInverse()
+    bb3857 = [
+        (mercantile.CE * dx, mercantile.CE * dy)
+        for dx, dy in itertools.product((-0.5, 0.5), (-0.5, 0.5))
+    ]
+    bb_src = inv.TransformPoints(bb3857)
+    xmin, xmax = min(x for x, _, _ in bb_src), max(x for x, _, _ in bb_src)
+    ymin, ymax = min(y for _, y, _ in bb_src), max(y for _, y, _ in bb_src)
+    if xres > 0:
+        x1, x2 = max(xmin, xoff), min(xmax, xoff + xdim * xres)
+        print("x1, x2:", (x1, x2))
+    else:
+        x1, x2 = min(xmax, xoff), max(xmin, xoff + xdim * xres)
+        print("x1, x2:", (x1, x2))
+    if yres > 0:
+        y1, y2 = max(ymin, yoff), min(ymax, yoff + ydim * yres)
+        print("y1, y2:", (y1, y2))
+    else:
+        y1, y2 = min(ymax, yoff), max(ymin, yoff + ydim * yres)
+        print("y1, y2:", (y1, y2))
+
+    x3, x4 = int((x1 - xoff) / xres), int((x2 - xoff) / xres)
+    y3, y4 = int((y1 - yoff) / yres), int((y2 - yoff) / yres)
+
+    print("x3, y3, x4, y4:", (x3, y3, x4, y4), (x4 - x3, y4 - y3))
+    print("- " * 80)
+
+    return PixelWindow(x3, y3, x4 - x3, y4 - y3)
+
+
 def find_resolution(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
@@ -434,6 +492,7 @@ def read_geotiff(
         minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326)
 
         tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
+        pixel_window = find_pixel_window(src_ds, tx3857)
         resolution = find_resolution(src_ds, tx3857)
         zoom = find_zoom(resolution, zoom_strategy, block_zoom)
 
