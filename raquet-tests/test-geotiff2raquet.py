@@ -420,7 +420,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
                 raquet_filename,
                 geotiff2raquet.ZoomStrategy.AUTO,
                 geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
-                2,
+                8,
             )
             table = pyarrow.parquet.read_table(raquet_filename)
 

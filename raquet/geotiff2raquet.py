@@ -448,6 +448,7 @@ def read_geotiff(
     import osgeo.osr
 
     osgeo.gdal.UseExceptions()
+    os.environ["PROJ_DEBUG"] = "0"
 
     wgs84 = osgeo.osr.SpatialReference()
     wgs84.ImportFromEPSG(4326)
