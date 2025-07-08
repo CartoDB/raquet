@@ -11,7 +11,7 @@ def geotiff2raquet_main():
         logging.basicConfig(level=logging.INFO)
 
     # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
-    block_zoom=int(math.log(args.block_size) / math.log(2))
+    block_zoom = int(math.log(args.block_size) / math.log(2))
 
     geotiff2raquet.main(
         args.geotiff_filename,
