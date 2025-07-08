@@ -425,6 +425,15 @@ class TestGeotiff2Raquet(unittest.TestCase):
             table = pyarrow.parquet.read_table(raquet_filename)
 
         metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(metadata["width"], 1024)
+        self.assertEqual(metadata["height"], 1024)
+        self.assertEqual(metadata["num_blocks"], 16)
+        self.assertEqual(metadata["num_pixels"], 1048576)
+        self.assertIsNone(metadata["nodata"])
+        self.assertEqual(metadata["block_resolution"], 2)
+        self.assertEqual(metadata["pixel_resolution"], 10)
+        self.assertEqual(metadata["minresolution"], 0)
+        self.assertEqual(metadata["maxresolution"], 2)
         self.assertEqual(
             {b["name"]: b["colorinterp"] for b in metadata["bands"]},
             {"band_1": "red", "band_2": "green", "band_3": "blue", "band_4": "alpha"},

@@ -278,7 +278,7 @@ def find_pixel_window(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     tx3857: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
 ) -> PixelWindow:
-    """Return units per pixel for raster via a given transformation"""
+    """Return valid pixel window for raster in a given transformation"""
     xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
     xdim, ydim = ds.RasterXSize, ds.RasterYSize
 
@@ -291,34 +291,22 @@ def find_pixel_window(
     else:
         return PixelWindow(0, 0, xdim, ydim)
 
-    print("- " * 80)
-    print((xoff, yoff), (xoff + xdim * xres, yoff + ydim * yres))
-    inv = tx3857.GetInverse()
-    bb3857 = [
-        (mercantile.CE * dx, mercantile.CE * dy)
-        for dx, dy in itertools.product((-0.5, 0.5), (-0.5, 0.5))
-    ]
-    bb_src = inv.TransformPoints(bb3857)
+    # Calculate the source projection bounds for web mercator 0/0/0 world tile
+    m_x1, m_y1, m_x2, m_y2 = mercantile.xy_bounds(mercantile.Tile(0, 0, 0))
+    m_pts = (m_x1, m_y2), (m_x2, m_y2), (m_x2, m_y1), (m_x1, m_y1)
+    bb_src = tx3857.GetInverse().TransformPoints(m_pts)
+
+    # Calculate source projection envelope from 0/0/0 world tile bounds
     xmin, xmax = min(x for x, _, _ in bb_src), max(x for x, _, _ in bb_src)
     ymin, ymax = min(y for _, y, _ in bb_src), max(y for _, y, _ in bb_src)
-    if xres > 0:
-        x1, x2 = max(xmin, xoff), min(xmax, xoff + xdim * xres)
-        print("x1, x2:", (x1, x2))
-    else:
-        x1, x2 = min(xmax, xoff), max(xmin, xoff + xdim * xres)
-        print("x1, x2:", (x1, x2))
-    if yres > 0:
-        y1, y2 = max(ymin, yoff), min(ymax, yoff + ydim * yres)
-        print("y1, y2:", (y1, y2))
-    else:
-        y1, y2 = min(ymax, yoff), max(ymin, yoff + ydim * yres)
-        print("y1, y2:", (y1, y2))
+    x1 = max(xmin, xoff) if xres > 0 else min(xmax, xoff)
+    x2 = min(xmax, xoff + xdim * xres) if xres > 0 else max(xmin, xoff + xdim * xres)
+    y1 = max(ymin, yoff) if yres > 0 else min(ymax, yoff)
+    y2 = min(ymax, yoff + ydim * yres) if yres > 0 else max(ymin, yoff + ydim * yres)
 
+    # Calculate source pixel envelope from projection envelope
     x3, x4 = math.ceil((x1 - xoff) / xres), math.floor((x2 - xoff) / xres)
     y3, y4 = math.ceil((y1 - yoff) / yres), math.floor((y2 - yoff) / yres)
-
-    print("x3, y3, x4, y4:", (x3, y3, x4, y4), (x4 - x3, y4 - y3))
-    print("- " * 80)
 
     return PixelWindow(x3, y3, x4 - x3, y4 - y3)
 
