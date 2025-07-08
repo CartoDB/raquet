@@ -280,22 +280,16 @@ def find_pixel_window(
 ) -> PixelWindow:
     """Return valid pixel window for raster in a given transformation"""
     xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
-    xdim, ydim = ds.RasterXSize, ds.RasterYSize
-    xspan, yspan = xdim * xres, ydim * yres
-
-    # Detect if we're within valid web mercator bounds
-    try:
-        # Transform a selection of representative points
-        for dx, dy in itertools.permutations((0, 0.5, 1), 2):
-            tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
-    except RuntimeError:
-        inside_world_tile = False
-    else:
-        inside_world_tile = True
+    xspan, yspan = ds.RasterXSize * xres, ds.RasterYSize * yres
 
     # Skip a bunch of math if possible
-    if inside_world_tile:
-        return PixelWindow(0, 0, xdim, ydim)
+    try:
+        # Transform a selection of points to see if we're within web mercator bounds
+        for dx, dy in itertools.permutations((0, 0.5, 1), 2):
+            tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
+        return PixelWindow(0, 0, ds.RasterXSize, ds.RasterYSize)
+    except RuntimeError:
+        pass
 
     # Calculate the source projection bounds for web mercator 0/0/0 world tile
     m_x1, m_y1, m_x2, m_y2 = mercantile.xy_bounds(mercantile.Tile(0, 0, 0))
