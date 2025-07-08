@@ -258,15 +258,15 @@ def find_bounds(
     pixel_window: PixelWindow,
 ) -> tuple[float, float, float, float]:
     """Return outer bounds for raster in a given transformation"""
-    xoff1, xres, _, yoff1, _, yres = ds.GetGeoTransform()
-    xoff2 = xoff1 + pixel_window.xoff * xres
-    yoff2 = yoff1 + pixel_window.yoff * yres
+    _xoff, xres, _, _yoff, _, yres = ds.GetGeoTransform()
+    xoff = _xoff + pixel_window.xoff * xres
+    yoff = _yoff + pixel_window.yoff * yres
     xdim, ydim = pixel_window.xsize, pixel_window.ysize
 
-    x1, y1, _ = transform.TransformPoint(xoff2, yoff2)
-    x2, y2, _ = transform.TransformPoint(xoff2, yoff2 + ydim * yres)
-    x3, y3, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2)
-    x4, y4, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2 + ydim * yres)
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff, yoff + ydim * yres)
+    x3, y3, _ = transform.TransformPoint(xoff + xdim * xres, yoff)
+    x4, y4, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
 
     x5, y5 = min(x1, x2, x3, x4), min(y1, y2, y3, y4)
     x6, y6 = max(x1, x2, x3, x4), max(y1, y2, y3, y4)
@@ -285,7 +285,7 @@ def find_pixel_window(
     try:
         x1, y1, _ = tx3857.TransformPoint(xoff, yoff)
         x2, y2, _ = tx3857.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
-    except RuntimeError as e:
+    except RuntimeError:
         # Projection error means we are probably outside valid bounds of web mercator
         pass
     else:
@@ -329,13 +329,13 @@ def find_resolution(
     pixel_window: PixelWindow,
 ) -> float:
     """Return units per pixel for raster via a given transformation"""
-    xoff1, xres, _, yoff1, _, yres = ds.GetGeoTransform()
-    xoff2 = xoff1 + pixel_window.xoff * xres
-    yoff2 = yoff1 + pixel_window.yoff * yres
+    _xoff, xres, _, _yoff, _, yres = ds.GetGeoTransform()
+    xoff = _xoff + pixel_window.xoff * xres
+    yoff = _yoff + pixel_window.yoff * yres
     xdim, ydim = pixel_window.xsize, pixel_window.ysize
 
-    x1, y1, _ = transform.TransformPoint(xoff2, yoff2)
-    x2, y2, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2 + ydim * yres)
+    x1, y1, _ = transform.TransformPoint(xoff, yoff)
+    x2, y2, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
 
     return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
 
