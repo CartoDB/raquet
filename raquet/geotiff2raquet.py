@@ -255,15 +255,18 @@ def read_statistics_numpy(
 def find_bounds(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    pixel_window: PixelWindow,
 ) -> tuple[float, float, float, float]:
     """Return outer bounds for raster in a given transformation"""
-    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
-    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+    xoff1, xres, _, yoff1, _, yres = ds.GetGeoTransform()
+    xoff2 = xoff1 + pixel_window.xoff * xres
+    yoff2 = yoff1 + pixel_window.yoff * yres
+    xdim, ydim = pixel_window.xsize, pixel_window.ysize
 
-    x1, y1, _ = transform.TransformPoint(xoff, yoff)
-    x2, y2, _ = transform.TransformPoint(xoff, yoff + ydim * yres)
-    x3, y3, _ = transform.TransformPoint(xoff + xdim * xres, yoff)
-    x4, y4, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+    x1, y1, _ = transform.TransformPoint(xoff2, yoff2)
+    x2, y2, _ = transform.TransformPoint(xoff2, yoff2 + ydim * yres)
+    x3, y3, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2)
+    x4, y4, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2 + ydim * yres)
 
     x5, y5 = min(x1, x2, x3, x4), min(y1, y2, y3, y4)
     x6, y6 = max(x1, x2, x3, x4), max(y1, y2, y3, y4)
@@ -283,9 +286,10 @@ def find_pixel_window(
         x1, y1, _ = tx3857.TransformPoint(xoff, yoff)
         x2, y2, _ = tx3857.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
     except RuntimeError as e:
+        # Projection error means we are probably outside valid bounds of web mercator
         pass
     else:
-        return PixelWindow(xoff, yoff, xdim, ydim)
+        return PixelWindow(0, 0, xdim, ydim)
 
     print("- " * 80)
     print((xoff, yoff), (xoff + xdim * xres, yoff + ydim * yres))
@@ -310,8 +314,8 @@ def find_pixel_window(
         y1, y2 = min(ymax, yoff), max(ymin, yoff + ydim * yres)
         print("y1, y2:", (y1, y2))
 
-    x3, x4 = int((x1 - xoff) / xres), int((x2 - xoff) / xres)
-    y3, y4 = int((y1 - yoff) / yres), int((y2 - yoff) / yres)
+    x3, x4 = math.ceil((x1 - xoff) / xres), math.floor((x2 - xoff) / xres)
+    y3, y4 = math.ceil((y1 - yoff) / yres), math.floor((y2 - yoff) / yres)
 
     print("x3, y3, x4, y4:", (x3, y3, x4, y4), (x4 - x3, y4 - y3))
     print("- " * 80)
@@ -322,13 +326,16 @@ def find_pixel_window(
 def find_resolution(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    pixel_window: PixelWindow,
 ) -> float:
     """Return units per pixel for raster via a given transformation"""
-    xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
-    xdim, ydim = ds.RasterXSize, ds.RasterYSize
+    xoff1, xres, _, yoff1, _, yres = ds.GetGeoTransform()
+    xoff2 = xoff1 + pixel_window.xoff * xres
+    yoff2 = yoff1 + pixel_window.yoff * yres
+    xdim, ydim = pixel_window.xsize, pixel_window.ysize
 
-    x1, y1, _ = transform.TransformPoint(xoff, yoff)
-    x2, y2, _ = transform.TransformPoint(xoff + xdim * xres, yoff + ydim * yres)
+    x1, y1, _ = transform.TransformPoint(xoff2, yoff2)
+    x2, y2, _ = transform.TransformPoint(xoff2 + xdim * xres, yoff2 + ydim * yres)
 
     return math.hypot(x2 - x1, y2 - y1) / math.hypot(xdim, ydim)
 
@@ -488,13 +495,13 @@ def read_geotiff(
         src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
         src_sref = src_ds.GetSpatialRef()
 
-        tx4326 = osgeo.osr.CoordinateTransformation(src_sref, wgs84)
-        minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326)
-
         tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
         pixel_window = find_pixel_window(src_ds, tx3857)
-        resolution = find_resolution(src_ds, tx3857)
+        resolution = find_resolution(src_ds, tx3857, pixel_window)
         zoom = find_zoom(resolution, zoom_strategy, block_zoom)
+
+        tx4326 = osgeo.osr.CoordinateTransformation(src_sref, wgs84)
+        minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326, pixel_window)
 
         raster_geometry = RasterGeometry(
             [gdaltype_bandtypes[band.DataType].name for band in src_bands],

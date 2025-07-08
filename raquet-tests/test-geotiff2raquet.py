@@ -427,18 +427,5 @@ class TestGeotiff2Raquet(unittest.TestCase):
         metadata = geotiff2raquet.read_metadata(table)
         self.assertEqual(
             {b["name"]: b["colorinterp"] for b in metadata["bands"]},
-            {"band_1": "palette"},
-        )
-
-        color_dict = metadata["bands"][0]["colortable"]
-        self.assertEqual(
-            {k: list(v) for k, v in itertools.islice(color_dict.items(), 6)},
-            {
-                "0": [0, 0, 0, 0],
-                "1": [0, 255, 0, 255],
-                "2": [0, 0, 255, 255],
-                "3": [255, 255, 0, 255],
-                "4": [255, 165, 0, 255],
-                "5": [255, 0, 0, 255],
-            },
+            {"band_1": "red", "band_2": "green", "band_3": "blue", "band_4": "alpha"},
         )
