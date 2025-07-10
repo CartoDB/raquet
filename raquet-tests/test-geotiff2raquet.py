@@ -507,6 +507,6 @@ class TestGeotiff2Raquet(unittest.TestCase):
             {"band_1": "gray"},
         )
         self.assertEqual(f"{metadata['bounds'][0]:.3g}", "-180")
-        self.assertEqual(f"{metadata['bounds'][1]:.3g}", "90")
+        self.assertEqual(f"{metadata['bounds'][1]:.3g}", "-85.1")
         self.assertEqual(f"{metadata['bounds'][2]:.3g}", "180")
-        self.assertEqual(f"{metadata['bounds'][3]:.3g}", "-90")
+        self.assertEqual(f"{metadata['bounds'][3]:.3g}", "85.1")

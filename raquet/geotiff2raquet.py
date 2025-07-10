@@ -287,9 +287,11 @@ def find_pixel_window(
     try:
         # Transform a selection of points to see if we're within web mercator bounds
         for dx, dy in itertools.permutations((0, 0.5, 1), 2):
-            tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
+            _, y, _ = tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
+            if y < -mercantile.CE / 2 or mercantile.CE / 2 < y:
+                raise ValueError("Outside web mercator bounds")
         return PixelWindow(0, 0, ds.RasterXSize, ds.RasterYSize)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         pass
 
     # Calculate the source projection bounds for web mercator 0/0/0 world tile
