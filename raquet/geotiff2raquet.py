@@ -337,7 +337,7 @@ def find_minzoom(rg: RasterGeometry, block_zoom: int) -> int:
     high_hypot = math.hypot(lr.x - ul.x, lr.y - ul.y)
     target_hypot = math.hypot(TARGET_MIN_SIZE, TARGET_MIN_SIZE)
     min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - block_zoom
-    return max(0, int(round(min_zoom)))
+    return max(0, min(rg.zoom, int(round(min_zoom))))
 
 
 def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -> int:
@@ -546,7 +546,10 @@ def read_geotiff(
             create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
             do_stats = frame.tile.z == stats_zoom
 
-            if frame.tile.z >= raster_geometry.zoom:
+            if frame.tile.z > raster_geometry.zoom:
+                raise NotImplementedError("Zoom higher than expected by find_minzoom()")
+
+            if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
                 tile_ds = create_tile_ds(*create_args)
@@ -844,6 +847,9 @@ def convert_to_raquet_files(
                 # Reinitialize the parquet writer
                 rfname, target_sizeof = next(raquet_destinations)
                 writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
+
+            if tile.z > raster_geometry.zoom:
+                raise NotImplementedError("Zoom higher than expected by find_minzoom()")
 
             if tile.z == raster_geometry.zoom:
                 # Calculate bounds and count blocks only at the highest zoom level
