@@ -545,7 +545,7 @@ def read_geotiff(
             create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
             do_stats = frame.tile.z == stats_zoom
 
-            if frame.tile.z == raster_geometry.zoom:
+            if frame.tile.z >= raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
                 tile_ds = create_tile_ds(*create_args)

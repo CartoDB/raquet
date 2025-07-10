@@ -1,5 +1,6 @@
 import glob
 import itertools
+import math
 import os
 import tempfile
 import unittest
@@ -29,11 +30,32 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.sum_squares, 328350)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
+    def test_read_statistics_python_nans(self):
+        stats = geotiff2raquet.read_statistics_python([math.nan] + list(range(100)), 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertAlmostEqual(stats.stddev, 28.722813233)
+
+    @unittest.skipIf(not geotiff2raquet.HAS_NUMPY, "Missing numpy")
     def test_read_statistics_numpy(self):
-        if not geotiff2raquet.HAS_NUMPY:
-            # Fine, just don't test in this case
-            return
         arr = geotiff2raquet.numpy.arange(100)
+        stats = geotiff2raquet.read_statistics_numpy(arr, 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
+
+    @unittest.skipIf(not geotiff2raquet.HAS_NUMPY, "Missing numpy")
+    def test_read_statistics_numpy_nans(self):
+        arr = geotiff2raquet.numpy.arange(101, dtype=float)
+        arr[-1] = math.nan
         stats = geotiff2raquet.read_statistics_numpy(arr, 0)
         self.assertEqual(stats.count, 99)
         self.assertEqual(stats.min, 1)
