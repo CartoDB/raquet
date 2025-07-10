@@ -438,3 +438,24 @@ class TestGeotiff2Raquet(unittest.TestCase):
             {b["name"]: b["colorinterp"] for b in metadata["bands"]},
             {"band_1": "red", "band_2": "green", "band_3": "blue", "band_4": "alpha"},
         )
+
+    def test_milton_2024(self):
+        geotiff_filename = os.path.join(PROJDIR, "tests/Milton_2024-excerpt.tiff")
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.AUTO,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(
+            {b["name"]: b["colorinterp"] for b in metadata["bands"]},
+            {"band_1": "gray"},
+        )
+        self.assertIsNone(metadata["bands"][0]["stats"]["min"])
+        self.assertIsNone(metadata["bands"][0]["stats"]["max"])
