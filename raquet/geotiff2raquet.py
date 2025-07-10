@@ -206,7 +206,7 @@ def read_statistics_python(
 ) -> RasterStats | None:
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
-        values = [val for val in values if val != nodata]
+        values = [val for val in values if val != nodata and not math.isnan(val)]
 
     if len(values) == 0:
         return None
@@ -227,7 +227,8 @@ def read_statistics_numpy(
 ) -> RasterStats | None:
     """Calculate statistics for array of numeric values and optional nodata value"""
     if nodata is not None:
-        masked_values = numpy.ma.masked_array(values, values == nodata)
+        bad_values_mask = (values == nodata) | numpy.isnan(values)
+        masked_values = numpy.ma.masked_array(values, bad_values_mask)
         value_count = int(masked_values.count())
     else:
         masked_values = values
