@@ -479,5 +479,11 @@ class TestGeotiff2Raquet(unittest.TestCase):
             {b["name"]: b["colorinterp"] for b in metadata["bands"]},
             {"band_1": "gray"},
         )
-        self.assertIsNone(metadata["bands"][0]["stats"]["min"])
-        self.assertIsNone(metadata["bands"][0]["stats"]["max"])
+        stats = metadata["bands"][0]["stats"]
+        self.assertEqual(f"{stats['min']:.3g}", "58.6")
+        self.assertEqual(f"{stats['max']:.3g}", "70.5")
+        self.assertEqual(f"{stats['mean']:.3g}", "63.6")
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "-78.1")
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "24.4")
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "-77.0")
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "23.6")
