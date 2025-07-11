@@ -1,5 +1,6 @@
 import glob
 import itertools
+import math
 import os
 import tempfile
 import unittest
@@ -29,11 +30,32 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.sum_squares, 328350)
         self.assertAlmostEqual(stats.stddev, 28.722813233)
 
+    def test_read_statistics_python_nans(self):
+        stats = geotiff2raquet.read_statistics_python([math.nan] + list(range(100)), 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertAlmostEqual(stats.stddev, 28.722813233)
+
+    @unittest.skipIf(not geotiff2raquet.HAS_NUMPY, "Missing numpy")
     def test_read_statistics_numpy(self):
-        if not geotiff2raquet.HAS_NUMPY:
-            # Fine, just don't test in this case
-            return
         arr = geotiff2raquet.numpy.arange(100)
+        stats = geotiff2raquet.read_statistics_numpy(arr, 0)
+        self.assertEqual(stats.count, 99)
+        self.assertEqual(stats.min, 1)
+        self.assertEqual(stats.max, 99)
+        self.assertEqual(stats.mean, 50)
+        self.assertEqual(stats.sum, 4950)
+        self.assertEqual(stats.sum_squares, 328350)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
+
+    @unittest.skipIf(not geotiff2raquet.HAS_NUMPY, "Missing numpy")
+    def test_read_statistics_numpy_nans(self):
+        arr = geotiff2raquet.numpy.arange(101, dtype=float)
+        arr[-1] = math.nan
         stats = geotiff2raquet.read_statistics_numpy(arr, 0)
         self.assertEqual(stats.count, 99)
         self.assertEqual(stats.min, 1)
@@ -438,3 +460,53 @@ class TestGeotiff2Raquet(unittest.TestCase):
             {b["name"]: b["colorinterp"] for b in metadata["bands"]},
             {"band_1": "red", "band_2": "green", "band_3": "blue", "band_4": "alpha"},
         )
+
+    def test_milton_2024(self):
+        geotiff_filename = os.path.join(PROJDIR, "tests/Milton_2024-excerpt.tiff")
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.AUTO,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(
+            {b["name"]: b["colorinterp"] for b in metadata["bands"]},
+            {"band_1": "gray"},
+        )
+        stats = metadata["bands"][0]["stats"]
+        self.assertEqual(f"{stats['min']:.3g}", "58.6")
+        self.assertEqual(f"{stats['max']:.3g}", "70.5")
+        self.assertEqual(f"{stats['mean']:.3g}", "63.6")
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "-78.8")
+        self.assertEqual(f"{metadata['bounds'][1]:.3g}", "21.9")
+        self.assertEqual(f"{metadata['bounds'][2]:.3g}", "-75.9")
+        self.assertEqual(f"{metadata['bounds'][3]:.3g}", "24.5")
+
+    def test_civ(self):
+        geotiff_filename = os.path.join(PROJDIR, "tests/civ.tif")
+        with tempfile.TemporaryDirectory() as tempdir:
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                geotiff_filename,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.AUTO,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                8,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(
+            {b["name"]: b["colorinterp"] for b in metadata["bands"]},
+            {"band_1": "gray"},
+        )
+        self.assertEqual(f"{metadata['bounds'][0]:.3g}", "-180")
+        self.assertEqual(f"{metadata['bounds'][1]:.3g}", "-85.1")
+        self.assertEqual(f"{metadata['bounds'][2]:.3g}", "180")
+        self.assertEqual(f"{metadata['bounds'][3]:.3g}", "85.1")

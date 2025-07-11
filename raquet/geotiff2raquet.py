@@ -206,7 +206,7 @@ def read_statistics_python(
 ) -> RasterStats | None:
     """Calculate statistics for list of raw band values and optional nodata value"""
     if nodata is not None:
-        values = [val for val in values if val != nodata]
+        values = [val for val in values if val != nodata and not math.isnan(val)]
 
     if len(values) == 0:
         return None
@@ -227,7 +227,8 @@ def read_statistics_numpy(
 ) -> RasterStats | None:
     """Calculate statistics for array of numeric values and optional nodata value"""
     if nodata is not None:
-        masked_values = numpy.ma.masked_array(values, values == nodata)
+        bad_values_mask = (values == nodata) | numpy.isnan(values)
+        masked_values = numpy.ma.masked_array(values, bad_values_mask)
         value_count = int(masked_values.count())
     else:
         masked_values = values
@@ -286,9 +287,12 @@ def find_pixel_window(
     try:
         # Transform a selection of points to see if we're within web mercator bounds
         for dx, dy in itertools.permutations((0, 0.5, 1), 2):
-            tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
+            _, y, _ = tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
+            if y < -mercantile.CE / 2 or mercantile.CE / 2 < y:
+                # mercantile.CE is circumference of the earth in web mercator
+                raise ValueError("Outside web mercator bounds")
         return PixelWindow(0, 0, ds.RasterXSize, ds.RasterYSize)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         pass
 
     # Calculate the source projection bounds for web mercator 0/0/0 world tile
@@ -336,7 +340,7 @@ def find_minzoom(rg: RasterGeometry, block_zoom: int) -> int:
     high_hypot = math.hypot(lr.x - ul.x, lr.y - ul.y)
     target_hypot = math.hypot(TARGET_MIN_SIZE, TARGET_MIN_SIZE)
     min_zoom = big_zoom - math.log(high_hypot / target_hypot) / math.log(2) - block_zoom
-    return max(0, int(round(min_zoom)))
+    return max(0, min(rg.zoom, int(round(min_zoom))))
 
 
 def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -> int:
@@ -544,6 +548,9 @@ def read_geotiff(
             tile_ds: osgeo.gdal.Dataset | None = None
             create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
             do_stats = frame.tile.z == stats_zoom
+
+            if frame.tile.z > raster_geometry.zoom:
+                raise NotImplementedError("Zoom higher than expected by find_minzoom()")
 
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
@@ -843,6 +850,9 @@ def convert_to_raquet_files(
                 # Reinitialize the parquet writer
                 rfname, target_sizeof = next(raquet_destinations)
                 writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
+
+            if tile.z > raster_geometry.zoom:
+                raise NotImplementedError("Zoom higher than expected by find_minzoom()")
 
             if tile.z == raster_geometry.zoom:
                 # Calculate bounds and count blocks only at the highest zoom level
