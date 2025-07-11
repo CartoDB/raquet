@@ -289,6 +289,7 @@ def find_pixel_window(
         for dx, dy in itertools.permutations((0, 0.5, 1), 2):
             _, y, _ = tx3857.TransformPoint(xoff + dx * xspan, yoff + dx * yspan)
             if y < -mercantile.CE / 2 or mercantile.CE / 2 < y:
+                # mercantile.CE is circumference of the earth in web mercator
                 raise ValueError("Outside web mercator bounds")
         return PixelWindow(0, 0, ds.RasterXSize, ds.RasterYSize)
     except (RuntimeError, ValueError):
