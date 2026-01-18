@@ -24,13 +24,13 @@ RaQuet is a specification for storing and querying raster data using [Apache Par
 
 ```bash
 # Install
-pip install raquet
+pip install raquet-io
 
 # Convert a GeoTIFF to RaQuet
-raquet convert geotiff input.tif output.parquet
+raquet-io convert geotiff input.tif output.parquet
 
 # Inspect a RaQuet file
-raquet inspect output.parquet
+raquet-io inspect output.parquet
 
 # Query with DuckDB
 duckdb -c "SELECT * FROM read_parquet('output.parquet') WHERE block != 0 LIMIT 5"
@@ -77,34 +77,34 @@ Each row in a RaQuet file represents a single rectangular tile of raster data:
 
 ```bash
 # Basic installation
-pip install raquet
+pip install raquet-io
 
 # With all features
-pip install "raquet[all]"
+pip install "raquet-io[all]"
 ```
 
 **Note:** GDAL must be installed separately. On macOS: `brew install gdal`
 
 ### Commands
 
-#### `raquet inspect`
+#### `raquet-io inspect`
 
 Display metadata and statistics for a RaQuet file.
 
 ```bash
-raquet inspect landcover.parquet
-raquet inspect landcover.parquet -v  # verbose
+raquet-io inspect landcover.parquet
+raquet-io inspect landcover.parquet -v  # verbose
 ```
 
-#### `raquet convert geotiff`
+#### `raquet-io convert geotiff`
 
 Convert a GeoTIFF to RaQuet format.
 
 ```bash
-raquet convert geotiff input.tif output.parquet
+raquet-io convert geotiff input.tif output.parquet
 
 # With options
-raquet convert geotiff input.tif output.parquet \
+raquet-io convert geotiff input.tif output.parquet \
   --resampling bilinear \
   --block-size 512 \
   --row-group-size 200 \
@@ -119,30 +119,30 @@ raquet convert geotiff input.tif output.parquet \
 | `--row-group-size` | Rows per Parquet row group (default: 200) |
 | `-v, --verbose` | Enable verbose output |
 
-#### `raquet convert imageserver`
+#### `raquet-io convert imageserver`
 
 Convert an ArcGIS ImageServer to RaQuet format.
 
 ```bash
-raquet convert imageserver https://server/.../ImageServer output.parquet \
+raquet-io convert imageserver https://server/.../ImageServer output.parquet \
   --bbox "-122.5,37.5,-122.0,38.0" \
   --resolution 12
 ```
 
-#### `raquet export geotiff`
+#### `raquet-io export geotiff`
 
 Export a RaQuet file back to GeoTIFF.
 
 ```bash
-raquet export geotiff input.parquet output.tif
+raquet-io export geotiff input.parquet output.tif
 ```
 
-#### `raquet split-zoom`
+#### `raquet-io split-zoom`
 
 Split a RaQuet file by zoom level for optimized remote access.
 
 ```bash
-raquet split-zoom input.parquet output_dir/
+raquet-io split-zoom input.parquet output_dir/
 ```
 
 ---
@@ -188,7 +188,7 @@ Currently supported:
 
 ### Is there a size limit?
 
-RaQuet can handle rasters of any size. For very large datasets, consider using `raquet split-zoom` to create separate files per zoom level for optimal query performance.
+RaQuet can handle rasters of any size. For very large datasets, consider using `raquet-io split-zoom` to create separate files per zoom level for optimal query performance.
 
 ---
 
@@ -202,7 +202,7 @@ RaQuet files **must have blocks sorted by QUADBIN ID** for optimal performance. 
 
 ```bash
 # The CLI automatically sorts blocks during conversion
-raquet convert geotiff input.tif output.parquet
+raquet-io convert geotiff input.tif output.parquet
 ```
 
 ### Row Group Size
@@ -210,7 +210,7 @@ raquet convert geotiff input.tif output.parquet
 Smaller row groups (default: 200 rows) enable finer-grained filtering:
 
 ```bash
-raquet convert geotiff input.tif output.parquet --row-group-size 200
+raquet-io convert geotiff input.tif output.parquet --row-group-size 200
 ```
 
 | Row Group Size | Best For |
@@ -248,7 +248,7 @@ The browser viewer uses batched BETWEEN queries to mitigate WASM limitations.
 For very large datasets, split by zoom level:
 
 ```bash
-raquet split-zoom large_raster.parquet output_dir/
+raquet-io split-zoom large_raster.parquet output_dir/
 # Creates: zoom_11.parquet, zoom_12.parquet, etc.
 ```
 

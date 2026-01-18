@@ -1,9 +1,26 @@
 [project]
-name = "raquet"
+name = "raquet-io"
 version = "0.3.0"
-description = "Raquet - Raster data in Parquet format with QUADBIN spatial indexing"
+description = "RaQuet - Raster data in Parquet format with QUADBIN spatial indexing"
 readme = "README.md"
+license = {text = "BSD-3-Clause"}
 requires-python = ">=3.10"
+authors = [
+    {name = "CARTO", email = "support@carto.com"},
+]
+keywords = ["raster", "parquet", "geospatial", "quadbin", "tiles", "gis", "carto"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
 dependencies = [
     "GDAL>=3",
     "click>=8",
@@ -11,6 +28,12 @@ dependencies = [
     "pyarrow>=19",
     "quadbin>=0.2.2",
 ]
+
+[project.urls]
+Homepage = "https://raquet.io"
+Documentation = "https://raquet.io"
+Repository = "https://github.com/CartoDB/raquet"
+Issues = "https://github.com/CartoDB/raquet/issues"
 
 [project.optional-dependencies]
 numpy = ["numpy>=2"]
@@ -29,11 +52,15 @@ all = [
     "pyproj>=3.6",
 ]
 
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools]
 packages = ["raquet"]
 
 [project.scripts]
-raquet = "raquet.cli:main"
+raquet-io = "raquet.cli:main"
 # Legacy entry points for backwards compatibility
 geotiff2raquet = "raquet.__init__:geotiff2raquet_main"
 raquet2geotiff = "raquet.__init__:raquet2geotiff_main"

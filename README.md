@@ -18,16 +18,16 @@ Similar to [GeoParquet](https://geoparquet.org), RaQuet metadata is stored as a 
 
 ```bash
 # Basic installation (GeoTIFF conversion)
-pip install raquet
+pip install raquet-io
 
 # With rich output for CLI
-pip install "raquet[rich]"
+pip install "raquet-io[rich]"
 
 # With ImageServer support
-pip install "raquet[imageserver]"
+pip install "raquet-io[imageserver]"
 
 # All features
-pip install "raquet[all]"
+pip install "raquet-io[all]"
 ```
 
 **Note:** GDAL must be installed separately. On macOS: `brew install gdal`. On Ubuntu: `apt install gdal-bin libgdal-dev`.
@@ -40,10 +40,10 @@ The `raquet` CLI provides commands for inspecting, converting, and exporting Raq
 
 ```bash
 # Display metadata and statistics
-raquet inspect landcover.parquet
+raquet-io inspect landcover.parquet
 
 # With verbose output
-raquet inspect landcover.parquet -v
+raquet-io inspect landcover.parquet -v
 ```
 
 ### Convert to Raquet
@@ -52,10 +52,10 @@ raquet inspect landcover.parquet -v
 
 ```bash
 # Basic conversion
-raquet convert geotiff input.tif output.parquet
+raquet-io convert geotiff input.tif output.parquet
 
 # With custom options
-raquet convert geotiff input.tif output.parquet \
+raquet-io convert geotiff input.tif output.parquet \
   --resampling bilinear \
   --block-size 512 \
   -v
@@ -74,14 +74,14 @@ raquet convert geotiff input.tif output.parquet \
 
 ```bash
 # Basic conversion
-raquet convert imageserver https://server/arcgis/rest/services/dem/ImageServer dem.parquet
+raquet-io convert imageserver https://server/arcgis/rest/services/dem/ImageServer dem.parquet
 
 # With bounding box filter
-raquet convert imageserver https://server/.../ImageServer output.parquet \
+raquet-io convert imageserver https://server/.../ImageServer output.parquet \
   --bbox "-122.5,37.5,-122.0,38.0"
 
 # With specific resolution
-raquet convert imageserver https://server/.../ImageServer output.parquet \
+raquet-io convert imageserver https://server/.../ImageServer output.parquet \
   --resolution 12 \
   -v
 ```
@@ -102,10 +102,10 @@ raquet convert imageserver https://server/.../ImageServer output.parquet \
 
 ```bash
 # Export to GeoTIFF
-raquet export geotiff input.parquet output.tif
+raquet-io export geotiff input.parquet output.tif
 
 # With verbose output
-raquet export geotiff input.parquet output.tif -v
+raquet-io export geotiff input.parquet output.tif -v
 ```
 
 ### Legacy Commands
@@ -180,11 +180,11 @@ For optimal remote query performance:
 
 1. **Block sorting**: Blocks are automatically sorted by QUADBIN ID during conversion, enabling Parquet row group pruning
 2. **Row group size**: Use smaller row groups (default: 200) for cloud storage access
-3. **Zoom splitting**: For large datasets, use `raquet split-zoom` to create per-zoom-level files
+3. **Zoom splitting**: For large datasets, use `raquet-io split-zoom` to create per-zoom-level files
 
 ```bash
 # Convert with optimized settings for remote access
-raquet convert geotiff input.tif output.parquet --row-group-size 200
+raquet-io convert geotiff input.tif output.parquet --row-group-size 200
 ```
 
 See the [full documentation](https://cartodb.github.io/raquet/#performance-considerations) for more details.
