@@ -249,6 +249,12 @@ def convert_group():
     default=None,
     help="Target size for auto zoom calculation",
 )
+@click.option(
+    "--row-group-size",
+    type=int,
+    default=200,
+    help="Rows per Parquet row group (default: 200, smaller = better remote pruning)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_geotiff(
     input_file: Path,
@@ -257,6 +263,7 @@ def convert_geotiff(
     resampling: str,
     block_size: int,
     target_size: int | None,
+    row_group_size: int,
     verbose: bool,
 ):
     """Convert a GeoTIFF file to Raquet format.
@@ -285,6 +292,7 @@ def convert_geotiff(
             geotiff2raquet.ResamplingAlgorithm(resampling),
             block_zoom,
             target_size,
+            row_group_size,
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -439,6 +447,132 @@ def export_geotiff(input_file: Path, output_file: Path, verbose: bool):
 def main():
     """Main entry point for the CLI."""
     cli()
+
+
+@cli.command("split-zoom")
+@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("output_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--row-group-size",
+    type=int,
+    default=200,
+    help="Rows per Parquet row group (default: 200)",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def split_zoom_command(
+    input_file: Path,
+    output_dir: Path,
+    row_group_size: int,
+    verbose: bool,
+):
+    """Split a Raquet file by zoom level for optimized remote access.
+
+    Creates separate files for each zoom level, enabling clients to query
+    only the zoom level they need without downloading data for other zooms.
+
+    INPUT_FILE is the path to a Raquet (.parquet) file.
+    OUTPUT_DIR is the directory for output files (zoom_N.parquet).
+
+    \b
+    Examples:
+        raquet split-zoom raster.parquet ./split_output/
+        raquet split-zoom large.parquet ./by_zoom/ --row-group-size 100
+    """
+    import os
+    import quadbin
+    import pyarrow as pa
+    from pyarrow.parquet import SortingColumn
+
+    setup_logging(verbose)
+
+    try:
+        # Create output directory
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read input file
+        click.echo(f"Reading {input_file}...")
+        table = pq.read_table(input_file)
+
+        # Get metadata row
+        import pyarrow.compute as pc
+        metadata_mask = pc.equal(table.column("block"), 0)
+        metadata_table = table.filter(metadata_mask)
+        data_table = table.filter(pc.invert(metadata_mask))
+
+        if len(metadata_table) == 0:
+            click.echo("Error: No metadata block found", err=True)
+            sys.exit(1)
+
+        metadata_json = json.loads(metadata_table.column("metadata")[0].as_py())
+
+        # Group blocks by zoom level
+        blocks = data_table.column("block").to_pylist()
+        zoom_indices = {}
+
+        for i, block_id in enumerate(blocks):
+            tile = quadbin.cell_to_tile(block_id)
+            z = tile[2]
+            if z not in zoom_indices:
+                zoom_indices[z] = []
+            zoom_indices[z].append(i)
+
+        click.echo(f"Found {len(zoom_indices)} zoom levels: {sorted(zoom_indices.keys())}")
+
+        # Write separate file for each zoom level
+        files_written = []
+        for zoom in sorted(zoom_indices.keys()):
+            indices = zoom_indices[zoom]
+            zoom_table = data_table.take(indices)
+
+            # Sort by block ID
+            sort_indices = pc.sort_indices(zoom_table.column("block"))
+            zoom_table = zoom_table.take(sort_indices)
+
+            # Update metadata for this zoom
+            zoom_metadata = metadata_json.copy()
+            zoom_metadata["minresolution"] = zoom
+            zoom_metadata["maxresolution"] = zoom
+            zoom_metadata["num_blocks"] = len(indices)
+
+            # Create metadata row
+            metadata_row = pa.table({
+                "block": [0],
+                "metadata": [json.dumps(zoom_metadata)],
+                **{col: [None] for col in zoom_table.schema.names if col not in ["block", "metadata"]}
+            }, schema=zoom_table.schema)
+
+            # Combine metadata + data
+            final_table = pa.concat_tables([metadata_row, zoom_table])
+
+            # Write file with optimizations
+            output_path = output_dir / f"zoom_{zoom}.parquet"
+            pq.write_table(
+                final_table,
+                output_path,
+                compression="zstd",
+                row_group_size=row_group_size,
+                write_page_index=True,
+                sorting_columns=[SortingColumn(0)],
+            )
+
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            click.echo(f"  zoom_{zoom}.parquet: {len(indices)} tiles, {size_mb:.1f} MB")
+            files_written.append(output_path)
+
+        # Summary
+        total_size = sum(f.stat().st_size for f in files_written) / (1024 * 1024)
+        orig_size = input_file.stat().st_size / (1024 * 1024)
+        click.echo(f"\nSplit complete:")
+        click.echo(f"  Original: {orig_size:.1f} MB")
+        click.echo(f"  Split total: {total_size:.1f} MB")
+        click.echo(f"  Files: {len(files_written)}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

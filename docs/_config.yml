@@ -1,0 +1,22 @@
+title: RaQuet
+description: Raster data in Parquet format with QUADBIN spatial indexing
+url: https://cartodb.github.io/raquet
+baseurl: /raquet
+
+theme: minima
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+
+# Exclude from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+
+# Navigation
+header_pages:
+  - index.md
+  - viewer.md

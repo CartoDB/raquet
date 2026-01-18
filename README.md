@@ -2,6 +2,8 @@
 
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format. Users of data warehouse platforms rely on the simple interoperability of Parquet files to move data and perform queries.
 
+**[Documentation](https://cartodb.github.io/raquet)** | **[Online Viewer](https://cartodb.github.io/raquet/viewer.html)** | **[Specification](format-specs/raquet.md)**
+
 ## Overview
 
 Each row in a RaQuet file represents a single rectangular block of data. Location and zoom are given by a [Web Mercator tile z/x/y tile identifier](https://docs.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) stored in the `block` column as a single 64-bit cell [Quadbin identifier](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-redshift/key-concepts/spatial-indexes#quadbin). Empty tiles can be omitted to reduce file size.
@@ -168,9 +170,28 @@ FROM read_parquet('raster.parquet')
 WHERE block = quadbin_from_tile(x, y, z);
 ```
 
+## Online Viewer
+
+Try the **[RaQuet Viewer](https://cartodb.github.io/raquet/viewer.html)** - a client-side viewer powered by DuckDB-WASM that runs entirely in your browser. Load any publicly accessible RaQuet file and explore it interactively.
+
+## Performance Tips
+
+For optimal remote query performance:
+
+1. **Block sorting**: Blocks are automatically sorted by QUADBIN ID during conversion, enabling Parquet row group pruning
+2. **Row group size**: Use smaller row groups (default: 200) for cloud storage access
+3. **Zoom splitting**: For large datasets, use `raquet split-zoom` to create per-zoom-level files
+
+```bash
+# Convert with optimized settings for remote access
+raquet convert geotiff input.tif output.parquet --row-group-size 200
+```
+
+See the [full documentation](https://cartodb.github.io/raquet/#performance-considerations) for more details.
+
 ## Specification
 
-See [format-specs/raquet.md](format-specs/raquet.md) for the specification.
+See [format-specs/raquet.md](format-specs/raquet.md) for the full specification.
 
 ## Examples
 

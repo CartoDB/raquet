@@ -664,6 +664,13 @@ def imageserver_to_raquet_table(
     if not rows:
         logging.warning("No valid tiles were fetched from the ImageServer")
 
+    # Sort rows by block ID for efficient row group pruning when querying.
+    # This allows Parquet readers to skip entire row groups based on block
+    # statistics, significantly reducing data transfer for remote file access.
+    if rows:
+        logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(rows))
+        rows.sort(key=lambda row: row["block"])
+
     # Aggregate band statistics
     aggregated_stats = []
     for band_idx in range(metadata.band_count):
@@ -774,6 +781,7 @@ def imageserver_to_raquet(
     target_resolution: int | None = None,
     skip_empty_blocks: bool = True,
     calculate_stats: bool = True,
+    row_group_size: int = 200,
 ) -> dict[str, Any]:
     """
     Convert an ArcGIS ImageServer to raquet parquet format.
@@ -789,6 +797,7 @@ def imageserver_to_raquet(
         target_resolution: Target QUADBIN pixel resolution (auto if None)
         skip_empty_blocks: Skip nodata-only blocks
         calculate_stats: Calculate band statistics
+        row_group_size: Rows per Parquet row group (default 200 for efficient pruning)
 
     Returns:
         dict with conversion stats (num_blocks, num_bands, etc.)
@@ -806,11 +815,16 @@ def imageserver_to_raquet(
         calculate_stats=calculate_stats,
     )
 
-    # Write to parquet
+    # Write to parquet with specified row group size for efficient remote pruning
+    # Enable page index for finer-grained filtering and sorting metadata
+    from pyarrow.parquet import SortingColumn
     pq.write_table(
         table,
         output_parquet,
         compression=parquet_compression.lower() if parquet_compression else None,
+        row_group_size=row_group_size,
+        write_page_index=True,  # Enable page-level column indexes
+        sorting_columns=[SortingColumn(0)],  # Column 0 (block) is sorted
     )
 
     logging.info(f"Written to {output_parquet}")

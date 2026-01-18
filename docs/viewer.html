@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RaQuet Viewer</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Client-side RaQuet file viewer powered by DuckDB-WASM and deck.gl">
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
+    <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #container { width: 100vw; height: 100vh; position: relative; }
+        #map { width: 100%; height: 100%; background: #1a1a2e; }
+
+        #controls {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(255,255,255,0.95); color: #333;
+            padding: 20px; border-radius: 12px;
+            max-width: 400px; z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        #controls h2 {
+            margin: 0 0 5px 0;
+            font-size: 1.4em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #controls h2 img { height: 28px; }
+        #controls .subtitle {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 15px;
+        }
+        #controls label {
+            display: block;
+            font-size: 0.85em;
+            font-weight: 500;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        #controls input {
+            width: 100%;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        #controls input:focus {
+            outline: none;
+            border-color: #4a90d9;
+            box-shadow: 0 0 0 3px rgba(74,144,217,0.1);
+        }
+        #controls button {
+            width: 100%;
+            padding: 12px 20px;
+            cursor: pointer;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        #controls button:hover { background: #3a7bc8; }
+        #controls button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 15px;
+            font-size: 13px;
+            color: #666;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+        #stats {
+            position: absolute; bottom: 10px; left: 10px;
+            background: rgba(0,0,0,0.8); color: #4ecca3;
+            padding: 10px 15px; border-radius: 8px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px; z-index: 100;
+        }
+        .loading { color: #e6a23c !important; }
+        .error { color: #f56c6c !important; }
+        .success { color: #67c23a !important; }
+
+        #info-link {
+            display: block;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            font-size: 0.85em;
+            color: #666;
+        }
+        #info-link a {
+            color: #4a90d9;
+            text-decoration: none;
+        }
+        #info-link a:hover { text-decoration: underline; }
+
+        /* Sample files dropdown */
+        .sample-files {
+            margin-bottom: 12px;
+        }
+        .sample-files select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="map"></div>
+        <div id="controls">
+            <h2>RaQuet Viewer</h2>
+            <p class="subtitle">Client-side viewer powered by DuckDB-WASM</p>
+
+            <div class="sample-files">
+                <label>Sample Files</label>
+                <select id="sampleSelect" onchange="selectSample()">
+                    <option value="">-- Select a sample --</option>
+                    <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/naip_test.parquet">NAIP Aerial Imagery (NY)</option>
+                </select>
+            </div>
+
+            <label>Or enter RaQuet file URL</label>
+            <input type="text" id="parquetUrl"
+                   placeholder="https://example.com/raster.parquet">
+            <button id="loadBtn" onclick="loadDataset()">Load Dataset</button>
+            <div id="status">Enter a URL or select a sample file to get started.</div>
+
+            <div id="info-link">
+                <a href="index.html">&larr; Back to RaQuet documentation</a><br>
+                <a href="https://github.com/CartoDB/raquet" target="_blank">GitHub Repository</a>
+            </div>
+        </div>
+        <div id="stats">Ready</div>
+    </div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+
+        let db = null;
+        let conn = null;
+        let deckgl = null;
+        let metadata = null;
+        let parquetUrl = null;
+        let blockIndex = new Map();
+        let reverseIndex = new Map();
+        let tilesLoaded = 0;
+        let dataFetched = 0;
+        let queriesExecuted = 0;
+        let tileCache = new Map();
+
+        // Batch loading state
+        let pendingRequests = new Map();
+        let batchTimeout = null;
+        const BATCH_DELAY = 50;
+        let bandNames = [];
+        let bandType = 'uint8';
+        let blockWidth = 256;
+        let blockHeight = 256;
+
+        const statusEl = document.getElementById('status');
+        const statsEl = document.getElementById('stats');
+        const loadBtn = document.getElementById('loadBtn');
+
+        function setStatus(msg, type = '') {
+            statusEl.textContent = msg;
+            statusEl.className = type;
+        }
+
+        function updateStats() {
+            statsEl.textContent = `Tiles: ${tilesLoaded} | Queries: ${queriesExecuted} | Data: ${(dataFetched/1024/1024).toFixed(2)} MB`;
+        }
+
+        window.selectSample = function() {
+            const select = document.getElementById('sampleSelect');
+            const input = document.getElementById('parquetUrl');
+            if (select.value) {
+                input.value = select.value;
+            }
+        };
+
+        function quadbinToTile(cell) {
+            const cellBigInt = BigInt(cell);
+            const res = Number((cellBigInt >> 52n) & 0x1Fn);
+            let x = 0n, y = 0n;
+            let index = cellBigInt & ((1n << 52n) - 1n);
+            const shift = 52 - 2 * res;
+            if (shift > 0) index = index >> BigInt(shift);
+            for (let i = 0; i < res; i++) {
+                x |= ((index >> BigInt(2 * i)) & 1n) << BigInt(i);
+                y |= ((index >> BigInt(2 * i + 1)) & 1n) << BigInt(i);
+            }
+            return { z: res, x: Number(x), y: Number(y) };
+        }
+
+        async function initDuckDB() {
+            if (db) return;
+            setStatus('Initializing DuckDB-WASM...', 'loading');
+            loadBtn.disabled = true;
+
+            const DUCKDB_VERSION = '1.29.0';
+            const CDN_BASE = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`;
+            const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+            const workerScript = `importScripts('${CDN_BASE}/duckdb-browser-eh.worker.js');`;
+            const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
+            const worker = new Worker(URL.createObjectURL(workerBlob));
+
+            db = new duckdb.AsyncDuckDB(logger, worker);
+            await db.instantiate(`${CDN_BASE}/duckdb-eh.wasm`);
+            conn = await db.connect();
+            await conn.query(`INSTALL httpfs; LOAD httpfs;`);
+
+            loadBtn.disabled = false;
+        }
+
+        async function loadMetadata(url) {
+            setStatus('Loading metadata...', 'loading');
+            const result = await conn.query(`
+                SELECT metadata FROM read_parquet('${url}') WHERE block = 0
+            `);
+            const rows = result.toArray();
+            if (rows.length === 0) throw new Error('No metadata found - is this a RaQuet file?');
+            return JSON.parse(rows[0].metadata);
+        }
+
+        async function buildBlockIndex(url) {
+            setStatus('Building tile index...', 'loading');
+            const result = await conn.query(`
+                SELECT block FROM read_parquet('${url}') WHERE block > 0
+            `);
+
+            blockIndex.clear();
+            reverseIndex.clear();
+            const rows = result.toArray();
+
+            for (const row of rows) {
+                const blockId = row.block;
+                const tile = quadbinToTile(blockId);
+                const key = `${tile.z}/${tile.x}/${tile.y}`;
+                blockIndex.set(key, blockId);
+                reverseIndex.set(blockId.toString(), key);
+            }
+
+            return blockIndex.size;
+        }
+
+        function decodeTile(bandData, width, height, type) {
+            if (!bandData) return null;
+            let data;
+            try {
+                data = pako.inflate(new Uint8Array(bandData));
+            } catch (e) {
+                data = new Uint8Array(bandData);
+            }
+
+            if (type === 'uint16') {
+                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                const pixels = new Uint8Array(width * height);
+                for (let i = 0; i < width * height; i++) {
+                    pixels[i] = Math.min(255, view.getUint16(i * 2, true) >> 8);
+                }
+                return pixels;
+            }
+            return data;
+        }
+
+        function createImage(bands, width, height) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+
+            const r = bands[0], g = bands[1], b = bands[2];
+            for (let i = 0; i < width * height; i++) {
+                imageData.data[i * 4] = r ? r[i] : 0;
+                imageData.data[i * 4 + 1] = g ? g[i] : 0;
+                imageData.data[i * 4 + 2] = b ? b[i] : 0;
+                imageData.data[i * 4 + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+
+        async function executeBatch() {
+            if (pendingRequests.size === 0) return;
+
+            const requests = new Map(pendingRequests);
+            pendingRequests.clear();
+
+            const blockIds = [];
+            for (const [key, req] of requests) {
+                if (req.blockId) blockIds.push(req.blockId);
+            }
+
+            if (blockIds.length === 0) {
+                for (const [key, req] of requests) {
+                    tileCache.set(key, null);
+                    req.resolve(null);
+                }
+                return;
+            }
+
+            blockIds.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+            const minBlock = blockIds[0];
+            const maxBlock = blockIds[blockIds.length - 1];
+
+            const bandCols = bandNames.slice(0, 3).join(', ');
+
+            try {
+                const result = await conn.query(`
+                    SELECT block, ${bandCols}
+                    FROM read_parquet('${parquetUrl}')
+                    WHERE block BETWEEN ${minBlock} AND ${maxBlock}
+                `);
+
+                queriesExecuted++;
+                const rows = result.toArray();
+
+                const dataMap = new Map();
+                for (const row of rows) {
+                    dataMap.set(row.block.toString(), row);
+                }
+
+                for (const [cacheKey, req] of requests) {
+                    if (!req.blockId) {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                        continue;
+                    }
+
+                    const row = dataMap.get(req.blockId.toString());
+                    if (!row) {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                        continue;
+                    }
+
+                    const bands = [];
+                    for (const name of bandNames.slice(0, 3)) {
+                        const bandData = row[name];
+                        if (bandData) {
+                            dataFetched += bandData.byteLength;
+                            bands.push(decodeTile(bandData, blockWidth, blockHeight, bandType));
+                        } else {
+                            bands.push(null);
+                        }
+                    }
+
+                    if (!bands[0]) {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                        continue;
+                    }
+
+                    const canvas = createImage(bands, blockWidth, blockHeight);
+                    tilesLoaded++;
+                    tileCache.set(cacheKey, canvas);
+                    req.resolve(canvas);
+                }
+
+                updateStats();
+
+            } catch (e) {
+                console.error('Batch query error:', e);
+                for (const [key, req] of requests) {
+                    req.reject(e);
+                }
+            }
+        }
+
+        function getTileData(z, x, y) {
+            const cacheKey = `${z}/${x}/${y}`;
+
+            if (tileCache.has(cacheKey)) {
+                return Promise.resolve(tileCache.get(cacheKey));
+            }
+
+            if (pendingRequests.has(cacheKey)) {
+                return pendingRequests.get(cacheKey).promise;
+            }
+
+            const blockId = blockIndex.get(cacheKey);
+
+            let resolve, reject;
+            const promise = new Promise((res, rej) => {
+                resolve = res;
+                reject = rej;
+            });
+
+            pendingRequests.set(cacheKey, { resolve, reject, blockId, promise });
+
+            if (batchTimeout) clearTimeout(batchTimeout);
+            batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
+
+            return promise;
+        }
+
+        function initMap(meta, url) {
+            parquetUrl = url;
+            const bounds = meta.bounds;
+            const center = meta.center || [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
+            const zoom = meta.center ? meta.center[2] : meta.minresolution;
+
+            bandNames = meta.bands.map(b => b.name);
+            bandType = meta.bands[0]?.type || 'uint8';
+            blockWidth = meta.block_width || 256;
+            blockHeight = meta.block_height || 256;
+
+            if (deckgl) deckgl.finalize();
+
+            const tileLayer = new deck.TileLayer({
+                id: 'raquet-tiles',
+                minZoom: meta.minresolution,
+                maxZoom: meta.maxresolution,
+                tileSize: blockWidth,
+                extent: bounds,
+                getTileData: (tile) => {
+                    const {x, y, z} = tile.index;
+                    return getTileData(z, x, y);
+                },
+                renderSubLayers: props => {
+                    const {tile, data} = props;
+                    if (!data) return null;
+                    const {west, south, east, north} = tile.bbox;
+                    return new deck.BitmapLayer({
+                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                        image: data,
+                        bounds: [west, south, east, north],
+                    });
+                },
+            });
+
+            deckgl = new deck.DeckGL({
+                container: 'map',
+                initialViewState: { longitude: center[0], latitude: center[1], zoom: zoom, pitch: 0, bearing: 0 },
+                controller: true,
+                layers: [tileLayer],
+            });
+
+            setStatus(`Loaded: ${meta.num_blocks} tiles\nZoom: ${meta.minresolution}-${meta.maxresolution}\nBands: ${bandNames.join(', ')}`, 'success');
+        }
+
+        window.loadDataset = async function() {
+            const url = document.getElementById('parquetUrl').value.trim();
+            if (!url) {
+                setStatus('Please enter a URL or select a sample file.', 'error');
+                return;
+            }
+
+            try {
+                loadBtn.disabled = true;
+                tilesLoaded = 0;
+                dataFetched = 0;
+                queriesExecuted = 0;
+                tileCache.clear();
+                pendingRequests.clear();
+                updateStats();
+
+                await initDuckDB();
+                metadata = await loadMetadata(url);
+                const numTiles = await buildBlockIndex(url);
+                setStatus(`Indexed ${numTiles} tiles, initializing map...`, 'loading');
+                initMap(metadata, url);
+                loadBtn.disabled = false;
+            } catch (e) {
+                setStatus(`Error: ${e.message}`, 'error');
+                console.error(e);
+                loadBtn.disabled = false;
+            }
+        };
+
+        // Check for URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const fileUrl = urlParams.get('url');
+        if (fileUrl) {
+            document.getElementById('parquetUrl').value = fileUrl;
+            loadDataset();
+        }
+    </script>
+</body>
+</html>
