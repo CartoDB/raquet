@@ -830,8 +830,6 @@ def imageserver_to_raquet(
     logging.info(f"Written to {output_parquet}")
 
     # Read back metadata to get stats
-    from . import raquet2geotiff
-
     metadata_table = pq.read_table(
         output_parquet, columns=["block", "metadata"], filters=[("block", "=", 0)]
     )

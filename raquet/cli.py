@@ -4,7 +4,6 @@
 Raquet stores raster data in Parquet format with QUADBIN spatial indexing.
 """
 
-import gzip
 import json
 import logging
 import math
@@ -478,7 +477,6 @@ def split_zoom_command(
         raquet split-zoom raster.parquet ./split_output/
         raquet split-zoom large.parquet ./by_zoom/ --row-group-size 100
     """
-    import os
     import quadbin
     import pyarrow as pa
     from pyarrow.parquet import SortingColumn
@@ -562,7 +560,7 @@ def split_zoom_command(
         # Summary
         total_size = sum(f.stat().st_size for f in files_written) / (1024 * 1024)
         orig_size = input_file.stat().st_size / (1024 * 1024)
-        click.echo(f"\nSplit complete:")
+        click.echo("\nSplit complete:")
         click.echo(f"  Original: {orig_size:.1f} MB")
         click.echo(f"  Split total: {total_size:.1f} MB")
         click.echo(f"  Files: {len(files_written)}")
