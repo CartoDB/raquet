@@ -12,7 +12,7 @@ title: Home
 # RaQuet: Raster + Parquet
 
 <p style="font-size: 1.2em; color: #666; margin-top: -10px;">
-Bring raster data into the lakehouse — query rasters with SQL using Parquet-native tools.
+Bring raster data into the lakehouse — query rasters with SQL, powered by production-grade analytics from CARTO.
 </p>
 
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), enabling efficient cloud-native raster workflows. Developed by [CARTO](https://carto.com), RaQuet brings raster data into the modern data stack.
@@ -53,6 +53,26 @@ These formats serve different workflows and are **complementary**, not competing
 | **Limitation** | Not natively queryable in SQL engines | Requires specialized runtimes/APIs (not warehouse-native) | Designed for tiles, not arbitrary window reads |
 
 **RaQuet is complementary to COG and Zarr** — it's the representation designed for SQL + lakehouse workflows.
+
+### Backed by Production Analytics Engines
+
+RaQuet isn't just a specification — it's designed to plug directly into [CARTO's Analytics Toolbox](https://carto.com/analytics-toolbox), which already runs **natively inside major data warehouses**. This means you get production-grade spatial functions, not just file format support.
+
+<div style="margin: 20px 0;">
+
+**Supported platforms:**
+
+- **BigQuery** — Full support via [Analytics Toolbox for BigQuery](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery)
+- **Snowflake** — Full support via [Analytics Toolbox for Snowflake](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-snowflake)
+- **Databricks** — Full support via [Analytics Toolbox for Databricks](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-databricks)
+- **PostgreSQL** — Full support via [Analytics Toolbox for PostgreSQL](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-postgresql)
+- **Redshift** — *Coming soon*
+- **DuckDB** — *Coming soon*
+- **Oracle** — *Coming soon*
+
+</div>
+
+With CARTO's toolboxes, you can perform spatial joins between raster tiles and vector geometries, run zonal statistics, and build ML pipelines — all in pure SQL, inside your warehouse.
 
 ---
 
