@@ -80,19 +80,7 @@ With CARTO's toolboxes, you can perform spatial joins between raster tiles and v
 <strong>Status:</strong> Active development — not yet generally available.
 </p>
 
-We're actively working on support for registering RaQuet datasets as [Apache Iceberg](https://iceberg.apache.org/) tables. This is a natural evolution that brings raster data fully into the open lakehouse ecosystem.
-
-**Why Iceberg for raster?**
-
-Iceberg is becoming the standard open table format for lakehouses, providing:
-
-- **Schema evolution** — Add bands or metadata fields without rewriting data
-- **Time travel** — Query historical versions of your raster catalog
-- **Partition pruning** — Efficient filtering by QUADBIN ranges, zoom levels, or time
-- **ACID transactions** — Safe concurrent writes and updates
-- **Catalog integration** — Register rasters alongside vector tables in Unity Catalog, AWS Glue, Hive Metastore, etc.
-
-**The bigger picture:**
+We're actively working on support for registering RaQuet datasets as [Apache Iceberg](https://iceberg.apache.org/) tables. The goal: **publish rasters directly into Iceberg catalogs** so they can be discovered and queried like any other table in your lakehouse.
 
 GeoParquet brought vector data into the lakehouse. RaQuet does the same for raster. Iceberg unifies them under a single governance and query layer — enabling true multimodal spatial analytics where vector and raster live side by side, versioned together, and queryable with the same SQL engine.
 
