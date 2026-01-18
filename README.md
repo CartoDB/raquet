@@ -2,6 +2,8 @@
 
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format. Users of data warehouse platforms rely on the simple interoperability of Parquet files to move data and perform queries.
 
+**[Documentation](https://cartodb.github.io/raquet)** | **[Online Viewer](https://cartodb.github.io/raquet/viewer.html)** | **[Specification](format-specs/raquet.md)**
+
 ## Overview
 
 Each row in a RaQuet file represents a single rectangular block of data. Location and zoom are given by a [Web Mercator tile z/x/y tile identifier](https://docs.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) stored in the `block` column as a single 64-bit cell [Quadbin identifier](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-redshift/key-concepts/spatial-indexes#quadbin). Empty tiles can be omitted to reduce file size.
@@ -12,16 +14,191 @@ Pixel bands can be decoded via simple binary unpacking in any programming enviro
 
 Similar to [GeoParquet](https://geoparquet.org), RaQuet metadata is stored as a JSON object with details on coverage area, raster resolution, pixel data format, and other needed information. For compatibility with data warehouses the metadata is stored within a Parquet row at a special “0” row (`block=0x00`).
 
+## Installation
+
+```bash
+# Basic installation (GeoTIFF conversion)
+pip install raquet
+
+# With rich output for CLI
+pip install "raquet[rich]"
+
+# With ImageServer support
+pip install "raquet[imageserver]"
+
+# All features
+pip install "raquet[all]"
+```
+
+**Note:** GDAL must be installed separately. On macOS: `brew install gdal`. On Ubuntu: `apt install gdal-bin libgdal-dev`.
+
+## CLI Usage
+
+The `raquet` CLI provides commands for inspecting, converting, and exporting Raquet files.
+
+### Inspect a Raquet file
+
+```bash
+# Display metadata and statistics
+raquet inspect landcover.parquet
+
+# With verbose output
+raquet inspect landcover.parquet -v
+```
+
+### Convert to Raquet
+
+#### From GeoTIFF
+
+```bash
+# Basic conversion
+raquet convert geotiff input.tif output.parquet
+
+# With custom options
+raquet convert geotiff input.tif output.parquet \
+  --resampling bilinear \
+  --block-size 512 \
+  -v
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--zoom-strategy` | Zoom level strategy: `auto`, `lower`, `upper` (default: `auto`) |
+| `--resampling` | Resampling algorithm: `near`, `bilinear`, `cubic`, etc. (default: `near`) |
+| `--block-size` | Block size in pixels (default: 256) |
+| `--target-size` | Target size for auto zoom calculation |
+| `-v, --verbose` | Enable verbose output |
+
+#### From ArcGIS ImageServer
+
+```bash
+# Basic conversion
+raquet convert imageserver https://server/arcgis/rest/services/dem/ImageServer dem.parquet
+
+# With bounding box filter
+raquet convert imageserver https://server/.../ImageServer output.parquet \
+  --bbox "-122.5,37.5,-122.0,38.0"
+
+# With specific resolution
+raquet convert imageserver https://server/.../ImageServer output.parquet \
+  --resolution 12 \
+  -v
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--token` | ArcGIS authentication token |
+| `--bbox` | Bounding box filter in WGS84: `xmin,ymin,xmax,ymax` |
+| `--block-size` | Block size in pixels (default: 256) |
+| `--resolution` | Target QUADBIN pixel resolution (auto if not specified) |
+| `--no-compression` | Disable gzip compression for block data |
+| `-v, --verbose` | Enable verbose output |
+
+### Export from Raquet
+
+#### To GeoTIFF
+
+```bash
+# Export to GeoTIFF
+raquet export geotiff input.parquet output.tif
+
+# With verbose output
+raquet export geotiff input.parquet output.tif -v
+```
+
+### Legacy Commands
+
+For backwards compatibility, standalone commands are also available:
+
+```bash
+geotiff2raquet input.tif output.parquet
+raquet2geotiff input.parquet output.tif
+```
+
+## Python API
+
+```python
+from raquet import geotiff2raquet, raquet2geotiff
+
+# Convert GeoTIFF to Raquet
+geotiff2raquet.main(
+    "input.tif",
+    "output.parquet",
+    geotiff2raquet.ZoomStrategy.AUTO,
+    geotiff2raquet.ResamplingAlgorithm.NEAR,
+    block_zoom=8,  # 256px blocks
+    target_size=None,
+)
+
+# Convert Raquet to GeoTIFF
+raquet2geotiff.main("input.parquet", "output.tif")
+```
+
+### ImageServer Conversion
+
+```python
+from raquet.imageserver import imageserver_to_raquet
+
+# Convert ImageServer to Raquet
+result = imageserver_to_raquet(
+    "https://server/arcgis/rest/services/dem/ImageServer",
+    "output.parquet",
+    bbox=(-122.5, 37.5, -122.0, 38.0),  # Optional WGS84 bounds
+    block_size=256,
+    target_resolution=12,  # Optional, auto-calculated if not specified
+)
+
+print(f"Created {result['num_blocks']} blocks with {result['num_bands']} bands")
+```
+
+## Querying with DuckDB
+
+Raquet files can be queried directly with DuckDB:
+
+```sql
+-- Load Raquet file
+SELECT * FROM read_parquet('raster.parquet') WHERE block != 0 LIMIT 10;
+
+-- Get metadata
+SELECT metadata FROM read_parquet('raster.parquet') WHERE block = 0;
+
+-- Query specific tiles using QUADBIN
+SELECT block, band_1
+FROM read_parquet('raster.parquet')
+WHERE block = quadbin_from_tile(x, y, z);
+```
+
+## Online Viewer
+
+Try the **[RaQuet Viewer](https://cartodb.github.io/raquet/viewer.html)** - a client-side viewer powered by DuckDB-WASM that runs entirely in your browser. Load any publicly accessible RaQuet file and explore it interactively.
+
+## Performance Tips
+
+For optimal remote query performance:
+
+1. **Block sorting**: Blocks are automatically sorted by QUADBIN ID during conversion, enabling Parquet row group pruning
+2. **Row group size**: Use smaller row groups (default: 200) for cloud storage access
+3. **Zoom splitting**: For large datasets, use `raquet split-zoom` to create per-zoom-level files
+
+```bash
+# Convert with optimized settings for remote access
+raquet convert geotiff input.tif output.parquet --row-group-size 200
+```
+
+See the [full documentation](https://cartodb.github.io/raquet/#performance-considerations) for more details.
+
 ## Specification
 
-See [format-specs/raquet.md](format-specs/raquet.md) for the specification.
-
-## License
-
-See [LICENSE](LICENSE) for the license.
+See [format-specs/raquet.md](format-specs/raquet.md) for the full specification.
 
 ## Examples
 
 See [examples/example_metadata.json](examples/example_metadata.json) for an example of the metadata.
 
 See [examples/example_data.parquet](examples/example_data.parquet) for an example of the data.
+
+## License
+
+See [LICENSE](LICENSE) for the license.

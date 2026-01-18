@@ -736,6 +736,7 @@ def main(
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
     target_size: int | None = None,
+    row_group_size: int = 200,
 ):
     """Read GeoTIFF datasource and write to RaQuet
 
@@ -745,6 +746,7 @@ def main(
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
         target_size: Integer number of bytes for individual parquet files in raquet_destination
+        row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -764,6 +766,7 @@ def main(
         zoom_strategy,
         resampling_algorithm,
         block_zoom,
+        row_group_size,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -774,6 +777,7 @@ def convert_to_raquet_files(
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
+    row_group_size: int = 200,
 ) -> typing.Generator[str, None, None]:
     """Read GeoTIFF datasource and write to RaQuet files
 
@@ -782,8 +786,15 @@ def convert_to_raquet_files(
         raquet_destinations: tuples of (filename, target sizeof)
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
+        block_zoom: Block zoom level (8 for 256px blocks)
+        row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
 
     Yields output filenames as they are written.
+
+    Note: Rows are sorted by block ID before writing to enable efficient
+    row group pruning when querying. This allows Parquet readers to skip
+    entire row groups based on block statistics, significantly reducing
+    data transfer for remote file access.
     """
     raster_geometry, pipe = open_geotiff_in_process(
         geotiff_filename, zoom_strategy, resampling_algorithm, block_zoom
@@ -792,12 +803,9 @@ def convert_to_raquet_files(
     try:
         schema, band_names = create_schema(raster_geometry)
 
-        # Initialize empty lists to collect rows and stats
-        max_rowcount, rows, band_stats = 1000, [], [None for _ in band_names]
-
-        # Initialize a parquet writer
-        rfname, target_sizeof = next(raquet_destinations)
-        writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
+        # Initialize empty lists to collect ALL rows and stats before sorting
+        # Note: This requires holding all rows in memory before writing
+        all_rows, band_stats = [], [None for _ in band_names]
 
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
         minresolution, block_count = math.inf, 0
@@ -825,31 +833,14 @@ def convert_to_raquet_files(
             if all(block_datum is None for block_datum in block_data):
                 continue
 
-            # Append new row
-            rows.append(
+            # Append new row to collection (will be sorted later)
+            all_rows.append(
                 {
                     "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
                     "metadata": None,
                     **{bname: block_data[i] for i, bname in enumerate(band_names)},
                 }
             )
-            sizeof_so_far += sum(sys.getsizeof(v) for v in rows[-1].values())
-
-            # Write a row group and recalibrate sizeof_so_far when we hit the row count limit
-            if len(rows) >= max_rowcount:
-                flush_rows_to_file(writer, schema, rows)
-                sizeof_so_far = os.stat(rfname).st_size
-
-            # Write and yield a whole file when we hit the sizeof limit
-            if sizeof_so_far > target_sizeof:
-                if rows:
-                    flush_rows_to_file(writer, schema, rows)
-                writer.close()
-                yield rfname
-
-                # Reinitialize the parquet writer
-                rfname, target_sizeof = next(raquet_destinations)
-                writer, sizeof_so_far = pyarrow.parquet.ParquetWriter(rfname, schema), 0
 
             if tile.z > raster_geometry.zoom:
                 raise NotImplementedError("Zoom higher than expected by find_minzoom()")
@@ -867,10 +858,12 @@ def convert_to_raquet_files(
         for i, stats in enumerate(band_stats):
             logging.info("Band %s %s", i + 1, stats)
 
-        # Write remaining rows
-        flush_rows_to_file(writer, schema, rows)
+        # Sort all rows by block ID for efficient row group pruning
+        # This enables Parquet readers to skip row groups based on block statistics
+        logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
+        all_rows.sort(key=lambda row: row["block"])
 
-        # Finish writing with a single metadata row
+        # Build metadata now (we have all the info we need)
         metadata_json = create_metadata(
             raster_geometry,
             band_names,
@@ -888,6 +881,54 @@ def convert_to_raquet_files(
             "metadata": json.dumps(metadata_json),
             **{bname: None for bname in band_names},
         }
+
+        # Now write sorted rows, splitting into multiple files if target_sizeof is set
+        # Use page index for finer-grained filtering and sorting metadata
+        from pyarrow.parquet import SortingColumn
+        rfname, target_sizeof = next(raquet_destinations)
+        writer = pyarrow.parquet.ParquetWriter(
+            rfname,
+            schema,
+            write_page_index=True,  # Enable page-level column indexes
+            sorting_columns=[SortingColumn(0)],  # Column 0 (block) is sorted
+        )
+        sizeof_so_far = 0
+        rows_in_current_file = []
+
+        for row in all_rows:
+            rows_in_current_file.append(row)
+            # Estimate size using memory footprint (like original code)
+            sizeof_so_far += sum(sys.getsizeof(v) for v in row.values())
+
+            # Write a row group when we hit the batch size limit
+            if len(rows_in_current_file) >= row_group_size:
+                flush_rows_to_file(writer, schema, rows_in_current_file)
+                rows_in_current_file = []
+                sizeof_so_far = os.stat(rfname).st_size
+
+            # Split to new file when we hit the sizeof limit
+            if sizeof_so_far > target_sizeof:
+                if rows_in_current_file:
+                    flush_rows_to_file(writer, schema, rows_in_current_file)
+                    rows_in_current_file = []
+                writer.close()
+                yield rfname
+
+                # Start new file
+                rfname, target_sizeof = next(raquet_destinations)
+                writer = pyarrow.parquet.ParquetWriter(
+                    rfname,
+                    schema,
+                    write_page_index=True,
+                    sorting_columns=[SortingColumn(0)],
+                )
+                sizeof_so_far = 0
+
+        # Flush remaining rows
+        if rows_in_current_file:
+            flush_rows_to_file(writer, schema, rows_in_current_file)
+
+        # Add metadata row and close final file
         flush_rows_to_file(writer, schema, [metadata_row])
         writer.close()
         yield rfname
