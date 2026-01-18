@@ -11,6 +11,10 @@ title: Home
 
 # RaQuet: Raster + Parquet
 
+<p style="font-size: 1.2em; color: #666; margin-top: -10px;">
+Bring raster data into the lakehouse — query rasters with SQL using Parquet-native tools.
+</p>
+
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), enabling efficient cloud-native raster workflows. Developed by [CARTO](https://carto.com), RaQuet brings raster data into the modern data stack.
 
 ## Why RaQuet?
@@ -19,6 +23,38 @@ RaQuet is a specification for storing and querying raster data using [Apache Par
 - **Efficient**: QUADBIN spatial indexing enables fast tile lookups with row group pruning
 - **Simple**: Standard Parquet format works with existing data warehouse infrastructure
 - **Interoperable**: Convert from GeoTIFF, COG, or ArcGIS ImageServer
+
+---
+
+## Why Parquet for Raster Data?
+
+RaQuet exists to bring raster data into the same analytical ecosystem where vector data already lives. Over the last decade, vector geospatial data has successfully integrated into cloud data warehouses and lakehouses through open formats like Parquet, GeoParquet, and table formats like Iceberg. Raster data, however, remains locked in GIS- and HPC-oriented formats like GeoTIFF/COG and Zarr — powerful, but largely invisible to SQL engines and analytics platforms.
+
+RaQuet bridges that gap by encoding rasters as Parquet. This makes raster tiles queryable with DuckDB, BigQuery, Snowflake, Spark, Trino/Presto — and makes rasters governable, versionable, and joinable inside the lakehouse.
+
+> **Key idea:** COG/Zarr optimize storage & access. RaQuet optimizes integration & computation in the modern data stack.
+
+<p align="center" style="margin: 30px 0;">
+  <img src="{{ site.baseurl }}/assets/one-does-not-simply-query-a-raster.jpg" alt="Meme: One does not simply query a raster" style="max-width: 520px; width: 100%; border-radius: 8px;">
+  <br>
+  <em style="color: #666;">Because in most analytics stacks… you don't simply query a raster.</em>
+  <br>
+  <small style="color: #999; font-size: 0.75em;">Meme image used for illustrative purposes.</small>
+</p>
+
+### RaQuet vs COG vs Zarr
+
+These formats serve different workflows and are **complementary**, not competing:
+
+| | **COG (GeoTIFF)** | **Zarr** | **RaQuet** |
+|---|---|---|---|
+| **Best for** | GIS pipelines | Scientific / array computing | Analytics / lakehouse |
+| **Strengths** | Optimized for GDAL-style window reads and visualization. Great for tiling + overviews. | Chunked multidimensional arrays (NumPy/Xarray/HPC). Parallel-friendly and cloud-native. | Parquet-native: works with warehouses and SQL engines. Joins with vector data in the same stack. |
+| **Limitation** | Not natively queryable in SQL engines | Requires specialized runtimes/APIs (not warehouse-native) | Designed for tiles, not arbitrary window reads |
+
+**RaQuet is complementary to COG and Zarr** — it's the representation designed for SQL + lakehouse workflows.
+
+---
 
 ## Quick Start
 
@@ -151,7 +187,9 @@ raquet-io split-zoom input.parquet output_dir/
 
 ### What's the difference between RaQuet and COG (Cloud Optimized GeoTIFF)?
 
-Both formats enable efficient cloud access to raster data. Key differences:
+COG and RaQuet serve different layers of the data stack. COG is ideal for classic raster access patterns: window reads, visualization, GDAL pipelines, and serving tiles to web maps. RaQuet targets a different problem: making raster data **computable and governable** inside data warehouses and lakehouses using Parquet.
+
+Think of it this way: COG is how you store and serve rasters; RaQuet is how you analyze and join them with the rest of your data.
 
 | Feature | RaQuet | COG |
 |---------|--------|-----|
@@ -159,8 +197,9 @@ Both formats enable efficient cloud access to raster data. Key differences:
 | Query Tool | SQL (DuckDB, BigQuery) | GDAL, rasterio |
 | Index Type | QUADBIN (discrete tiles) | Internal overviews |
 | Data Warehouse | Native support | Requires conversion |
+| Best for | Analytics, joins, SQL workflows | Visualization, window reads, GIS pipelines |
 
-RaQuet is ideal when you need SQL-based queries or integration with data warehouse workflows.
+RaQuet is ideal when you need SQL-based queries, want to join raster with vector data, or need lakehouse governance (versioning, lineage, access control).
 
 ### Can I use RaQuet with BigQuery or Snowflake?
 
