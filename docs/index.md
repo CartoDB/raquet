@@ -5,11 +5,13 @@ title: Home
 
 <p align="center">
   <img src="{{ site.baseurl }}/assets/logo.svg" alt="RaQuet" width="400">
+  <br>
+  <em>An open source project by <a href="https://carto.com">CARTO</a></em>
 </p>
 
 # RaQuet: Raster + Parquet
 
-RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), enabling efficient cloud-native raster workflows.
+RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), enabling efficient cloud-native raster workflows. Developed by [CARTO](https://carto.com), RaQuet brings raster data into the modern data stack.
 
 ## Why RaQuet?
 
@@ -253,6 +255,12 @@ raquet split-zoom large_raster.parquet output_dir/
 This allows queries to target specific zoom levels without scanning the entire file.
 
 ---
+
+## About
+
+RaQuet is an open source project created and maintained by [**CARTO**](https://carto.com), the leading Location Intelligence platform. CARTO helps organizations unlock the power of spatial data through cloud-native analytics.
+
+Learn more about CARTO's spatial data solutions at [carto.com](https://carto.com).
 
 ## License
 

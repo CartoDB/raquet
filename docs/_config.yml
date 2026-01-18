@@ -1,5 +1,5 @@
-title: RaQuet
-description: Raster data in Parquet format with QUADBIN spatial indexing
+title: RaQuet by CARTO
+description: An open source specification for raster data in Parquet format with QUADBIN spatial indexing, by CARTO
 url: https://raquet.io
 baseurl: ""
 
