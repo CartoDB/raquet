@@ -863,39 +863,7 @@ def convert_to_raquet_files(
         logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
         all_rows.sort(key=lambda row: row["block"])
 
-        # Now write sorted rows in chunks
-        # Use page index for finer-grained filtering and sorting metadata
-        from pyarrow.parquet import SortingColumn
-        rfname, target_sizeof = next(raquet_destinations)
-        writer = pyarrow.parquet.ParquetWriter(
-            rfname,
-            schema,
-            write_page_index=True,  # Enable page-level column indexes
-            sorting_columns=[SortingColumn(0)],  # Column 0 (block) is sorted
-        )
-        sizeof_so_far = 0
-
-        for i in range(0, len(all_rows), row_group_size):
-            chunk = all_rows[i:i + row_group_size]
-            flush_rows_to_file(writer, schema, chunk)
-            sizeof_so_far = os.stat(rfname).st_size
-
-            # Write and yield a whole file when we hit the sizeof limit
-            if sizeof_so_far > target_sizeof and i + row_group_size < len(all_rows):
-                writer.close()
-                yield rfname
-
-                # Reinitialize the parquet writer
-                rfname, target_sizeof = next(raquet_destinations)
-                writer = pyarrow.parquet.ParquetWriter(
-                    rfname,
-                    schema,
-                    write_page_index=True,
-                    sorting_columns=[SortingColumn(0)],
-                )
-                sizeof_so_far = 0
-
-        # Finish writing with a single metadata row
+        # Build metadata now (we have all the info we need)
         metadata_json = create_metadata(
             raster_geometry,
             band_names,
@@ -913,6 +881,54 @@ def convert_to_raquet_files(
             "metadata": json.dumps(metadata_json),
             **{bname: None for bname in band_names},
         }
+
+        # Now write sorted rows, splitting into multiple files if target_sizeof is set
+        # Use page index for finer-grained filtering and sorting metadata
+        from pyarrow.parquet import SortingColumn
+        rfname, target_sizeof = next(raquet_destinations)
+        writer = pyarrow.parquet.ParquetWriter(
+            rfname,
+            schema,
+            write_page_index=True,  # Enable page-level column indexes
+            sorting_columns=[SortingColumn(0)],  # Column 0 (block) is sorted
+        )
+        sizeof_so_far = 0
+        rows_in_current_file = []
+
+        for row in all_rows:
+            rows_in_current_file.append(row)
+            # Estimate size using memory footprint (like original code)
+            sizeof_so_far += sum(sys.getsizeof(v) for v in row.values())
+
+            # Write a row group when we hit the batch size limit
+            if len(rows_in_current_file) >= row_group_size:
+                flush_rows_to_file(writer, schema, rows_in_current_file)
+                rows_in_current_file = []
+                sizeof_so_far = os.stat(rfname).st_size
+
+            # Split to new file when we hit the sizeof limit
+            if sizeof_so_far > target_sizeof:
+                if rows_in_current_file:
+                    flush_rows_to_file(writer, schema, rows_in_current_file)
+                    rows_in_current_file = []
+                writer.close()
+                yield rfname
+
+                # Start new file
+                rfname, target_sizeof = next(raquet_destinations)
+                writer = pyarrow.parquet.ParquetWriter(
+                    rfname,
+                    schema,
+                    write_page_index=True,
+                    sorting_columns=[SortingColumn(0)],
+                )
+                sizeof_so_far = 0
+
+        # Flush remaining rows
+        if rows_in_current_file:
+            flush_rows_to_file(writer, schema, rows_in_current_file)
+
+        # Add metadata row and close final file
         flush_rows_to_file(writer, schema, [metadata_row])
         writer.close()
         yield rfname
