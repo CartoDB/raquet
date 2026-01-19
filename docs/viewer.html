@@ -15,7 +15,7 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
         #container { width: 100vw; height: 100vh; position: relative; }
-        #map { width: 100%; height: 100%; background: #1a1a2e; }
+        #map { width: 100%; height: 100%; background: #e8e8e8; }
 
         #controls {
             position: absolute; top: 10px; left: 10px;
@@ -425,9 +425,33 @@
             blockWidth = meta.block_width || 256;
             blockHeight = meta.block_height || 256;
 
-            if (deckgl) deckgl.finalize();
+            // Fully cleanup previous deck.gl instance
+            if (deckgl) {
+                deckgl.setProps({ layers: [] });
+                deckgl.finalize();
+                deckgl = null;
+            }
 
-            const tileLayer = new deck.TileLayer({
+            // CARTO Positron basemap layer
+            const basemapLayer = new deck.TileLayer({
+                id: 'carto-positron-basemap',
+                data: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+                minZoom: 0,
+                maxZoom: 19,
+                tileSize: 256,
+                renderSubLayers: props => {
+                    const {tile, data} = props;
+                    const {west, south, east, north} = tile.bbox;
+                    return new deck.BitmapLayer({
+                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                        image: data,
+                        bounds: [west, south, east, north],
+                    });
+                },
+            });
+
+            // RaQuet tiles layer
+            const raquetLayer = new deck.TileLayer({
                 id: 'raquet-tiles',
                 minZoom: meta.minresolution,
                 maxZoom: meta.maxresolution,
@@ -453,7 +477,7 @@
                 container: 'map',
                 initialViewState: { longitude: center[0], latitude: center[1], zoom: zoom, pitch: 0, bearing: 0 },
                 controller: true,
-                layers: [tileLayer],
+                layers: [basemapLayer, raquetLayer],
             });
 
             setStatus(`Loaded: ${meta.num_blocks} tiles\nZoom: ${meta.minresolution}-${meta.maxresolution}\nBands: ${bandNames.join(', ')}`, 'success');
