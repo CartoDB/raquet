@@ -267,17 +267,6 @@
             const rows = result.toArray();
             if (rows.length === 0) throw new Error('No metadata found - is this a RaQuet file?');
 
-            // Debug: show sample blocks and their zoom levels
-            const sampleResult = await conn.query(`
-                SELECT block FROM read_parquet('${url}') WHERE block > 0 LIMIT 3
-            `);
-            const sampleRows = sampleResult.toArray();
-            console.log('Sample blocks from file:');
-            for (const row of sampleRows) {
-                const tile = quadbinToTile(row.block);
-                console.log(`  z=${tile.z}, x=${tile.x}, y=${tile.y}, block=${row.block}`);
-            }
-
             return JSON.parse(rows[0].metadata);
         }
 
@@ -345,11 +334,6 @@
             const maxBlock = blockIds[blockIds.length - 1];
 
             const bandCols = bandNames.slice(0, 3).join(', ');
-
-            // Debug: log requested tiles
-            const sampleTile = Array.from(requests.keys())[0];
-            const [z, x, y] = sampleTile.split('/').map(Number);
-            console.log(`Requesting ${requests.size} tiles at z=${z}, QUADBIN range: ${minBlock} to ${maxBlock}`);
 
             try {
                 const result = await conn.query(`
