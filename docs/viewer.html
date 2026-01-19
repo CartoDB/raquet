@@ -160,12 +160,10 @@
         let deckgl = null;
         let metadata = null;
         let parquetUrl = null;
-        let blockIndex = new Map();
-        let reverseIndex = new Map();
         let tilesLoaded = 0;
-        let dataFetched = 0;
         let queriesExecuted = 0;
         let tileCache = new Map();
+        let availableBlocks = new Set(); // Lazily populated
 
         // Batch loading state
         let pendingRequests = new Map();
@@ -175,6 +173,18 @@
         let bandType = 'uint8';
         let blockWidth = 256;
         let blockHeight = 256;
+
+        // Convert tile coordinates to QUADBIN
+        function tileToQuadbin(x, y, z) {
+            let index = 0n;
+            for (let i = 0; i < z; i++) {
+                index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
+                index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
+            }
+            const shift = 52 - 2 * z;
+            if (shift > 0) index = index << BigInt(shift);
+            return (BigInt(z) << 52n) | index | (5n << 59n);
+        }
 
         const statusEl = document.getElementById('status');
         const statsEl = document.getElementById('stats');
@@ -186,7 +196,7 @@
         }
 
         function updateStats() {
-            statsEl.textContent = `Tiles: ${tilesLoaded} | Queries: ${queriesExecuted} | Data: ${(dataFetched/1024/1024).toFixed(2)} MB`;
+            statsEl.textContent = `Tiles: ${tilesLoaded} | Queries: ${queriesExecuted}`;
         }
 
         window.selectSample = function() {
@@ -241,27 +251,6 @@
             return JSON.parse(rows[0].metadata);
         }
 
-        async function buildBlockIndex(url) {
-            setStatus('Building tile index...', 'loading');
-            const result = await conn.query(`
-                SELECT block FROM read_parquet('${url}') WHERE block > 0
-            `);
-
-            blockIndex.clear();
-            reverseIndex.clear();
-            const rows = result.toArray();
-
-            for (const row of rows) {
-                const blockId = row.block;
-                const tile = quadbinToTile(blockId);
-                const key = `${tile.z}/${tile.x}/${tile.y}`;
-                blockIndex.set(key, blockId);
-                reverseIndex.set(blockId.toString(), key);
-            }
-
-            return blockIndex.size;
-        }
-
         function decodeTile(bandData, width, height, type) {
             if (!bandData) return null;
             let data;
@@ -306,16 +295,18 @@
             const requests = new Map(pendingRequests);
             pendingRequests.clear();
 
+            // Calculate QUADBIN IDs for all requested tiles
             const blockIds = [];
+            const blockToKey = new Map();
             for (const [key, req] of requests) {
-                if (req.blockId) blockIds.push(req.blockId);
+                const [z, x, y] = key.split('/').map(Number);
+                const blockId = tileToQuadbin(x, y, z);
+                blockIds.push(blockId);
+                blockToKey.set(blockId.toString(), key);
+                req.blockId = blockId;
             }
 
             if (blockIds.length === 0) {
-                for (const [key, req] of requests) {
-                    tileCache.set(key, null);
-                    req.resolve(null);
-                }
                 return;
             }
 
@@ -338,15 +329,10 @@
                 const dataMap = new Map();
                 for (const row of rows) {
                     dataMap.set(row.block.toString(), row);
+                    availableBlocks.add(row.block.toString());
                 }
 
                 for (const [cacheKey, req] of requests) {
-                    if (!req.blockId) {
-                        tileCache.set(cacheKey, null);
-                        req.resolve(null);
-                        continue;
-                    }
-
                     const row = dataMap.get(req.blockId.toString());
                     if (!row) {
                         tileCache.set(cacheKey, null);
@@ -358,7 +344,6 @@
                     for (const name of bandNames.slice(0, 3)) {
                         const bandData = row[name];
                         if (bandData) {
-                            dataFetched += bandData.byteLength;
                             bands.push(decodeTile(bandData, blockWidth, blockHeight, bandType));
                         } else {
                             bands.push(null);
@@ -398,15 +383,13 @@
                 return pendingRequests.get(cacheKey).promise;
             }
 
-            const blockId = blockIndex.get(cacheKey);
-
             let resolve, reject;
             const promise = new Promise((res, rej) => {
                 resolve = res;
                 reject = rej;
             });
 
-            pendingRequests.set(cacheKey, { resolve, reject, blockId, promise });
+            pendingRequests.set(cacheKey, { resolve, reject, promise });
 
             if (batchTimeout) clearTimeout(batchTimeout);
             batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
@@ -493,16 +476,15 @@
             try {
                 loadBtn.disabled = true;
                 tilesLoaded = 0;
-                dataFetched = 0;
                 queriesExecuted = 0;
                 tileCache.clear();
                 pendingRequests.clear();
+                availableBlocks.clear();
                 updateStats();
 
                 await initDuckDB();
                 metadata = await loadMetadata(url);
-                const numTiles = await buildBlockIndex(url);
-                setStatus(`Indexed ${numTiles} tiles, initializing map...`, 'loading');
+                setStatus(`Loading ${metadata.num_blocks} tiles...`, 'loading');
                 initMap(metadata, url);
                 loadBtn.disabled = false;
             } catch (e) {
