@@ -162,6 +162,7 @@
         let parquetUrl = null;
         let tilesLoaded = 0;
         let queriesExecuted = 0;
+        let dataLoaded = 0; // bytes
         let tileCache = new Map();
         let availableBlocks = new Set(); // Lazily populated
 
@@ -174,16 +175,33 @@
         let blockWidth = 256;
         let blockHeight = 256;
 
-        // Convert tile coordinates to QUADBIN
+        // Convert tile coordinates to QUADBIN (matching Python quadbin library)
         function tileToQuadbin(x, y, z) {
+            // Mode 5 (tile mode) header
+            const mode = 5n << 59n;
+            // Resolution in bits 52-56
+            const resolution = BigInt(z) << 52n;
+            // Interleave x and y bits to create index
             let index = 0n;
             for (let i = 0; i < z; i++) {
                 index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
                 index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
             }
+            // Shift index to fill 52 bits
             const shift = 52 - 2 * z;
             if (shift > 0) index = index << BigInt(shift);
-            return (BigInt(z) << 52n) | index | (5n << 59n);
+            return mode | resolution | index;
+        }
+
+        // Verify tileToQuadbin matches quadbinToTile (for debugging)
+        function verifyQuadbinRoundtrip(x, y, z) {
+            const quadbin = tileToQuadbin(x, y, z);
+            const tile = quadbinToTile(quadbin);
+            const matches = tile.x === x && tile.y === y && tile.z === z;
+            if (!matches) {
+                console.error(`QUADBIN roundtrip failed: (${x}, ${y}, ${z}) -> ${quadbin} -> (${tile.x}, ${tile.y}, ${tile.z})`);
+            }
+            return matches;
         }
 
         const statusEl = document.getElementById('status');
@@ -195,8 +213,14 @@
             statusEl.className = type;
         }
 
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
         function updateStats() {
-            statsEl.textContent = `Tiles: ${tilesLoaded} | Queries: ${queriesExecuted}`;
+            statsEl.textContent = `Tiles: ${tilesLoaded} | Data: ${formatBytes(dataLoaded)} | Queries: ${queriesExecuted}`;
         }
 
         window.selectSample = function() {
@@ -326,12 +350,34 @@
                 queriesExecuted++;
                 const rows = result.toArray();
 
+                // Debug: log first batch to verify QUADBIN encoding
+                if (queriesExecuted === 1 && rows.length > 0) {
+                    const sampleRow = rows[0];
+                    const sampleBlock = sampleRow.block;
+                    const decoded = quadbinToTile(sampleBlock);
+                    const reencoded = tileToQuadbin(decoded.x, decoded.y, decoded.z);
+                    console.log('QUADBIN verification:', {
+                        original: sampleBlock.toString(),
+                        decoded: decoded,
+                        reencoded: reencoded.toString(),
+                        matches: sampleBlock.toString() === reencoded.toString()
+                    });
+                    console.log(`Batch query returned ${rows.length} rows for ${requests.size} requested tiles`);
+                }
+
                 const dataMap = new Map();
                 for (const row of rows) {
+                    // Track data size from band columns
+                    for (const name of bandNames.slice(0, 3)) {
+                        if (row[name]) {
+                            dataLoaded += row[name].length;
+                        }
+                    }
                     dataMap.set(row.block.toString(), row);
                     availableBlocks.add(row.block.toString());
                 }
 
+                let matchedTiles = 0;
                 for (const [cacheKey, req] of requests) {
                     const row = dataMap.get(req.blockId.toString());
                     if (!row) {
@@ -340,6 +386,7 @@
                         continue;
                     }
 
+                    matchedTiles++;
                     const bands = [];
                     for (const name of bandNames.slice(0, 3)) {
                         const bandData = row[name];
@@ -360,6 +407,11 @@
                     tilesLoaded++;
                     tileCache.set(cacheKey, canvas);
                     req.resolve(canvas);
+                }
+
+                // Debug: log match rate for first few queries
+                if (queriesExecuted <= 3) {
+                    console.log(`Query ${queriesExecuted}: ${matchedTiles}/${requests.size} tiles matched from ${rows.length} returned rows`);
                 }
 
                 updateStats();
@@ -477,6 +529,7 @@
                 loadBtn.disabled = true;
                 tilesLoaded = 0;
                 queriesExecuted = 0;
+                dataLoaded = 0;
                 tileCache.clear();
                 pendingRequests.clear();
                 availableBlocks.clear();
