@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>How the RaQuet Viewer Works</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 40px 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 { color: #1a1a1a; margin-bottom: 10px; }
+        h2 { color: #333; margin-top: 40px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h3 { color: #555; margin-top: 30px; }
+        a { color: #4a90d9; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.9em;
+        }
+        pre {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 0.85em;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+        }
+        .diagram {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85em;
+            white-space: pre;
+            overflow-x: auto;
+        }
+        .nav {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .highlight {
+            background: #fffbeb;
+            border-left: 4px solid #f59e0b;
+            padding: 12px 16px;
+            margin: 20px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: #f8f8f8;
+        }
+        .tech-stack {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        .tech-item {
+            background: #f0f7ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 12px 16px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .tech-item h4 {
+            margin: 0 0 8px 0;
+            color: #1e40af;
+        }
+        .tech-item p {
+            margin: 0;
+            font-size: 0.9em;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="viewer.html">&larr; Back to Viewer</a> |
+        <a href="index.html">RaQuet Documentation</a> |
+        <a href="https://github.com/CartoDB/raquet">GitHub</a>
+    </div>
+
+    <h1>How the RaQuet Viewer Works</h1>
+    <p>The RaQuet viewer is a fully client-side application that renders RaQuet files directly in the browser using HTTP range requests. No server-side processing is required.</p>
+
+    <h2>Technology Stack</h2>
+    <div class="tech-stack">
+        <div class="tech-item">
+            <h4>hyparquet</h4>
+            <p>JavaScript Parquet reader that supports HTTP range requests for efficient partial file access</p>
+        </div>
+        <div class="tech-item">
+            <h4>deck.gl</h4>
+            <p>WebGL-powered mapping library for high-performance tile rendering</p>
+        </div>
+        <div class="tech-item">
+            <h4>pako</h4>
+            <p>JavaScript zlib/gzip implementation for decompressing band data</p>
+        </div>
+    </div>
+
+    <h2>Architecture Overview</h2>
+    <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Browser                                                                 │
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────────────┐│
+│  │  deck.gl    │───▶│  RaQuet      │───▶│  hyparquet                  ││
+│  │  TileLayer  │    │  Tile Logic  │    │  (HTTP Range Requests)      ││
+│  │             │◀───│              │◀───│                             ││
+│  └─────────────┘    └──────────────┘    └─────────────────────────────┘│
+│        │                                           │                    │
+│        ▼                                           ▼                    │
+│  ┌─────────────┐                          HTTP 206 Partial Content     │
+│  │  Canvas     │                                   │                    │
+│  │  Rendering  │                                   │                    │
+│  └─────────────┘                                   │                    │
+└────────────────────────────────────────────────────│────────────────────┘
+                                                     │
+                                                     ▼
+                                        ┌─────────────────────────┐
+                                        │  Cloud Storage (GCS,    │
+                                        │  S3, etc.) or HTTP      │
+                                        │  server with CORS       │
+                                        └─────────────────────────┘
+    </div>
+
+    <h2>Loading Process</h2>
+
+    <h3>1. Parquet Metadata Fetch</h3>
+    <p>When you load a RaQuet file, the viewer first fetches the Parquet footer (last 8 bytes + metadata section) using HTTP range requests:</p>
+    <pre><code>GET /file.parquet
+Range: bytes=-8              # Get footer size
+Range: bytes=X-Y             # Get metadata based on footer size</code></pre>
+
+    <p>The metadata contains:</p>
+    <ul>
+        <li>Schema (column names, types)</li>
+        <li>Row group information (offsets, sizes, min/max statistics)</li>
+        <li>Total row count</li>
+    </ul>
+
+    <h3>2. RaQuet Metadata Extraction</h3>
+    <p>RaQuet stores its metadata in the <strong>last row</strong> of the file (where <code>block=0</code>). The viewer reads this row to get:</p>
+    <pre><code>{
+  "version": "0.1.0",
+  "bounds": [-122.5, 37.5, -122.0, 38.0],
+  "minresolution": 10,
+  "maxresolution": 14,
+  "block_width": 256,
+  "block_height": 256,
+  "bands": [
+    {"name": "band_1", "type": "uint8"},
+    {"name": "band_2", "type": "uint8"},
+    {"name": "band_3", "type": "uint8"}
+  ]
+}</code></pre>
+
+    <h3>3. Row Group Index Building</h3>
+    <p>The viewer builds an in-memory index of row groups with their QUADBIN block ID ranges. This enables efficient tile lookups:</p>
+    <pre><code>Row Group 0: blocks 5270201491262341119 - 5270201491262406655
+Row Group 1: blocks 5270201491262472191 - 5270201491262537727
+...</code></pre>
+
+    <h2>Tile Loading Flow</h2>
+
+    <h3>1. Map Requests Tiles</h3>
+    <p>When you pan/zoom the map, deck.gl's TileLayer calculates which tiles (z/x/y) are visible and requests them.</p>
+
+    <h3>2. Convert to QUADBIN</h3>
+    <p>Each tile coordinate is converted to a QUADBIN cell ID:</p>
+    <pre><code>function tileToQuadbin(x, y, z) {
+    // Mode 9 (tile mode) header
+    const mode = 9n << 59n;
+    const resolution = BigInt(z) << 52n;
+    // Interleave x,y bits to create spatial index
+    let index = 0n;
+    for (let i = 0; i < z; i++) {
+        index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
+        index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
+    }
+    return mode | resolution | index;
+}</code></pre>
+
+    <h3>3. Find Matching Row Groups</h3>
+    <p>Using the row group index, the viewer identifies which row groups might contain the requested block. This is fast because QUADBIN IDs are sorted, so only row groups with matching min/max ranges need to be checked.</p>
+
+    <h3>4. Two-Phase Data Fetch</h3>
+    <p>For efficiency, the viewer uses a two-phase approach:</p>
+
+    <div class="highlight">
+        <strong>Phase 1: Block Column Read</strong><br>
+        Read only the <code>block</code> column from the row group to find the exact row containing our tile. This is a small read (~8 bytes per row).
+    </div>
+
+    <div class="highlight">
+        <strong>Phase 2: Band Data Read</strong><br>
+        Once the exact row is found, read only the band columns needed (e.g., <code>band_1</code>, <code>band_2</code>, <code>band_3</code>). This fetches just the pixel data for that specific tile.
+    </div>
+
+    <h3>5. Decode and Render</h3>
+    <p>The band data is decoded:</p>
+    <ol>
+        <li>Decompress gzip-compressed bytes using pako</li>
+        <li>Convert to appropriate pixel format (uint8, uint16, etc.)</li>
+        <li>Combine bands into RGB(A) canvas image</li>
+        <li>Pass to deck.gl BitmapLayer for WebGL rendering</li>
+    </ol>
+
+    <h2>Row Group Size Impact</h2>
+    <p>Row group size significantly affects HTTP request efficiency. Our testing shows:</p>
+
+    <table>
+        <tr>
+            <th>Row Group Size</th>
+            <th>HTTP Requests/Tile</th>
+            <th>Reduction</th>
+        </tr>
+        <tr>
+            <td>1 row/group</td>
+            <td>~11.3</td>
+            <td>baseline</td>
+        </tr>
+        <tr>
+            <td>4 rows/group</td>
+            <td>~7.4</td>
+            <td>35% fewer</td>
+        </tr>
+        <tr>
+            <td>8 rows/group</td>
+            <td>~5.3</td>
+            <td>54% fewer</td>
+        </tr>
+        <tr>
+            <td>16 rows/group</td>
+            <td>~5.1</td>
+            <td>55% fewer</td>
+        </tr>
+    </table>
+
+    <p><strong>Recommendation:</strong> Use <code>--row-group-size 8</code> when creating RaQuet files optimized for web viewing.</p>
+
+    <h2>Key Optimizations</h2>
+
+    <h3>Request Batching</h3>
+    <p>Tile requests are batched with a 50ms delay to combine multiple visible tiles into fewer operations.</p>
+
+    <h3>Tile Caching</h3>
+    <p>Loaded tiles are cached in memory to avoid re-fetching when panning back to previously viewed areas.</p>
+
+    <h3>Row Group Pruning</h3>
+    <p>Using min/max statistics on the block column, the viewer skips row groups that can't contain the requested tile.</p>
+
+    <h3>Column Projection</h3>
+    <p>Only the columns needed (block ID + band data) are read, not the entire row.</p>
+
+    <h2>Requirements</h2>
+
+    <h3>Server Requirements</h3>
+    <ul>
+        <li><strong>CORS headers</strong>: <code>Access-Control-Allow-Origin: *</code></li>
+        <li><strong>Range requests</strong>: Server must support HTTP 206 Partial Content</li>
+        <li><strong>Expose headers</strong>: <code>Access-Control-Expose-Headers: Content-Length, Content-Range</code></li>
+    </ul>
+
+    <h3>File Requirements</h3>
+    <ul>
+        <li>Valid RaQuet file with sorted blocks (QUADBIN order)</li>
+        <li>Metadata row present (block=0 in last row)</li>
+        <li>Standard Parquet compression (Snappy, Gzip, or Zstd)</li>
+    </ul>
+
+    <h2>Limitations</h2>
+    <ul>
+        <li><strong>Memory:</strong> Large tiles or many visible tiles increase browser memory usage</li>
+        <li><strong>Latency:</strong> Multiple HTTP round-trips per tile (metadata + data phases)</li>
+        <li><strong>Compression:</strong> Some Parquet compression codecs may not be supported by hyparquet-compressors</li>
+    </ul>
+
+    <h2>Source Code</h2>
+    <p>The viewer source code is available in the <a href="https://github.com/CartoDB/raquet/blob/master/docs/viewer.html">RaQuet repository</a>. It's a single HTML file with inline JavaScript that can be easily customized or integrated into other applications.</p>
+
+    <div class="nav" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
+        <a href="viewer.html">Try the Viewer</a> |
+        <a href="index.html">RaQuet Documentation</a> |
+        <a href="https://github.com/CartoDB/raquet">GitHub Repository</a>
+    </div>
+</body>
+</html>

@@ -106,7 +106,7 @@ duckdb -c "SELECT * FROM read_parquet('output.parquet') WHERE block != 0 LIMIT 5
 
 ## Try It Now
 
-**[Open the RaQuet Viewer](viewer.html)** - A client-side viewer powered by DuckDB-WASM. Load any RaQuet file from a URL and explore it interactively, no server required!
+**[Open the RaQuet Viewer](viewer.html)** - A client-side viewer powered by [hyparquet](https://github.com/hyparam/hyparquet). Load any RaQuet file from a URL and explore it interactively using HTTP range requests, no server required!
 
 ---
 
@@ -134,7 +134,7 @@ Each row in a RaQuet file represents a single rectangular tile of raster data:
 
 ### Tools
 
-- **[RaQuet Viewer](viewer.html)** - Browser-based viewer (DuckDB-WASM)
+- **[RaQuet Viewer](viewer.html)** - Browser-based viewer using HTTP range requests ([how it works](viewer-how-it-works.html))
 - **[raquet CLI](#cli-reference)** - Convert, inspect, and export RaQuet files
 
 ---
@@ -278,16 +278,22 @@ raquet-io convert geotiff input.tif output.parquet
 
 ### Row Group Size
 
-Smaller row groups (default: 200 rows) enable finer-grained filtering:
+Row group size affects HTTP request efficiency when using client-side viewers. Our testing with hyparquet shows:
+
+| Row Group Size | HTTP Requests/Tile | Reduction vs RG=1 | Best For |
+|----------------|-------------------|-------------------|----------|
+| 1 | ~11.3 | baseline | Maximum precision (rarely needed) |
+| 4 | ~7.4 | 35% fewer | Good balance |
+| 8-16 | ~5.1-5.3 | 54-55% fewer | **Recommended for web viewers** |
+| 200+ | N/A | N/A | Server-side queries, full scans |
+
+**Recommendation:** Use `--row-group-size 8` for files optimized for client-side web viewing:
 
 ```bash
-raquet-io convert geotiff input.tif output.parquet --row-group-size 200
+raquet-io convert geotiff input.tif output.parquet --row-group-size 8
 ```
 
-| Row Group Size | Best For |
-|----------------|----------|
-| 200 (default) | Remote access, cloud storage |
-| 1000+ | Local queries, full scans |
+For server-side or SQL queries (DuckDB, BigQuery), larger row groups (200+) are more efficient.
 
 ### Query Patterns
 
@@ -310,9 +316,9 @@ WHERE block IN (5270201491262341119, 5280000000000000000, ...)
 | Environment | Performance | Best For |
 |-------------|-------------|----------|
 | DuckDB (server/native) | Fast (~200ms for 20 tiles) | Production APIs |
-| DuckDB-WASM (browser) | Slower (~5s for 20 tiles) | Interactive demos |
+| hyparquet (browser) | Good (HTTP range requests) | Interactive demos, no backend needed |
 
-The browser viewer uses batched BETWEEN queries to mitigate WASM limitations.
+The browser viewer uses hyparquet with HTTP range requests to fetch only the data needed for visible tiles.
 
 ### Zoom Level Splitting
 

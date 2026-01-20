@@ -4,19 +4,14 @@
     <title>RaQuet Viewer</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Client-side RaQuet file viewer powered by DuckDB-WASM and deck.gl">
+    <meta name="description" content="Client-side RaQuet file viewer powered by hyparquet and deck.gl">
     <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
     <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
     <style>
         * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         #container { width: 100vw; height: 100vh; position: relative; }
         #map { width: 100%; height: 100%; background: #e8e8e8; }
-
         #controls {
             position: absolute; top: 10px; left: 10px;
             background: rgba(255,255,255,0.95); color: #333;
@@ -32,25 +27,11 @@
             gap: 8px;
         }
         #controls h2 img { height: 28px; }
-        #controls .subtitle {
-            font-size: 0.85em;
-            color: #666;
-            margin-bottom: 15px;
-        }
-        #controls label {
-            display: block;
-            font-size: 0.85em;
-            font-weight: 500;
-            margin-bottom: 5px;
-            color: #555;
-        }
-        #controls input {
-            width: 100%;
-            padding: 10px 12px;
-            margin-bottom: 12px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 13px;
+        #controls .subtitle { font-size: 0.85em; color: #666; margin-bottom: 15px; }
+        #controls label { display: block; font-size: 0.85em; font-weight: 500; margin-bottom: 5px; color: #555; }
+        #controls select, #controls input {
+            width: 100%; padding: 10px 12px; margin-bottom: 12px;
+            border: 1px solid #ddd; border-radius: 6px; font-size: 13px;
         }
         #controls input:focus {
             outline: none;
@@ -58,29 +39,14 @@
             box-shadow: 0 0 0 3px rgba(74,144,217,0.1);
         }
         #controls button {
-            width: 100%;
-            padding: 12px 20px;
-            cursor: pointer;
-            background: #4a90d9;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
+            width: 100%; padding: 12px 20px; cursor: pointer;
+            background: #4a90d9; color: white; border: none;
+            border-radius: 6px; font-size: 14px; font-weight: 500;
             transition: background 0.2s;
         }
         #controls button:hover { background: #3a7bc8; }
-        #controls button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        #status {
-            margin-top: 15px;
-            font-size: 13px;
-            color: #666;
-            white-space: pre-wrap;
-            line-height: 1.5;
-        }
+        #controls button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 13px; color: #666; white-space: pre-wrap; line-height: 1.5; }
         #stats {
             position: absolute; bottom: 10px; left: 10px;
             background: rgba(0,0,0,0.8); color: #4ecca3;
@@ -91,7 +57,6 @@
         .loading { color: #e6a23c !important; }
         .error { color: #f56c6c !important; }
         .success { color: #67c23a !important; }
-
         #info-link {
             display: block;
             margin-top: 15px;
@@ -105,19 +70,6 @@
             text-decoration: none;
         }
         #info-link a:hover { text-decoration: underline; }
-
-        /* Sample files dropdown */
-        .sample-files {
-            margin-bottom: 12px;
-        }
-        .sample-files select {
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 13px;
-            background: white;
-        }
     </style>
 </head>
 <body>
@@ -125,26 +77,24 @@
         <div id="map"></div>
         <div id="controls">
             <h2>RaQuet Viewer</h2>
-            <p class="subtitle">Client-side viewer powered by DuckDB-WASM</p>
+            <div class="subtitle">Client-side viewer using HTTP range requests</div>
 
-            <div class="sample-files">
-                <label>Sample Files</label>
-                <select id="sampleSelect" onchange="selectSample()">
-                    <option value="">-- Select a sample --</option>
-                    <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/naip_test.parquet">NAIP Aerial Imagery (NY)</option>
-                    <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/europe_optimized.parquet">Europe</option>
-                    <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/riyadh_optimized.parquet">Riyadh</option>
-                </select>
-            </div>
+            <label>Sample Files</label>
+            <select id="sampleSelect" onchange="selectSample()">
+                <option value="">-- Select a sample --</option>
+                <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/naip_test_v2.parquet">NAIP Aerial Imagery (NY)</option>
+                <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/europe_optimized_v2.parquet">Europe</option>
+                <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/riyadh_optimized_v3.parquet">Riyadh</option>
+            </select>
 
             <label>Or enter RaQuet file URL</label>
-            <input type="text" id="parquetUrl"
-                   placeholder="https://example.com/raster.parquet">
+            <input type="text" id="parquetUrl" placeholder="https://example.com/raster.parquet">
             <button id="loadBtn" onclick="loadDataset()">Load Dataset</button>
-            <div id="status">Enter a URL or select a sample file to get started.</div>
 
+            <div id="status">Enter a URL or select a sample file to get started.</div>
             <div id="info-link">
                 <a href="index.html">&larr; Back to RaQuet documentation</a><br>
+                <a href="viewer-how-it-works.html">How the viewer works</a><br>
                 <a href="https://github.com/CartoDB/raquet" target="_blank">GitHub Repository</a><br>
                 <span style="margin-top: 10px; display: inline-block; color: #666;">An open source project by <a href="https://carto.com" target="_blank">CARTO</a></span>
             </div>
@@ -153,50 +103,52 @@
     </div>
 
     <script type="module">
-        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+        // Hyparquet imports
+        let hyparquet = null;
+        let compressors = {};
 
-        let db = null;
-        let conn = null;
-        let deckgl = null;
+        async function loadHyparquet() {
+            if (!hyparquet) {
+                hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet/+esm');
+                try {
+                    const comp = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors/+esm');
+                    compressors = {
+                        SNAPPY: comp.decompressSnappy,
+                        GZIP: comp.decompressGzip || comp.gunzip,
+                        ZSTD: comp.decompressZstd
+                    };
+                } catch (e) {
+                    console.warn('Could not load compressors:', e.message);
+                }
+            }
+            return hyparquet;
+        }
+
+        // State
+        let parquetUrl = '';
+        let parquetFile = null;
         let metadata = null;
-        let parquetUrl = null;
-        let tilesLoaded = 0;
-        let queriesExecuted = 0;
-        let dataLoaded = 0; // bytes
-        let tileCache = new Map();
-        let availableBlocks = new Set(); // Lazily populated
-
-        // Batch loading state
-        let pendingRequests = new Map();
-        let batchTimeout = null;
-        const BATCH_DELAY = 50;
+        let rowGroupIndex = []; // Array of { minBlock, maxBlock, rowStart, rowEnd }
         let bandNames = [];
         let bandType = 'uint8';
         let blockWidth = 256;
         let blockHeight = 256;
+        let minZoom = 0, maxZoom = 20;
+        let dataBounds = null; // [minLon, minLat, maxLon, maxLat]
+        let deckInstance = null;
 
-        // Convert tile coordinates to QUADBIN (matching Python quadbin library)
-        function tileToQuadbin(x, y, z) {
-            // Mode 9 (cell/tile mode) header - must match Python quadbin library
-            const mode = 9n << 59n;
-            // Resolution in bits 52-56
-            const resolution = BigInt(z) << 52n;
-            // Interleave x and y bits to create index
-            let index = 0n;
-            for (let i = 0; i < z; i++) {
-                index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
-                index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
-            }
-            // Shift index to fill 52 bits, and set lower unused bits to 1 (QUADBIN sentinel)
-            const shift = 52 - 2 * z;
-            if (shift > 0) {
-                index = index << BigInt(shift);
-                // Set lower 'shift' bits to 1
-                index |= (1n << BigInt(shift)) - 1n;
-            }
-            return mode | resolution | index;
-        }
+        // Stats
+        let tilesLoaded = 0;
+        let bytesTransferred = 0;
+        let httpRequests = 0;
 
+        // Cache
+        let tileCache = new Map();
+        let pendingRequests = new Map();
+        let batchTimeout = null;
+        const BATCH_DELAY = 50;
+
+        // UI elements
         const statusEl = document.getElementById('status');
         const statsEl = document.getElementById('stats');
         const loadBtn = document.getElementById('loadBtn');
@@ -213,16 +165,31 @@
         }
 
         function updateStats() {
-            statsEl.textContent = `Tiles: ${tilesLoaded} | Data: ${formatBytes(dataLoaded)} | Queries: ${queriesExecuted}`;
+            statsEl.textContent = `Tiles: ${tilesLoaded} | Network: ${formatBytes(bytesTransferred)} | HTTP: ${httpRequests}`;
         }
 
         window.selectSample = function() {
             const select = document.getElementById('sampleSelect');
             const input = document.getElementById('parquetUrl');
-            if (select.value) {
-                input.value = select.value;
-            }
+            if (select.value) input.value = select.value;
         };
+
+        // QUADBIN conversion (matching Python quadbin library)
+        function tileToQuadbin(x, y, z) {
+            const mode = 9n << 59n;
+            const resolution = BigInt(z) << 52n;
+            let index = 0n;
+            for (let i = 0; i < z; i++) {
+                index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
+                index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
+            }
+            const shift = 52 - 2 * z;
+            if (shift > 0) {
+                index = index << BigInt(shift);
+                index |= (1n << BigInt(shift)) - 1n;
+            }
+            return mode | resolution | index;
+        }
 
         function quadbinToTile(cell) {
             const cellBigInt = BigInt(cell);
@@ -238,45 +205,93 @@
             return { z: res, x: Number(x), y: Number(y) };
         }
 
-        async function initDuckDB() {
-            if (db) return;
-            setStatus('Initializing DuckDB-WASM...', 'loading');
-            loadBtn.disabled = true;
-
-            const DUCKDB_VERSION = '1.29.0';
-            const CDN_BASE = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`;
-            const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
-            const workerScript = `importScripts('${CDN_BASE}/duckdb-browser-eh.worker.js');`;
-            const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
-            const worker = new Worker(URL.createObjectURL(workerBlob));
-
-            db = new duckdb.AsyncDuckDB(logger, worker);
-            await db.instantiate(`${CDN_BASE}/duckdb-eh.wasm`);
-            conn = await db.connect();
-            await conn.query(`INSTALL httpfs; LOAD httpfs;`);
-
-            loadBtn.disabled = false;
+        // Decode int64 from binary array (little-endian)
+        function decodeInt64(bytes) {
+            if (!bytes || bytes.length < 8) return null;
+            const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
+            const low = view.getUint32(0, true);
+            const high = view.getInt32(4, true);
+            return BigInt(low) + (BigInt(high) << 32n);
         }
 
-        async function loadMetadata(url) {
-            setStatus('Loading metadata...', 'loading');
+        // Build index of row groups with block ID ranges
+        function buildRowGroupIndex(metadata) {
+            const index = [];
+            let rowStart = 0;
 
-            const result = await conn.query(`
-                SELECT metadata FROM read_parquet('${url}') WHERE block = 0
-            `);
-            const rows = result.toArray();
-            if (rows.length === 0) throw new Error('No metadata found - is this a RaQuet file?');
+            for (let i = 0; i < metadata.row_groups.length; i++) {
+                const rg = metadata.row_groups[i];
+                const numRows = Number(rg.num_rows);
+                const rowEnd = rowStart + numRows;
 
-            return JSON.parse(rows[0].metadata);
+                const blockCol = rg.columns.find(c =>
+                    c.meta_data?.path_in_schema?.includes('block') ||
+                    c.meta_data?.path_in_schema?.[0] === 'block'
+                );
+
+                let minBlock = null, maxBlock = null;
+                if (blockCol?.meta_data?.statistics) {
+                    const stats = blockCol.meta_data.statistics;
+                    if (stats.min_value instanceof Uint8Array) {
+                        minBlock = decodeInt64(stats.min_value);
+                        maxBlock = decodeInt64(stats.max_value);
+                    } else if (typeof stats.min_value === 'bigint') {
+                        minBlock = stats.min_value;
+                        maxBlock = stats.max_value;
+                    } else {
+                        minBlock = BigInt(stats.min_value);
+                        maxBlock = BigInt(stats.max_value);
+                    }
+                }
+
+                index.push({ rowGroupId: i, minBlock, maxBlock, rowStart, rowEnd, numRows });
+                rowStart = rowEnd;
+            }
+
+            return index;
         }
 
+        // Find row groups that might contain a given block ID
+        function findRowGroupsForBlock(blockId) {
+            const blockBigInt = BigInt(blockId);
+            const matching = [];
+
+            for (const rg of rowGroupIndex) {
+                if (rg.minBlock === null || rg.maxBlock === null) {
+                    matching.push(rg);
+                } else {
+                    if (blockBigInt >= rg.minBlock && blockBigInt <= rg.maxBlock) {
+                        matching.push(rg);
+                    }
+                }
+            }
+
+            return matching;
+        }
+
+        // Decode tile data (handle gzip compression)
         function decodeTile(bandData, width, height, type) {
             if (!bandData) return null;
+
+            let bytes;
+            if (bandData instanceof Uint8Array) {
+                bytes = bandData;
+            } else if (bandData instanceof ArrayBuffer) {
+                bytes = new Uint8Array(bandData);
+            } else if (ArrayBuffer.isView(bandData)) {
+                bytes = new Uint8Array(bandData.buffer, bandData.byteOffset, bandData.byteLength);
+            } else if (Array.isArray(bandData)) {
+                bytes = new Uint8Array(bandData);
+            } else {
+                console.warn('Unknown bandData type:', typeof bandData, bandData?.constructor?.name);
+                return null;
+            }
+
             let data;
             try {
-                data = pako.inflate(new Uint8Array(bandData));
+                data = pako.inflate(bytes);
             } catch (e) {
-                data = new Uint8Array(bandData);
+                data = bytes;
             }
 
             if (type === 'uint16') {
@@ -290,6 +305,7 @@
             return data;
         }
 
+        // Create image from bands
         function createImage(bands, width, height) {
             const canvas = document.createElement('canvas');
             canvas.width = width;
@@ -308,213 +324,353 @@
             return canvas;
         }
 
+        // Fetch tiles for a batch of block IDs
+        async function fetchTilesBatch(blockIds) {
+            const { parquetRead } = await loadHyparquet();
+            const results = new Map();
+
+            // Group block IDs by row group
+            const rowGroupRequests = new Map();
+            for (const blockId of blockIds) {
+                const matchingRGs = findRowGroupsForBlock(blockId);
+                for (const rg of matchingRGs) {
+                    if (!rowGroupRequests.has(rg.rowGroupId)) {
+                        rowGroupRequests.set(rg.rowGroupId, { rg, blockIds: new Set() });
+                    }
+                    rowGroupRequests.get(rg.rowGroupId).blockIds.add(blockId.toString());
+                }
+            }
+
+            // Two-phase read: First get block IDs (small), then fetch only needed band data
+            for (const [rgId, { rg, blockIds: rgBlockIds }] of rowGroupRequests) {
+                try {
+                    // Phase 1: Read only block column to find matching rows
+                    let blockData = null;
+                    await parquetRead({
+                        file: parquetFile,
+                        rowStart: rg.rowStart,
+                        rowEnd: rg.rowEnd,
+                        columns: ['block'],
+                        compressors,
+                        onComplete: (result) => { blockData = result; }
+                    });
+
+                    // Find matching row indices
+                    const matchingRows = [];
+                    let blockColumn;
+                    if (Array.isArray(blockData)) {
+                        blockColumn = blockData.map(row => row[0]);
+                    } else if (blockData?.block) {
+                        blockColumn = blockData.block;
+                    } else {
+                        continue;
+                    }
+
+                    for (let i = 0; i < blockColumn.length; i++) {
+                        const rowBlockId = blockColumn[i]?.toString();
+                        if (rgBlockIds.has(rowBlockId)) {
+                            matchingRows.push({ index: i, blockId: rowBlockId, absoluteRow: rg.rowStart + i });
+                        }
+                    }
+
+                    if (matchingRows.length === 0) continue;
+
+                    // Phase 2: Read band data only for matching rows
+                    for (const { index, blockId, absoluteRow } of matchingRows) {
+                        let rowData = null;
+                        await parquetRead({
+                            file: parquetFile,
+                            rowStart: absoluteRow,
+                            rowEnd: absoluteRow + 1,
+                            columns: bandNames.slice(0, 3),
+                            compressors,
+                            utf8: false,
+                            onComplete: (result) => { rowData = result; }
+                        });
+
+                        if (rowData) {
+                            const bands = [];
+                            for (let j = 0; j < 3 && j < bandNames.length; j++) {
+                                let bandData;
+                                if (Array.isArray(rowData)) {
+                                    bandData = rowData[0]?.[j];
+                                } else {
+                                    bandData = rowData[bandNames[j]]?.[0];
+                                }
+                                if (bandData) {
+                                    const decoded = decodeTile(bandData, blockWidth, blockHeight, bandType);
+                                    bands.push(decoded);
+                                }
+                            }
+                            if (bands.length > 0) {
+                                results.set(blockId, { bands });
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(`Error reading row group ${rgId}:`, e);
+                }
+            }
+
+            return results;
+        }
+
+        // Batch tile loading
         async function executeBatch() {
             if (pendingRequests.size === 0) return;
 
             const requests = new Map(pendingRequests);
             pendingRequests.clear();
 
-            // Calculate QUADBIN IDs for all requested tiles
             const blockIds = [];
-            const blockToKey = new Map();
             for (const [key, req] of requests) {
                 const [z, x, y] = key.split('/').map(Number);
                 const blockId = tileToQuadbin(x, y, z);
-                blockIds.push(blockId);
-                blockToKey.set(blockId.toString(), key);
                 req.blockId = blockId;
+                blockIds.push(blockId);
             }
-
-            if (blockIds.length === 0) {
-                return;
-            }
-
-            blockIds.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-            const minBlock = blockIds[0];
-            const maxBlock = blockIds[blockIds.length - 1];
-
-            const bandCols = bandNames.slice(0, 3).join(', ');
 
             try {
-                const result = await conn.query(`
-                    SELECT block, ${bandCols}
-                    FROM read_parquet('${parquetUrl}')
-                    WHERE block BETWEEN ${minBlock} AND ${maxBlock}
-                `);
-
-                queriesExecuted++;
-                const rows = result.toArray();
-
-                const dataMap = new Map();
-                for (const row of rows) {
-                    // Track data size from band columns
-                    for (const name of bandNames.slice(0, 3)) {
-                        if (row[name]) {
-                            dataLoaded += row[name].length;
-                        }
-                    }
-                    dataMap.set(row.block.toString(), row);
-                    availableBlocks.add(row.block.toString());
-                }
+                const results = await fetchTilesBatch(blockIds);
+                httpRequests++;
 
                 for (const [cacheKey, req] of requests) {
-                    const row = dataMap.get(req.blockId.toString());
-                    if (!row) {
+                    const result = results.get(req.blockId.toString());
+                    if (!result) {
                         tileCache.set(cacheKey, null);
                         req.resolve(null);
                         continue;
                     }
 
-                    const bands = [];
-                    for (const name of bandNames.slice(0, 3)) {
-                        const bandData = row[name];
-                        if (bandData) {
-                            bands.push(decodeTile(bandData, blockWidth, blockHeight, bandType));
-                        } else {
-                            bands.push(null);
-                        }
-                    }
-
-                    if (!bands[0]) {
-                        tileCache.set(cacheKey, null);
-                        req.resolve(null);
-                        continue;
-                    }
-
-                    const canvas = createImage(bands, blockWidth, blockHeight);
+                    const image = createImage(result.bands, blockWidth, blockHeight);
+                    tileCache.set(cacheKey, image);
                     tilesLoaded++;
-                    tileCache.set(cacheKey, canvas);
-                    req.resolve(canvas);
+                    updateStats();
+                    req.resolve(image);
                 }
-
-                updateStats();
-
             } catch (e) {
-                console.error('Batch query error:', e.message || e);
-                console.error('Error details:', e);
-                for (const [key, req] of requests) {
-                    tileCache.set(key, null);
+                console.error('Batch fetch error:', e);
+                for (const req of requests.values()) {
                     req.resolve(null);
                 }
             }
         }
 
-        function getTileData(z, x, y) {
+        // Get tile data
+        function getTileData({ index }) {
+            const { x, y, z } = index;
+            if (z < minZoom || z > maxZoom) return null;
+
             const cacheKey = `${z}/${x}/${y}`;
+            if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
 
-            if (tileCache.has(cacheKey)) {
-                return Promise.resolve(tileCache.get(cacheKey));
-            }
-
-            if (pendingRequests.has(cacheKey)) {
-                return pendingRequests.get(cacheKey).promise;
-            }
-
-            let resolve, reject;
-            const promise = new Promise((res, rej) => {
-                resolve = res;
-                reject = rej;
+            return new Promise((resolve) => {
+                pendingRequests.set(cacheKey, { resolve });
+                if (batchTimeout) clearTimeout(batchTimeout);
+                batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
             });
-
-            pendingRequests.set(cacheKey, { resolve, reject, promise });
-
-            if (batchTimeout) clearTimeout(batchTimeout);
-            batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
-
-            return promise;
         }
 
-        function initMap(meta, url) {
-            parquetUrl = url;
-            const bounds = meta.bounds;
-            const center = meta.center || [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
-            const zoom = meta.center ? meta.center[2] : meta.minresolution;
-
-            bandNames = meta.bands.map(b => b.name);
-            bandType = meta.bands[0]?.type || 'uint8';
-            blockWidth = meta.block_width || 256;
-            blockHeight = meta.block_height || 256;
-
-            // Fully cleanup previous deck.gl instance
-            if (deckgl) {
-                deckgl.setProps({ layers: [] });
-                deckgl.finalize();
-                deckgl = null;
-            }
-
-            // CARTO Positron basemap layer
-            const basemapLayer = new deck.TileLayer({
-                id: 'carto-positron-basemap',
-                data: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
-                minZoom: 0,
-                maxZoom: 19,
-                tileSize: 256,
-                renderSubLayers: props => {
-                    const {tile, data} = props;
-                    const {west, south, east, north} = tile.bbox;
-                    return new deck.BitmapLayer({
-                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
-                        image: data,
-                        bounds: [west, south, east, north],
-                    });
-                },
-            });
-
-            // RaQuet tiles layer
-            const raquetLayer = new deck.TileLayer({
-                id: 'raquet-tiles',
-                minZoom: meta.minresolution,
-                maxZoom: meta.maxresolution,
-                tileSize: blockWidth,
-                extent: bounds,
-                getTileData: (tile) => {
-                    const {x, y, z} = tile.index;
-                    return getTileData(z, x, y);
-                },
-                renderSubLayers: props => {
-                    const {tile, data} = props;
-                    if (!data) return null;
-                    const {west, south, east, north} = tile.bbox;
-                    return new deck.BitmapLayer({
-                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
-                        image: data,
-                        bounds: [west, south, east, north],
-                    });
-                },
-            });
-
-            deckgl = new deck.DeckGL({
-                container: 'map',
-                initialViewState: { longitude: center[0], latitude: center[1], zoom: zoom, pitch: 0, bearing: 0 },
-                controller: true,
-                layers: [basemapLayer, raquetLayer],
-            });
-
-            setStatus(`Loaded: ${meta.num_blocks} tiles\nZoom: ${meta.minresolution}-${meta.maxresolution}\nBands: ${bandNames.join(', ')}`, 'success');
-        }
-
+        // Load dataset
         window.loadDataset = async function() {
-            const url = document.getElementById('parquetUrl').value.trim();
-            if (!url) {
-                setStatus('Please enter a URL or select a sample file.', 'error');
+            parquetUrl = document.getElementById('parquetUrl').value.trim();
+            if (!parquetUrl) {
+                setStatus('Please enter a URL', 'error');
                 return;
             }
 
-            try {
-                loadBtn.disabled = true;
-                tilesLoaded = 0;
-                queriesExecuted = 0;
-                dataLoaded = 0;
-                tileCache.clear();
-                pendingRequests.clear();
-                availableBlocks.clear();
-                updateStats();
+            loadBtn.disabled = true;
+            setStatus('Loading hyparquet...', 'loading');
 
-                await initDuckDB();
-                metadata = await loadMetadata(url);
-                setStatus(`Loading ${metadata.num_blocks} tiles...`, 'loading');
-                initMap(metadata, url);
+            try {
+                const { asyncBufferFromUrl, parquetMetadataAsync } = await loadHyparquet();
+
+                setStatus('Connecting to file...', 'loading');
+                parquetFile = await asyncBufferFromUrl({ url: parquetUrl });
+
+                setStatus('Reading metadata...', 'loading');
+                metadata = await parquetMetadataAsync(parquetFile);
+
+                // Build row group index
+                rowGroupIndex = buildRowGroupIndex(metadata);
+
+                // Parse RaQuet metadata from LAST row (block=0 is written last in RaQuet files)
+                let raquetMeta = null;
+                try {
+                    const { parquetRead } = await loadHyparquet();
+                    const numRows = Number(metadata.num_rows);
+                    let lastRow = null;
+                    await parquetRead({
+                        file: parquetFile,
+                        rowStart: numRows - 1,
+                        rowEnd: numRows,
+                        columns: ['metadata'],
+                        compressors,
+                        onComplete: (data) => { lastRow = data; }
+                    });
+
+                    // hyparquet returns [[value]] format when reading specific columns
+                    let metaStr = null;
+                    if (Array.isArray(lastRow) && lastRow[0]) {
+                        const metaValue = lastRow[0][0];
+                        if (metaValue) {
+                            const decoder = new TextDecoder();
+                            metaStr = typeof metaValue === 'string' ? metaValue : decoder.decode(new Uint8Array(metaValue));
+                        }
+                    } else if (lastRow?.metadata && lastRow.metadata[0]) {
+                        const decoder = new TextDecoder();
+                        const metaBytes = lastRow.metadata[0];
+                        metaStr = typeof metaBytes === 'string' ? metaBytes : decoder.decode(new Uint8Array(metaBytes));
+                    }
+
+                    if (metaStr) {
+                        raquetMeta = JSON.parse(metaStr);
+                    }
+                } catch (e) {
+                    console.warn('Could not read RaQuet metadata:', e);
+                }
+
+                if (raquetMeta) {
+                    bandNames = raquetMeta.bands?.map(b => b.name) || ['band_1', 'band_2', 'band_3'];
+                    bandType = raquetMeta.bands?.[0]?.type || 'uint8';
+                    blockWidth = raquetMeta.block_width || 256;
+                    blockHeight = raquetMeta.block_height || 256;
+                    minZoom = raquetMeta.minresolution || 0;
+                    maxZoom = raquetMeta.maxresolution || 20;
+                    dataBounds = raquetMeta.bounds || null;
+                } else {
+                    console.warn('No RaQuet metadata found, using defaults');
+                    const schema = metadata.schema || [];
+                    bandNames = schema.filter(s => s.name?.startsWith('band_')).map(s => s.name);
+                    if (bandNames.length === 0) bandNames = ['band_1', 'band_2', 'band_3'];
+
+                    if (rowGroupIndex.length > 0) {
+                        try {
+                            const { parquetRead } = await loadHyparquet();
+                            let sampleData = null;
+                            await parquetRead({
+                                file: parquetFile,
+                                rowStart: 0,
+                                rowEnd: Math.min(100, Number(metadata.num_rows)),
+                                columns: ['block'],
+                                compressors,
+                                onComplete: (data) => { sampleData = data; }
+                            });
+
+                            let blocks = [];
+                            if (Array.isArray(sampleData)) {
+                                blocks = sampleData.map(row => row[0]);
+                            } else if (sampleData?.block) {
+                                blocks = sampleData.block;
+                            }
+
+                            if (blocks.length > 0) {
+                                let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
+                                let sampleZ = 0;
+                                for (const block of blocks) {
+                                    const tile = quadbinToTile(block);
+                                    if (tile.z === 0) continue;
+                                    sampleZ = Math.max(sampleZ, tile.z);
+                                    const n = Math.pow(2, tile.z);
+                                    const lon1 = (tile.x / n) * 360 - 180;
+                                    const lon2 = ((tile.x + 1) / n) * 360 - 180;
+                                    const lat1Rad = Math.atan(Math.sinh(Math.PI * (1 - 2 * tile.y / n)));
+                                    const lat2Rad = Math.atan(Math.sinh(Math.PI * (1 - 2 * (tile.y + 1) / n)));
+                                    minLon = Math.min(minLon, lon1);
+                                    maxLon = Math.max(maxLon, lon2);
+                                    minLat = Math.min(minLat, lat2Rad * 180 / Math.PI);
+                                    maxLat = Math.max(maxLat, lat1Rad * 180 / Math.PI);
+                                }
+                                if (minLon < maxLon && minLat < maxLat) {
+                                    dataBounds = [minLon, minLat, maxLon, maxLat];
+                                    minZoom = Math.max(0, sampleZ - 2);
+                                    maxZoom = sampleZ;
+                                }
+                            }
+                        } catch (e) {
+                            // Bounds calculation failed, will use fallback
+                        }
+                    }
+                }
+
+                // Reset state
+                tileCache.clear();
+                tilesLoaded = 0;
+                bytesTransferred = 0;
+                httpRequests = 0;
+
+                // Calculate initial view from dataBounds
+                let initialView = { longitude: 0, latitude: 0, zoom: 10 };
+                if (dataBounds) {
+                    const [minLon, minLat, maxLon, maxLat] = dataBounds;
+                    initialView = {
+                        longitude: (minLon + maxLon) / 2,
+                        latitude: (minLat + maxLat) / 2,
+                        zoom: minZoom + 2
+                    };
+                } else if (rowGroupIndex.length > 0 && rowGroupIndex[0].minBlock) {
+                    const firstTile = quadbinToTile(rowGroupIndex[0].minBlock);
+                    const n = Math.pow(2, firstTile.z);
+                    const lon = (firstTile.x / n) * 360 - 180;
+                    const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * firstTile.y / n)));
+                    const lat = latRad * 180 / Math.PI;
+                    initialView = {
+                        longitude: lon,
+                        latitude: lat,
+                        zoom: Math.min(firstTile.z + 2, maxZoom)
+                    };
+                }
+
+                setStatus(`Loaded: ${Number(metadata.num_rows).toLocaleString()} tiles\nZoom: ${minZoom}-${maxZoom}\nRow Groups: ${rowGroupIndex.length}\nBands: ${bandNames.join(', ')}`, 'success');
+
+                // Create deck.gl map
+                if (deckInstance) deckInstance.finalize();
+
+                deckInstance = new globalThis.deck.DeckGL({
+                    container: 'map',
+                    initialViewState: { ...initialView, pitch: 0, bearing: 0 },
+                    controller: true,
+                    layers: [
+                        new globalThis.deck.TileLayer({
+                            id: 'basemap',
+                            data: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+                            minZoom: 0,
+                            maxZoom: 19,
+                            tileSize: 256,
+                            renderSubLayers: props => {
+                                const {tile, data} = props;
+                                const {west, south, east, north} = tile.bbox;
+                                return new globalThis.deck.BitmapLayer({
+                                    id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                    image: data,
+                                    bounds: [west, south, east, north]
+                                });
+                            }
+                        }),
+                        new globalThis.deck.TileLayer({
+                            id: 'raquet',
+                            getTileData,
+                            minZoom,
+                            maxZoom,
+                            tileSize: blockWidth,
+                            extent: dataBounds,
+                            renderSubLayers: props => {
+                                const {tile, data} = props;
+                                if (!data) return null;
+                                const {west, south, east, north} = tile.bbox;
+                                return new globalThis.deck.BitmapLayer({
+                                    id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                    image: data,
+                                    bounds: [west, south, east, north]
+                                });
+                            }
+                        })
+                    ]
+                });
+
+                updateStats();
                 loadBtn.disabled = false;
+
             } catch (e) {
                 setStatus(`Error: ${e.message}`, 'error');
                 console.error(e);
@@ -529,6 +685,9 @@
             document.getElementById('parquetUrl').value = fileUrl;
             loadDataset();
         }
+
+        // Initialize
+        updateStats();
     </script>
 </body>
 </html>
