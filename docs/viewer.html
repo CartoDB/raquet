@@ -148,6 +148,12 @@
         let batchTimeout = null;
         const BATCH_DELAY = 50;
 
+        // Request cancellation - track current batch generation
+        let batchGeneration = 0;
+        let activeBatches = new Set();
+        let cancelDebounceTimeout = null;
+        let lastViewState = null;
+
         // UI elements
         const statusEl = document.getElementById('status');
         const statsEl = document.getElementById('stats');
@@ -447,9 +453,13 @@
             return results;
         }
 
-        // Batch tile loading
+        // Batch tile loading with cancellation support
         async function executeBatch() {
             if (pendingRequests.size === 0) return;
+
+            // Capture current generation for this batch
+            const myGeneration = batchGeneration;
+            activeBatches.add(myGeneration);
 
             const requests = new Map(pendingRequests);
             pendingRequests.clear();
@@ -459,14 +469,31 @@
                 const [z, x, y] = key.split('/').map(Number);
                 const blockId = tileToQuadbin(x, y, z);
                 req.blockId = blockId;
+                req.generation = myGeneration;
                 blockIds.push(blockId);
             }
 
             try {
                 const results = await fetchTilesBatch(blockIds);
+
+                // Check if this batch is still relevant
+                if (!activeBatches.has(myGeneration)) {
+                    console.log(`Batch ${myGeneration} cancelled - skipping ${requests.size} tiles`);
+                    for (const req of requests.values()) {
+                        req.resolve(null);
+                    }
+                    return;
+                }
+
                 httpRequests++;
 
                 for (const [cacheKey, req] of requests) {
+                    // Skip if this specific request's generation is stale
+                    if (req.generation !== myGeneration || !activeBatches.has(myGeneration)) {
+                        req.resolve(null);
+                        continue;
+                    }
+
                     const result = results.get(req.blockId.toString());
                     if (!result) {
                         tileCache.set(cacheKey, null);
@@ -485,6 +512,25 @@
                 for (const req of requests.values()) {
                     req.resolve(null);
                 }
+            } finally {
+                activeBatches.delete(myGeneration);
+            }
+        }
+
+        // Cancel all pending and in-flight requests (called on viewport change)
+        function cancelStaleBatches() {
+            // Increment generation to invalidate current batches
+            batchGeneration++;
+            // Mark all active batches as stale
+            activeBatches.clear();
+            // Clear pending requests that haven't started yet
+            for (const req of pendingRequests.values()) {
+                req.resolve(null);
+            }
+            pendingRequests.clear();
+            if (batchTimeout) {
+                clearTimeout(batchTimeout);
+                batchTimeout = null;
             }
         }
 
@@ -630,6 +676,9 @@
                 tilesLoaded = 0;
                 bytesTransferred = 0;
                 httpRequests = 0;
+                batchGeneration = 0;
+                activeBatches.clear();
+                pendingRequests.clear();
 
                 // Calculate initial view from dataBounds
                 let initialView = { longitude: 0, latitude: 0, zoom: 10 };
@@ -662,6 +711,26 @@
                     container: 'map',
                     initialViewState: { ...initialView, pitch: 0, bearing: 0 },
                     controller: true,
+                    onViewStateChange: ({ viewState, interactionState }) => {
+                        // Debounce cancellation to avoid being too aggressive
+                        // Only cancel when user is actively interacting (panning/zooming)
+                        if (interactionState?.isPanning || interactionState?.isZooming) {
+                            // Clear any pending batch timeout to prevent stale requests
+                            if (batchTimeout) {
+                                clearTimeout(batchTimeout);
+                                batchTimeout = null;
+                            }
+                            // Debounce the actual cancellation
+                            if (cancelDebounceTimeout) {
+                                clearTimeout(cancelDebounceTimeout);
+                            }
+                            cancelDebounceTimeout = setTimeout(() => {
+                                cancelStaleBatches();
+                            }, 100);
+                        }
+                        lastViewState = viewState;
+                        return viewState;
+                    },
                     layers: [
                         new globalThis.deck.TileLayer({
                             id: 'basemap',
