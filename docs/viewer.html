@@ -139,6 +139,7 @@
 
         // Stats
         let tilesLoaded = 0;
+        let tilesRendered = 0;  // Actually displayed on screen
         let bytesTransferred = 0;
         let httpRequests = 0;
 
@@ -171,7 +172,31 @@
         }
 
         function updateStats() {
-            statsEl.textContent = `Tiles: ${tilesLoaded} | Network: ${formatBytes(bytesTransferred)} | HTTP: ${httpRequests}`;
+            const overhead = tilesRendered > 0 ? (httpRequests / tilesRendered).toFixed(1) : '0';
+            statsEl.textContent = `Rendered: ${tilesRendered} | Loaded: ${tilesLoaded} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
+        }
+
+        // Create a tracked async buffer that counts HTTP requests
+        async function createTrackedAsyncBuffer(url) {
+            const { asyncBufferFromUrl } = await loadHyparquet();
+
+            // Get the underlying async buffer
+            const baseBuffer = await asyncBufferFromUrl({ url });
+
+            // Wrap the slice method to track HTTP requests
+            const originalSlice = baseBuffer.slice.bind(baseBuffer);
+
+            baseBuffer.slice = async function(start, end) {
+                httpRequests++;
+                const requestSize = end - start;
+                bytesTransferred += requestSize;
+                updateStats();
+
+                const result = await originalSlice(start, end);
+                return result;
+            };
+
+            return baseBuffer;
         }
 
         window.selectSample = function() {
@@ -485,8 +510,6 @@
                     return;
                 }
 
-                httpRequests++;
-
                 for (const [cacheKey, req] of requests) {
                     // Skip if this specific request's generation is stale
                     if (req.generation !== myGeneration || !activeBatches.has(myGeneration)) {
@@ -504,6 +527,7 @@
                     const image = createImage(result.bands, blockWidth, blockHeight);
                     tileCache.set(cacheKey, image);
                     tilesLoaded++;
+                    tilesRendered++;
                     updateStats();
                     req.resolve(image);
                 }
@@ -561,10 +585,10 @@
             setStatus('Loading hyparquet...', 'loading');
 
             try {
-                const { asyncBufferFromUrl, parquetMetadataAsync } = await loadHyparquet();
+                const { parquetMetadataAsync } = await loadHyparquet();
 
                 setStatus('Connecting to file...', 'loading');
-                parquetFile = await asyncBufferFromUrl({ url: parquetUrl });
+                parquetFile = await createTrackedAsyncBuffer(parquetUrl);
 
                 setStatus('Reading metadata...', 'loading');
                 metadata = await parquetMetadataAsync(parquetFile);
@@ -674,6 +698,7 @@
                 // Reset state
                 tileCache.clear();
                 tilesLoaded = 0;
+                tilesRendered = 0;
                 bytesTransferred = 0;
                 httpRequests = 0;
                 batchGeneration = 0;
