@@ -404,70 +404,54 @@
                 }
             }
 
-            // Two-phase read: First get block IDs (small), then fetch only needed band data
+            // Single-phase read: Read block + all bands together, filter client-side
+            // This reduces HTTP requests by reading all columns in one pass per row group
+            const columnsToRead = ['block', ...bandNames.slice(0, 3)];
+
             for (const [rgId, { rg, blockIds: rgBlockIds }] of rowGroupRequests) {
                 try {
-                    // Phase 1: Read only block column to find matching rows
-                    let blockData = null;
+                    let rowGroupData = null;
                     await parquetRead({
                         file: parquetFile,
                         rowStart: rg.rowStart,
                         rowEnd: rg.rowEnd,
-                        columns: ['block'],
+                        columns: columnsToRead,
                         compressors,
-                        onComplete: (result) => { blockData = result; }
+                        utf8: false,
+                        onComplete: (result) => { rowGroupData = result; }
                     });
 
-                    // Find matching row indices
-                    const matchingRows = [];
-                    let blockColumn;
-                    if (Array.isArray(blockData)) {
-                        blockColumn = blockData.map(row => row[0]);
-                    } else if (blockData?.block) {
-                        blockColumn = blockData.block;
-                    } else {
-                        continue;
-                    }
+                    if (!rowGroupData) continue;
 
-                    for (let i = 0; i < blockColumn.length; i++) {
-                        const rowBlockId = blockColumn[i]?.toString();
-                        if (rgBlockIds.has(rowBlockId)) {
-                            matchingRows.push({ index: i, blockId: rowBlockId, absoluteRow: rg.rowStart + i });
+                    // Process results - handle both array and object formats
+                    const numRows = Array.isArray(rowGroupData)
+                        ? rowGroupData.length
+                        : (rowGroupData.block?.length || 0);
+
+                    for (let i = 0; i < numRows; i++) {
+                        let blockId, bandData;
+
+                        if (Array.isArray(rowGroupData)) {
+                            const row = rowGroupData[i];
+                            blockId = row[0]?.toString();
+                            bandData = row.slice(1);
+                        } else {
+                            blockId = rowGroupData.block?.[i]?.toString();
+                            bandData = bandNames.slice(0, 3).map(name => rowGroupData[name]?.[i]);
                         }
-                    }
 
-                    if (matchingRows.length === 0) continue;
+                        if (!rgBlockIds.has(blockId)) continue;
 
-                    // Phase 2: Read band data only for matching rows
-                    for (const { index, blockId, absoluteRow } of matchingRows) {
-                        let rowData = null;
-                        await parquetRead({
-                            file: parquetFile,
-                            rowStart: absoluteRow,
-                            rowEnd: absoluteRow + 1,
-                            columns: bandNames.slice(0, 3),
-                            compressors,
-                            utf8: false,
-                            onComplete: (result) => { rowData = result; }
-                        });
-
-                        if (rowData) {
-                            const bands = [];
-                            for (let j = 0; j < 3 && j < bandNames.length; j++) {
-                                let bandData;
-                                if (Array.isArray(rowData)) {
-                                    bandData = rowData[0]?.[j];
-                                } else {
-                                    bandData = rowData[bandNames[j]]?.[0];
-                                }
-                                if (bandData) {
-                                    const decoded = decodeTile(bandData, blockWidth, blockHeight, bandType);
-                                    bands.push(decoded);
-                                }
+                        const bands = [];
+                        for (let j = 0; j < bandData.length; j++) {
+                            if (bandData[j]) {
+                                const decoded = decodeTile(bandData[j], blockWidth, blockHeight, bandType);
+                                bands.push(decoded);
                             }
-                            if (bands.length > 0) {
-                                results.set(blockId, { bands });
-                            }
+                        }
+
+                        if (bands.length > 0) {
+                            results.set(blockId, { bands });
                         }
                     }
                 } catch (e) {
