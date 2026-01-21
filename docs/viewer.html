@@ -139,34 +139,20 @@
 
         // Stats
         let tilesLoaded = 0;
-        let tilesRendered = 0;  // Actually displayed on screen
+        let tilesRendered = 0;
         let bytesTransferred = 0;
         let httpRequests = 0;
-
-        // Debug stats
-        let tilesRequested = 0;
-        let tilesCancelled = 0;
-        let tilesSkippedViewport = 0;
 
         // Cache
         let tileCache = new Map();
         let pendingRequests = new Map();
         let batchTimeout = null;
-        const BATCH_DELAY_IDLE = 50;      // Normal delay when not interacting
-        const BATCH_DELAY_ACTIVE = 150;    // Longer delay during pan/zoom
-        let isInteracting = false;
-        let interactionEndTimeout = null;
+        const BATCH_DELAY = 50;
 
         // Request cancellation - track current batch generation
         let batchGeneration = 0;
         let activeBatches = new Set();
         let cancelDebounceTimeout = null;
-        let lastViewState = null;
-
-        // Get current batch delay based on interaction state
-        function getBatchDelay() {
-            return isInteracting ? BATCH_DELAY_ACTIVE : BATCH_DELAY_IDLE;
-        }
 
         // UI elements
         const statusEl = document.getElementById('status');
@@ -186,65 +172,30 @@
 
         function updateStats() {
             const overhead = tilesRendered > 0 ? (httpRequests / tilesRendered).toFixed(1) : '0';
-            statsEl.textContent = `Rendered: ${tilesRendered} | Req: ${tilesRequested} | Skip: ${tilesSkippedViewport} | Cancel: ${tilesCancelled} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
+            statsEl.textContent = `Tiles: ${tilesRendered} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
         }
 
-        // AbortController for cancelling in-flight HTTP requests
-        let currentAbortController = new AbortController();
-        let httpRequestsAborted = 0;
-
-        // Create a tracked async buffer that counts HTTP requests and supports abort
+        // Create a tracked async buffer that counts HTTP requests
         async function createTrackedAsyncBuffer(url) {
             const { asyncBufferFromUrl } = await loadHyparquet();
 
-            // Create custom fetch that uses our AbortController
-            const abortableFetch = (fetchUrl, options = {}) => {
-                return fetch(fetchUrl, {
-                    ...options,
-                    signal: currentAbortController.signal
-                });
-            };
-
-            // Get the underlying async buffer with custom fetch
-            const baseBuffer = await asyncBufferFromUrl({
-                url,
-                fetch: abortableFetch
-            });
+            // Get the underlying async buffer
+            const baseBuffer = await asyncBufferFromUrl({ url });
 
             // Wrap the slice method to track HTTP requests
             const originalSlice = baseBuffer.slice.bind(baseBuffer);
 
             baseBuffer.slice = async function(start, end) {
-                // Check if aborted before starting
-                if (currentAbortController.signal.aborted) {
-                    httpRequestsAborted++;
-                    throw new DOMException('Request aborted', 'AbortError');
-                }
-
                 httpRequests++;
                 const requestSize = end - start;
                 bytesTransferred += requestSize;
                 updateStats();
 
-                try {
-                    const result = await originalSlice(start, end);
-                    return result;
-                } catch (e) {
-                    if (e.name === 'AbortError') {
-                        httpRequestsAborted++;
-                        updateStats();
-                    }
-                    throw e;
-                }
+                const result = await originalSlice(start, end);
+                return result;
             };
 
             return baseBuffer;
-        }
-
-        // Abort all in-flight HTTP requests and create new controller
-        function abortHttpRequests() {
-            currentAbortController.abort();
-            currentAbortController = new AbortController();
         }
 
         window.selectSample = function() {
@@ -516,16 +467,7 @@
         }
 
         // Calculate distance from viewport center for tile prioritization
-        function getTileDistanceFromCenter(bbox, viewState) {
-            if (!viewState || !bbox) return 0;
-            const tileCenterX = (bbox.west + bbox.east) / 2;
-            const tileCenterY = (bbox.south + bbox.north) / 2;
-            const dx = tileCenterX - viewState.longitude;
-            const dy = tileCenterY - viewState.latitude;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-
-        // Batch tile loading with cancellation support and center-first prioritization
+        // Batch tile loading with cancellation support
         async function executeBatch() {
             if (pendingRequests.size === 0) return;
 
@@ -536,38 +478,27 @@
             const requests = new Map(pendingRequests);
             pendingRequests.clear();
 
-            // Convert to array and sort by distance from viewport center (closest first)
-            const requestArray = Array.from(requests.entries()).map(([key, req]) => {
+            const blockIds = [];
+            for (const [key, req] of requests) {
                 const [z, x, y] = key.split('/').map(Number);
                 const blockId = tileToQuadbin(x, y, z);
                 req.blockId = blockId;
                 req.generation = myGeneration;
-                req.cacheKey = key;
-                req.distance = req.bbox ? getTileDistanceFromCenter(req.bbox, lastViewState) : 0;
-                return req;
-            });
-
-            // Sort by distance (center-first)
-            requestArray.sort((a, b) => a.distance - b.distance);
-
-            const blockIds = requestArray.map(req => req.blockId);
-
-            // Rebuild requests map in sorted order
-            const sortedRequests = new Map(requestArray.map(req => [req.cacheKey, req]));
+                blockIds.push(blockId);
+            }
 
             try {
                 const results = await fetchTilesBatch(blockIds);
 
                 // Check if this batch is still relevant
                 if (!activeBatches.has(myGeneration)) {
-                    console.log(`Batch ${myGeneration} cancelled - skipping ${sortedRequests.size} tiles`);
-                    for (const req of sortedRequests.values()) {
+                    for (const req of requests.values()) {
                         req.resolve(null);
                     }
                     return;
                 }
 
-                for (const [cacheKey, req] of sortedRequests) {
+                for (const [cacheKey, req] of requests) {
                     // Skip if this specific request's generation is stale
                     if (req.generation !== myGeneration || !activeBatches.has(myGeneration)) {
                         req.resolve(null);
@@ -589,10 +520,8 @@
                     req.resolve(image);
                 }
             } catch (e) {
-                if (e.name !== 'AbortError') {
-                    console.error('Batch fetch error:', e);
-                }
-                for (const req of sortedRequests.values()) {
+                console.error('Batch fetch error:', e);
+                for (const req of requests.values()) {
                     req.resolve(null);
                 }
             } finally {
@@ -600,73 +529,35 @@
             }
         }
 
-        // Cancel all pending and in-flight requests (called on viewport change)
+        // Cancel all pending requests (called on viewport change)
         function cancelStaleBatches() {
             // Increment generation to invalidate current batches
             batchGeneration++;
             // Mark all active batches as stale
             activeBatches.clear();
-            // Abort in-flight HTTP requests
-            abortHttpRequests();
             // Clear pending requests that haven't started yet
-            const cancelledCount = pendingRequests.size;
             for (const req of pendingRequests.values()) {
                 req.resolve(null);
             }
             pendingRequests.clear();
-            if (cancelledCount > 0) {
-                tilesCancelled += cancelledCount;
-                updateStats();
-                console.log(`Cancelled ${cancelledCount} pending tile requests, aborted HTTP requests`);
-            }
             if (batchTimeout) {
                 clearTimeout(batchTimeout);
                 batchTimeout = null;
             }
         }
 
-        // Check if tile bbox is in current viewport
-        function isTileInViewport(tileBbox, viewState) {
-            if (!viewState || !tileBbox) return true; // Default to loading if we can't check
-
-            // Get viewport bounds (approximate)
-            const { longitude, latitude, zoom } = viewState;
-            const viewportWidth = 360 / Math.pow(2, zoom); // Rough estimate
-            const viewportHeight = 180 / Math.pow(2, zoom);
-
-            const viewWest = longitude - viewportWidth;
-            const viewEast = longitude + viewportWidth;
-            const viewSouth = latitude - viewportHeight;
-            const viewNorth = latitude + viewportHeight;
-
-            const { west, east, south, north } = tileBbox;
-
-            // Check if tile intersects viewport (with margin)
-            return !(east < viewWest || west > viewEast || north < viewSouth || south > viewNorth);
-        }
-
-        // Get tile data with viewport filtering
-        function getTileData({ index, bbox }) {
+        // Get tile data
+        function getTileData({ index }) {
             const { x, y, z } = index;
             if (z < minZoom || z > maxZoom) return null;
-
-            tilesRequested++;
-            updateStats();
-
-            // Check if tile is in viewport before fetching
-            if (lastViewState && !isTileInViewport(bbox, lastViewState)) {
-                tilesSkippedViewport++;
-                updateStats();
-                return null;
-            }
 
             const cacheKey = `${z}/${x}/${y}`;
             if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
 
             return new Promise((resolve) => {
-                pendingRequests.set(cacheKey, { resolve, bbox });
+                pendingRequests.set(cacheKey, { resolve });
                 if (batchTimeout) clearTimeout(batchTimeout);
-                batchTimeout = setTimeout(executeBatch, getBatchDelay());
+                batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
             });
         }
 
@@ -796,17 +687,11 @@
                 tileCache.clear();
                 tilesLoaded = 0;
                 tilesRendered = 0;
-                tilesRequested = 0;
-                tilesCancelled = 0;
-                tilesSkippedViewport = 0;
                 bytesTransferred = 0;
                 httpRequests = 0;
-                httpRequestsAborted = 0;
                 batchGeneration = 0;
                 activeBatches.clear();
                 pendingRequests.clear();
-                isInteracting = false;
-                currentAbortController = new AbortController();
 
                 // Calculate initial view from dataBounds
                 let initialView = { longitude: 0, latitude: 0, zoom: 10 };
@@ -840,37 +725,17 @@
                     initialViewState: { ...initialView, pitch: 0, bearing: 0 },
                     controller: true,
                     onViewStateChange: ({ viewState, interactionState }) => {
-                        // Track interaction state for adaptive batch delay
-                        const wasInteracting = isInteracting;
-                        isInteracting = interactionState?.isPanning || interactionState?.isZooming || interactionState?.isDragging;
-
-                        // Set timeout to mark interaction as ended
-                        if (isInteracting) {
-                            if (interactionEndTimeout) {
-                                clearTimeout(interactionEndTimeout);
-                            }
-                            interactionEndTimeout = setTimeout(() => {
-                                isInteracting = false;
-                            }, 200);
-                        }
-
-                        // Debounce cancellation to avoid being too aggressive
-                        // Only cancel when user is actively interacting (panning/zooming)
+                        // Cancel pending requests when user is actively panning/zooming
                         if (interactionState?.isPanning || interactionState?.isZooming) {
-                            // Clear any pending batch timeout to prevent stale requests
                             if (batchTimeout) {
                                 clearTimeout(batchTimeout);
                                 batchTimeout = null;
                             }
-                            // Debounce the actual cancellation
                             if (cancelDebounceTimeout) {
                                 clearTimeout(cancelDebounceTimeout);
                             }
-                            cancelDebounceTimeout = setTimeout(() => {
-                                cancelStaleBatches();
-                            }, 100);
+                            cancelDebounceTimeout = setTimeout(cancelStaleBatches, 100);
                         }
-                        lastViewState = viewState;
                         return viewState;
                     },
                     layers: [
