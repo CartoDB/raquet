@@ -143,6 +143,11 @@
         let bytesTransferred = 0;
         let httpRequests = 0;
 
+        // Debug stats
+        let tilesRequested = 0;
+        let tilesCancelled = 0;
+        let tilesSkippedViewport = 0;
+
         // Cache
         let tileCache = new Map();
         let pendingRequests = new Map();
@@ -173,7 +178,7 @@
 
         function updateStats() {
             const overhead = tilesRendered > 0 ? (httpRequests / tilesRendered).toFixed(1) : '0';
-            statsEl.textContent = `Rendered: ${tilesRendered} | Loaded: ${tilesLoaded} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
+            statsEl.textContent = `Rendered: ${tilesRendered} | Req: ${tilesRequested} | Skip: ${tilesSkippedViewport} | Cancel: ${tilesCancelled} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
         }
 
         // Create a tracked async buffer that counts HTTP requests
@@ -532,26 +537,62 @@
             // Mark all active batches as stale
             activeBatches.clear();
             // Clear pending requests that haven't started yet
+            const cancelledCount = pendingRequests.size;
             for (const req of pendingRequests.values()) {
                 req.resolve(null);
             }
             pendingRequests.clear();
+            if (cancelledCount > 0) {
+                tilesCancelled += cancelledCount;
+                updateStats();
+                console.log(`Cancelled ${cancelledCount} pending tile requests`);
+            }
             if (batchTimeout) {
                 clearTimeout(batchTimeout);
                 batchTimeout = null;
             }
         }
 
-        // Get tile data
-        function getTileData({ index }) {
+        // Check if tile bbox is in current viewport
+        function isTileInViewport(tileBbox, viewState) {
+            if (!viewState || !tileBbox) return true; // Default to loading if we can't check
+
+            // Get viewport bounds (approximate)
+            const { longitude, latitude, zoom } = viewState;
+            const viewportWidth = 360 / Math.pow(2, zoom); // Rough estimate
+            const viewportHeight = 180 / Math.pow(2, zoom);
+
+            const viewWest = longitude - viewportWidth;
+            const viewEast = longitude + viewportWidth;
+            const viewSouth = latitude - viewportHeight;
+            const viewNorth = latitude + viewportHeight;
+
+            const { west, east, south, north } = tileBbox;
+
+            // Check if tile intersects viewport (with margin)
+            return !(east < viewWest || west > viewEast || north < viewSouth || south > viewNorth);
+        }
+
+        // Get tile data with viewport filtering
+        function getTileData({ index, bbox }) {
             const { x, y, z } = index;
             if (z < minZoom || z > maxZoom) return null;
+
+            tilesRequested++;
+            updateStats();
+
+            // Check if tile is in viewport before fetching
+            if (lastViewState && !isTileInViewport(bbox, lastViewState)) {
+                tilesSkippedViewport++;
+                updateStats();
+                return null;
+            }
 
             const cacheKey = `${z}/${x}/${y}`;
             if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
 
             return new Promise((resolve) => {
-                pendingRequests.set(cacheKey, { resolve });
+                pendingRequests.set(cacheKey, { resolve, bbox });
                 if (batchTimeout) clearTimeout(batchTimeout);
                 batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
             });
@@ -683,6 +724,9 @@
                 tileCache.clear();
                 tilesLoaded = 0;
                 tilesRendered = 0;
+                tilesRequested = 0;
+                tilesCancelled = 0;
+                tilesSkippedViewport = 0;
                 bytesTransferred = 0;
                 httpRequests = 0;
                 batchGeneration = 0;
@@ -764,6 +808,12 @@
                             maxZoom,
                             tileSize: blockWidth,
                             extent: dataBounds,
+                            // Optimization: Don't load tiles at multiple zoom levels
+                            refinementStrategy: 'no-overlap',
+                            // Optimization: Limit concurrent tile requests
+                            maxRequests: 6,
+                            // Optimization: Limit cache size
+                            maxCacheSize: 100,
                             renderSubLayers: props => {
                                 const {tile, data} = props;
                                 if (!data) return null;
