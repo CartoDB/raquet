@@ -343,12 +343,29 @@ RaQuet files MUST use `.parquet` as the file extension. This ensures compatibili
 
 If a [media type](https://en.wikipedia.org/wiki/Media_type) (formerly: MIME type) is used, a RaQuet file MUST use [application/vnd.apache.parquet](https://www.iana.org/assignments/media-types/application/vnd.apache.parquet) as the media type.
 
-## COG to RaQuet Conversion
+## Raster to RaQuet Conversion
 
-While RaQuet files can be created from scratch following this specification, the format was designed to efficiently store [Cloud Optimized GeoTIFF (COG)](https://www.cogeo.org/) data in a columnar format. When converting from COG to RaQuet, the source file MUST meet these requirements:
+RaQuet supports conversion from any GDAL-readable raster format, including:
 
-1. **Tiling Scheme**: Must have `TILING_SCHEME=GoogleMapsCompatible` in the GeoTIFF tags
-2. **Overview Structure**: Overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...)
-3. **Block Size**: All bands MUST have the same block size
+- **Cloud Optimized GeoTIFF (COG)**: Optimal for large imagery with existing overviews
+- **GeoTIFF**: Standard georeferenced raster format
+- **NetCDF**: Scientific data format with support for CF time dimensions
+- **Other GDAL formats**: Any format supported by [GDAL raster drivers](https://gdal.org/en/stable/drivers/raster/index.html)
 
-These requirements ensure optimal conversion to RaQuet's QUADBIN tiling scheme and efficient overview level handling. For other data sources, implementers MUST ensure their data is organized according to the specifications in the following sections.
+### COG-Specific Optimizations
+
+When converting from COG files that meet these requirements, the converter can use existing overviews directly:
+
+1. **Projection**: Source is in Web Mercator (EPSG:3857)
+2. **Overview Structure**: Overview factors are consecutive powers of 2 (e.g., 2, 4, 8, 16, ...)
+3. **Block Size**: All bands have the same block size
+
+### NetCDF Time Dimension Support
+
+When converting NetCDF files with CF (Climate and Forecast) convention time dimensions:
+
+1. **Time columns are added**: `time_cf` (authoritative CF value) and `time_ts` (derived timestamp)
+2. **One row per time step**: Each spatial tile × time combination becomes a separate row
+3. **CF metadata preserved**: Time units, calendar, and reference date stored in metadata
+
+For other data sources, the converter reprojects to Web Mercator and builds pyramids as needed.

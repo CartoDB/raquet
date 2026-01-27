@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Convert GeoTIFF file to RaQuet output
+"""Convert raster files (GeoTIFF, NetCDF, etc.) to RaQuet output
+
+Supports any GDAL-readable raster format including:
+- GeoTIFF / Cloud Optimized GeoTIFF (COG)
+- NetCDF (with CF time dimension support)
+- And other formats supported by GDAL
 
 Usage:
-    geotiff2raquet.py <geotiff_filename> <raquet_destination>
+    raster2raquet.py <input_file> <raquet_destination>
 
 Help:
-    geotiff2raquet.py --help
+    raster2raquet.py --help
 
 Required packages:
     - GDAL <https://pypi.org/project/GDAL/>
@@ -377,7 +382,7 @@ class Frame:
 
     tile: mercantile.Tile
     inputs: list[mercantile.Tile]
-    outputs: list["osgeo.gdal.Dataset"]  # noqa: F821 (Color table type safely imported in read_geotiff)
+    outputs: list["osgeo.gdal.Dataset"]  # noqa: F821 (Color table type safely imported in read_raster)
 
     @staticmethod
     def create(parent: mercantile.Tile, raster_geometry: RasterGeometry) -> "Frame":
@@ -393,7 +398,7 @@ class Frame:
         return Frame(parent, list(children), [])
 
 
-def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_geotiff)
+def get_colortable_dict(color_table: "osgeo.gdal.ColorTable"):  # noqa: F821 (Color table type safely imported in read_raster)
     color_dict = {
         str(i): list(color_table.GetColorEntry(i))
         for i in range(color_table.GetCount())
@@ -482,8 +487,8 @@ def read_statistics_numpy(
 
 
 def is_web_mercator(
-    sref: "osgeo.osr.SpatialReference | None",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    sref: "osgeo.osr.SpatialReference | None",  # noqa: F821 (osgeo types safely imported in read_raster)
+    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_raster)
 ) -> bool:
     """Check if spatial reference is EPSG:3857 web mercator"""
     if sref is None:
@@ -492,7 +497,7 @@ def is_web_mercator(
 
 
 def find_matching_overview(
-    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_raster)
     target_reduction: float,
     tolerance: float = 0.1,
 ) -> int | None:
@@ -515,8 +520,8 @@ def find_matching_overview(
 
 
 def find_bounds(
-    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_raster)
     pixel_window: PixelWindow,
 ) -> tuple[float, float, float, float]:
     """Return outer bounds for raster in a given transformation"""
@@ -537,8 +542,8 @@ def find_bounds(
 
 
 def find_pixel_window(
-    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    tx3857: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
+    tx3857: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_raster)
 ) -> PixelWindow:
     """Return valid pixel window for raster in a given transformation"""
     xoff, xres, _, yoff, _, yres = ds.GetGeoTransform()
@@ -577,8 +582,8 @@ def find_pixel_window(
 
 
 def find_resolution(
-    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
+    transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_raster)
     pixel_window: PixelWindow,
 ) -> float:
     """Return units per pixel for raster via a given transformation"""
@@ -618,12 +623,12 @@ def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -
 
 
 def create_tile_ds(
-    driver: "osgeo.gdal.Driver",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
-    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    driver: "osgeo.gdal.Driver",  # noqa: F821 (osgeo types safely imported in read_raster)
+    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_raster)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
     tile: mercantile.Tile,
     block_zoom: int,
-) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_geotiff)
+) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_raster)
     # Initialize warped tile dataset and its bands
     tile_ds = driver.Create(
         f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif",
@@ -648,7 +653,7 @@ def create_tile_ds(
 
 
 def read_raster_data_stats(
-    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
     gdaltype_bandtypes: dict[int, BandType] | None,
     include_stats: bool,
 ) -> tuple[list[bytes], list[RasterStats | None]]:
@@ -679,19 +684,19 @@ def read_raster_data_stats(
     return block_data, block_stats
 
 
-def read_geotiff(
-    geotiff_filename: str,
+def read_raster(
+    input_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
     pipe: multiprocessing.Pipe,
 ):
-    """Worker process that accesses a GeoTIFF through pipes.
+    """Worker process that accesses a raster file through pipes.
 
     Send RasterGeometry via pipe first then follow with (tile, data, stats) tuples.
 
     Args:
-        geotiff_filename: Name of GeoTIFF file to open
+        input_filename: Path to raster file (GeoTIFF, NetCDF, or any GDAL-supported format)
         zoom_strategy: Web mercator zoom level selection
         resampling_algorithm: Resampling method to use
         pipe: Connection to send data to parent
@@ -745,7 +750,7 @@ def read_geotiff(
     }
 
     try:
-        src_ds = osgeo.gdal.Open(geotiff_filename)
+        src_ds = osgeo.gdal.Open(input_filename)
         src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
         src_sref = src_ds.GetSpatialRef()
 
@@ -753,7 +758,7 @@ def read_geotiff(
         if src_sref is None:
             logging.info("No CRS defined, assuming WGS84 (lon/lat) coordinates")
             src_ds = osgeo.gdal.OpenEx(
-                geotiff_filename,
+                input_filename,
                 open_options=["ASSUME_LONGLAT=YES"],
             )
             src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
@@ -911,13 +916,13 @@ def read_geotiff(
         pipe.close()
 
 
-def open_geotiff_in_process(
-    geotiff_filename: str,
+def open_raster_in_process(
+    input_filename: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
-    """Opens a bidirectional connection to a GeoTIFF reader in another process.
+    """Opens a bidirectional connection to a raster reader in another process.
 
     Returns:
         Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
@@ -926,8 +931,8 @@ def open_geotiff_in_process(
     parent_recv, child_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    args = geotiff_filename, zoom_strategy, resampling_algorithm, block_zoom, child_send
-    process = multiprocessing.Process(target=read_geotiff, args=args)
+    args = input_filename, zoom_strategy, resampling_algorithm, block_zoom, child_send
+    process = multiprocessing.Process(target=read_raster, args=args)
     process.start()
 
     # Close child end in parent process
@@ -1112,7 +1117,7 @@ def flush_rows_to_file(
 
 
 def main(
-    geotiff_filename: str,
+    input_filename: str,
     raquet_destination: str,
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
@@ -1120,10 +1125,10 @@ def main(
     target_size: int | None = None,
     row_group_size: int = 200,
 ):
-    """Read GeoTIFF datasource and write to RaQuet
+    """Read raster datasource and write to RaQuet
 
     Args:
-        geotiff_filename: GeoTIFF filename
+        input_filename: Raster file path (GeoTIFF, NetCDF, or any GDAL-supported format)
         raquet_destination: RaQuet destination, file or dirname depending on target_size
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
@@ -1143,7 +1148,7 @@ def main(
         )
 
     for raquet_filename in convert_to_raquet_files(
-        geotiff_filename,
+        input_filename,
         raquet_destinations,
         zoom_strategy,
         resampling_algorithm,
@@ -1154,17 +1159,17 @@ def main(
 
 
 def convert_to_raquet_files(
-    geotiff_filename: str,
+    input_filename: str,
     raquet_destinations: typing.Generator[tuple[str, float], None, None],
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
     row_group_size: int = 200,
 ) -> typing.Generator[str, None, None]:
-    """Read GeoTIFF datasource and write to RaQuet files
+    """Read raster datasource and write to RaQuet files
 
     Args:
-        geotiff_filename: GeoTIFF filename
+        input_filename: Raster file path (GeoTIFF, NetCDF, or any GDAL-supported format)
         raquet_destinations: tuples of (filename, target sizeof)
         zoom_strategy: ZoomStrategy member
         resampling_algorithm: ResamplingAlgorithm member
@@ -1178,8 +1183,8 @@ def convert_to_raquet_files(
     entire row groups based on block statistics, significantly reducing
     data transfer for remote file access.
     """
-    raster_geometry, pipe = open_geotiff_in_process(
-        geotiff_filename, zoom_strategy, resampling_algorithm, block_zoom
+    raster_geometry, pipe = open_raster_in_process(
+        input_filename, zoom_strategy, resampling_algorithm, block_zoom
     )
 
     try:
@@ -1351,7 +1356,7 @@ def convert_to_raquet_files(
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("geotiff_filename")
+parser.add_argument("input_filename")
 parser.add_argument("raquet_destination")
 parser.add_argument(
     "-v", "--verbose", action="store_true", help="Enable verbose output"
@@ -1391,7 +1396,7 @@ if __name__ == "__main__":
     block_zoom = int(math.log(args.block_size) / math.log(2))
 
     main(
-        args.geotiff_filename,
+        args.input_filename,
         args.raquet_destination,
         ZoomStrategy(args.zoom_strategy),
         ResamplingAlgorithm(args.resampling_algorithm),

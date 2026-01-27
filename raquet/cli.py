@@ -13,7 +13,10 @@ from pathlib import Path
 import click
 import pyarrow.parquet as pq
 
-from . import geotiff2raquet, raquet2geotiff, imageserver
+from . import raster2raquet, raquet2geotiff, imageserver
+
+# Backwards compatibility alias
+geotiff2raquet = raster2raquet
 
 
 # Configure logging
@@ -36,7 +39,8 @@ def cli():
     \b
     Examples:
         raquet inspect file.parquet
-        raquet convert geotiff input.tif output.parquet
+        raquet convert raster input.tif output.parquet
+        raquet convert raster input.nc output.parquet
         raquet export geotiff input.parquet output.tif
     """
     pass
@@ -211,14 +215,118 @@ def inspect_command(file: Path, verbose: bool):
 
 @cli.group("convert")
 def convert_group():
-    """Convert various formats to Raquet.
+    """Convert various raster formats to Raquet.
+
+    Supports any GDAL-readable raster format including GeoTIFF, COG, NetCDF, and more.
 
     \b
     Examples:
-        raquet convert geotiff input.tif output.parquet
+        raquet convert raster input.tif output.parquet
+        raquet convert raster input.nc output.parquet
         raquet convert imageserver https://server/arcgis/rest/services/layer/ImageServer output.parquet
     """
     pass
+
+
+def _convert_raster_impl(
+    input_file: Path,
+    output_file: Path,
+    zoom_strategy: str,
+    resampling: str,
+    block_size: int,
+    target_size: int | None,
+    row_group_size: int,
+    verbose: bool,
+):
+    """Implementation for raster conversion (shared by raster and geotiff commands)."""
+    setup_logging(verbose)
+
+    # Calculate block_zoom from block_size
+    block_zoom = int(math.log(block_size) / math.log(2))
+
+    try:
+        click.echo(f"Converting {input_file} to Raquet format...")
+
+        raster2raquet.main(
+            str(input_file),
+            str(output_file),
+            raster2raquet.ZoomStrategy(zoom_strategy),
+            raster2raquet.ResamplingAlgorithm(resampling),
+            block_zoom,
+            target_size,
+            row_group_size,
+        )
+
+        click.echo(f"Successfully created {output_file}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+@convert_group.command("raster")
+@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("output_file", type=click.Path(path_type=Path))
+@click.option(
+    "--zoom-strategy",
+    type=click.Choice(["auto", "lower", "upper"]),
+    default="auto",
+    help="Strategy for selecting zoom level (default: auto)",
+)
+@click.option(
+    "--resampling",
+    type=click.Choice(["near", "average", "bilinear", "cubic", "cubicspline", "lanczos", "mode", "max", "min", "med", "q1", "q3"]),
+    default="near",
+    help="Resampling algorithm (default: near)",
+)
+@click.option(
+    "--block-size",
+    type=int,
+    default=256,
+    help="Block size in pixels (default: 256)",
+)
+@click.option(
+    "--target-size",
+    type=int,
+    default=None,
+    help="Target size for auto zoom calculation",
+)
+@click.option(
+    "--row-group-size",
+    type=int,
+    default=200,
+    help="Rows per Parquet row group (default: 200, smaller = better remote pruning)",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_raster(
+    input_file: Path,
+    output_file: Path,
+    zoom_strategy: str,
+    resampling: str,
+    block_size: int,
+    target_size: int | None,
+    row_group_size: int,
+    verbose: bool,
+):
+    """Convert a raster file to Raquet format.
+
+    Supports any GDAL-readable raster format including GeoTIFF, COG, NetCDF, and more.
+    For NetCDF files with time dimensions, time columns (time_cf, time_ts) are automatically added.
+
+    INPUT_FILE is the path to the source raster file.
+    OUTPUT_FILE is the path for the output Raquet (.parquet) file.
+
+    \b
+    Examples:
+        raquet convert raster landcover.tif landcover.parquet
+        raquet convert raster temperature.nc temperature.parquet
+        raquet convert raster dem.tif dem.parquet --resampling bilinear
+        raquet convert raster large.tif output.parquet --block-size 512 -v
+    """
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose)
 
 
 @convert_group.command("geotiff")
@@ -265,7 +373,7 @@ def convert_geotiff(
     row_group_size: int,
     verbose: bool,
 ):
-    """Convert a GeoTIFF file to Raquet format.
+    """Convert a GeoTIFF file to Raquet format (alias for 'convert raster').
 
     INPUT_FILE is the path to the source GeoTIFF file.
     OUTPUT_FILE is the path for the output Raquet (.parquet) file.
@@ -274,34 +382,8 @@ def convert_geotiff(
     Examples:
         raquet convert geotiff landcover.tif landcover.parquet
         raquet convert geotiff dem.tif dem.parquet --resampling bilinear
-        raquet convert geotiff large.tif output.parquet --block-size 512 -v
     """
-    setup_logging(verbose)
-
-    # Calculate block_zoom from block_size
-    block_zoom = int(math.log(block_size) / math.log(2))
-
-    try:
-        click.echo(f"Converting {input_file} to Raquet format...")
-
-        geotiff2raquet.main(
-            str(input_file),
-            str(output_file),
-            geotiff2raquet.ZoomStrategy(zoom_strategy),
-            geotiff2raquet.ResamplingAlgorithm(resampling),
-            block_zoom,
-            target_size,
-            row_group_size,
-        )
-
-        click.echo(f"Successfully created {output_file}")
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        if verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose)
 
 
 @convert_group.command("imageserver")

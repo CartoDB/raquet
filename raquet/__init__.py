@@ -1,26 +1,34 @@
 import logging
 import math
 
-from . import geotiff2raquet
+from . import raster2raquet
 from . import raquet2geotiff
 
+# Backwards compatibility alias
+geotiff2raquet = raster2raquet
 
-def geotiff2raquet_main():
-    args = geotiff2raquet.parser.parse_args()
+
+def raster2raquet_main():
+    """Entry point for raster to raquet conversion."""
+    args = raster2raquet.parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.INFO)
 
     # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
     block_zoom = int(math.log(args.block_size) / math.log(2))
 
-    geotiff2raquet.main(
-        args.geotiff_filename,
+    raster2raquet.main(
+        args.input_filename,
         args.raquet_destination,
-        geotiff2raquet.ZoomStrategy(args.zoom_strategy),
-        geotiff2raquet.ResamplingAlgorithm(args.resampling_algorithm),
+        raster2raquet.ZoomStrategy(args.zoom_strategy),
+        raster2raquet.ResamplingAlgorithm(args.resampling_algorithm),
         block_zoom,
         args.target_size,
     )
+
+
+# Backwards compatibility alias
+geotiff2raquet_main = raster2raquet_main
 
 
 def raquet2geotiff_main():
