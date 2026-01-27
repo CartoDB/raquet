@@ -13,7 +13,7 @@ from pathlib import Path
 import click
 import pyarrow.parquet as pq
 
-from . import imageserver
+from . import geotiff2raquet, raquet2geotiff, imageserver
 
 
 # Configure logging
@@ -278,15 +278,6 @@ def convert_geotiff(
     """
     setup_logging(verbose)
 
-    # Lazy import - GDAL is only required for GeoTIFF conversion
-    try:
-        from . import geotiff2raquet
-    except ImportError as e:
-        click.echo("Error: GeoTIFF conversion requires GDAL.", err=True)
-        click.echo("Install with: pip install gdal", err=True)
-        click.echo(f"Details: {e}", err=True)
-        sys.exit(1)
-
     # Calculate block_zoom from block_size
     block_zoom = int(math.log(block_size) / math.log(2))
 
@@ -436,15 +427,6 @@ def export_geotiff(input_file: Path, output_file: Path, verbose: bool):
         raquet export geotiff raster.parquet output.tif -v
     """
     setup_logging(verbose)
-
-    # Lazy import - GDAL is only required for GeoTIFF export
-    try:
-        from . import raquet2geotiff
-    except ImportError as e:
-        click.echo("Error: GeoTIFF export requires GDAL.", err=True)
-        click.echo("Install with: pip install gdal", err=True)
-        click.echo(f"Details: {e}", err=True)
-        sys.exit(1)
 
     try:
         click.echo(f"Exporting {input_file} to GeoTIFF format...")
