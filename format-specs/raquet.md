@@ -1,4 +1,4 @@
-# RaQuet Specification v0.1.0
+# RaQuet Specification v0.2.0
 
 ## Overview
 
@@ -50,6 +50,27 @@ Required columns:
 - Special handling: Only populated in the row where `block = 0`, NULL in all other rows.
 - Format: See [Metadata Specification](#metadata-specification) for the JSON structure.
 
+### Optional Columns
+
+#### time_cf Column (Time Dimension)
+- Type: int64 or float64
+- Description: CF (Climate and Forecast) convention numeric time value. This is the authoritative time representation that preserves the exact values from the source data (e.g., NetCDF files).
+- Content: Numeric offset from a reference date in specified units (e.g., "minutes since 1980-01-01 00:00").
+- When present: The `time` metadata section MUST be included with `cf:units` specifying the time units.
+- Example: For "minutes since 1980-01-01 00:00", a value of `44640` represents 1980-02-01 00:00.
+
+#### time_ts Column (Derived Timestamp)
+- Type: timestamp[us] (microsecond precision)
+- Description: Convenience timestamp derived from `time_cf` for datasets using Gregorian-compatible calendars.
+- Nullable: Yes. This column is NULL when the CF calendar cannot be converted to standard timestamps (e.g., 360_day, noleap calendars).
+- Purpose: Enables standard timestamp-based queries without requiring CF time unit parsing.
+- Derivation: Computed from `time_cf` using the `cf:units` and `cf:calendar` from metadata.
+
+**Time Column Guidelines:**
+- If `time_cf` is present, `time_ts` SHOULD also be present (may contain NULLs for non-Gregorian calendars).
+- For single-timestep data, time columns MAY be omitted.
+- Time values represent the **start** of each time period (e.g., monthly data for January 1980 has time = 1980-01-01T00:00:00).
+
 ## Tiling Scheme
 
 RaQuet uses the QUADBIN tiling scheme for spatial indexing. [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) is a hierarchical geospatial index based on the Bing Maps Tile System (Quadkey). Designed to be cluster-efficient, it stores in a 64-bit number the information to uniquely identify any of the grid cells that result from uniformly subdividing a map in Mercator projection into four squares at different resolution levels, from 0 to 26 (less than 1m² at the equator). The bit layout is inspired in the H3 design, and provides different modes to store not only cells, but edges, corners or vertices.
@@ -76,7 +97,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 ```json
 {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "compression": "gzip",
     "block_resolution": 5,
     "minresolution": 2,
@@ -191,6 +212,22 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
   - `num_blocks`: Integer count of non-empty blocks in the dataset.
   - `num_pixels`: Integer total count of pixels in the full resolution raster.
 
+- **Time Information** (optional, present when `time_cf` column exists)
+  - `time`: Object containing CF convention time metadata:
+    - `cf:units`: String specifying the CF time units (e.g., "minutes since 1980-01-01 00:00:00", "days since 1850-01-01"). This follows the [CF Conventions](https://cfconventions.org/Data/cf-conventions/cf-conventions-1.11/cf-conventions.html#time-coordinate) time specification.
+    - `cf:calendar`: String specifying the calendar system. Valid values:
+      - `"standard"` or `"gregorian"`: Standard Gregorian calendar (default)
+      - `"proleptic_gregorian"`: Gregorian calendar extended to dates before 1582-10-15
+      - `"360_day"`: All months have 30 days
+      - `"365_day"` or `"noleap"`: No leap years
+      - `"366_day"` or `"all_leap"`: Every year is a leap year
+      - `"julian"`: Julian calendar
+    - `cf:standard_name`: Optional string, typically "time" per CF conventions.
+    - `resolution`: Optional string in [ISO 8601 duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations) indicating the time step (e.g., "P1M" for monthly, "P1D" for daily, "PT1H" for hourly).
+    - `interpretation`: String indicating how time values should be interpreted. Value: `"period_start"` (time represents the beginning of each period).
+    - `count`: Integer number of unique time steps in the dataset.
+    - `range`: Array [min, max] of the first and last `time_cf` values.
+
 ### Examples of Common Use Cases
 
 TODO: fix these incomplete examples
@@ -261,6 +298,42 @@ TODO: fix these incomplete examples
     }]
 }
 ```
+
+4. **Time-Series Climate Data (e.g., Monthly Sea Surface Temperature)**
+```json
+{
+    "version": "0.2.0",
+    "compression": "gzip",
+    "block_resolution": 5,
+    "nodata": -999000000,
+    "time": {
+        "cf:units": "minutes since 1980-01-01 00:00:00",
+        "cf:calendar": "standard",
+        "cf:standard_name": "time",
+        "resolution": "P1M",
+        "interpretation": "period_start",
+        "count": 432,
+        "range": [0, 18889920]
+    },
+    "bands": [{
+        "type": "float64",
+        "name": "sst",
+        "stats": {
+            "min": 271.3,
+            "max": 303.7,
+            "mean": 286.9,
+            "stddev": 11.4,
+            "approximated_stats": true
+        }
+    }]
+}
+```
+
+This example represents 36 years (1980-2015) of monthly sea surface temperature data. Each row in the Parquet file includes:
+- `block`: QUADBIN tile ID
+- `time_cf`: CF numeric time (minutes since 1980-01-01)
+- `time_ts`: Derived timestamp (e.g., 1980-01-01T00:00:00)
+- `sst`: Compressed raster tile data
 
 ## File Extension
 

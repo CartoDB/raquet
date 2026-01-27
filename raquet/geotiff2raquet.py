@@ -16,6 +16,7 @@ Required packages:
 
 import argparse
 import dataclasses
+import datetime
 import enum
 import gzip
 import itertools
@@ -24,6 +25,7 @@ import logging
 import math
 import multiprocessing
 import os
+import re
 import statistics
 import struct
 import sys
@@ -106,6 +108,8 @@ class RasterGeometry:
     minlon: float
     maxlat: float
     maxlon: float
+    cf_time: CFTimeInfo | None = None  # CF time dimension metadata
+    band_time_values: list[float | None] | None = None  # CF time value for each band
 
 
 @dataclasses.dataclass
@@ -141,6 +145,230 @@ class BandType:
     size: int
     typ: type
     name: str
+
+
+@dataclasses.dataclass
+class CFTimeInfo:
+    """Container for CF convention time dimension metadata"""
+
+    units: str  # e.g., "minutes", "hours", "days"
+    reference_date: datetime.datetime  # Reference point for time values
+    calendar: str  # e.g., "standard", "gregorian", "360_day"
+    values: list[int | float]  # Time dimension values from source
+    raw_units_string: str  # Original CF units string
+
+    @property
+    def is_gregorian_compatible(self) -> bool:
+        """Check if calendar can be converted to standard timestamps"""
+        return self.calendar.lower() in (
+            "standard",
+            "gregorian",
+            "proleptic_gregorian",
+        )
+
+    def to_iso_duration(self) -> str | None:
+        """Estimate ISO 8601 duration from time values if regular intervals"""
+        if len(self.values) < 2:
+            return None
+
+        # Check if intervals are regular
+        intervals = [self.values[i + 1] - self.values[i] for i in range(len(self.values) - 1)]
+        if not intervals:
+            return None
+
+        avg_interval = sum(intervals) / len(intervals)
+        is_regular = all(abs(i - avg_interval) / avg_interval < 0.01 for i in intervals) if avg_interval != 0 else True
+
+        if not is_regular:
+            return None
+
+        # Map common intervals to ISO durations
+        unit_map = {
+            "minutes": {"1": "PT1M", "60": "PT1H", "1440": "P1D", "43200": "P1M", "44640": "P1M"},
+            "hours": {"1": "PT1H", "24": "P1D", "720": "P1M", "744": "P1M"},
+            "days": {"1": "P1D", "30": "P1M", "31": "P1M", "365": "P1Y", "366": "P1Y"},
+            "months": {"1": "P1M", "12": "P1Y"},
+            "years": {"1": "P1Y"},
+        }
+
+        interval_str = str(int(round(avg_interval)))
+        return unit_map.get(self.units, {}).get(interval_str)
+
+
+def parse_cf_time_units(units_string: str, calendar: str = "standard") -> CFTimeInfo | None:
+    """Parse CF convention time units string into structured metadata.
+
+    Args:
+        units_string: CF units string like "minutes since 1980-01-01 00:00:00"
+        calendar: CF calendar type (default "standard")
+
+    Returns:
+        CFTimeInfo instance or None if parsing fails
+    """
+    # Pattern: "<unit> since <reference_date>"
+    # Examples: "minutes since 1980-01-01 00:00:00", "days since 1850-01-01"
+    pattern = r"^(\w+)\s+since\s+(.+)$"
+    match = re.match(pattern, units_string.strip(), re.IGNORECASE)
+
+    if not match:
+        logging.warning("Could not parse CF time units: %s", units_string)
+        return None
+
+    unit = match.group(1).lower()
+    date_str = match.group(2).strip()
+
+    # Normalize unit names
+    unit_aliases = {
+        "minute": "minutes",
+        "hour": "hours",
+        "day": "days",
+        "month": "months",
+        "year": "years",
+        "second": "seconds",
+    }
+    unit = unit_aliases.get(unit, unit)
+
+    # Parse reference date - try multiple formats
+    ref_date = None
+    date_formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d",
+        "%Y%m%d",
+    ]
+
+    for fmt in date_formats:
+        try:
+            ref_date = datetime.datetime.strptime(date_str, fmt)
+            break
+        except ValueError:
+            continue
+
+    if ref_date is None:
+        logging.warning("Could not parse reference date: %s", date_str)
+        return None
+
+    return CFTimeInfo(
+        units=unit,
+        reference_date=ref_date,
+        calendar=calendar.lower() if calendar else "standard",
+        values=[],  # Will be populated later
+        raw_units_string=units_string,
+    )
+
+
+def cf_to_timestamp(cf_value: int | float, cf_info: CFTimeInfo) -> datetime.datetime | None:
+    """Convert a CF time value to a Python datetime.
+
+    Args:
+        cf_value: Numeric time offset from reference date
+        cf_info: CF time metadata
+
+    Returns:
+        datetime instance or None if conversion not possible (non-Gregorian calendar)
+    """
+    if not cf_info.is_gregorian_compatible:
+        return None
+
+    ref = cf_info.reference_date
+
+    try:
+        if cf_info.units == "seconds":
+            return ref + datetime.timedelta(seconds=cf_value)
+        elif cf_info.units == "minutes":
+            return ref + datetime.timedelta(minutes=cf_value)
+        elif cf_info.units == "hours":
+            return ref + datetime.timedelta(hours=cf_value)
+        elif cf_info.units == "days":
+            return ref + datetime.timedelta(days=cf_value)
+        elif cf_info.units == "months":
+            # Approximate: add months by adjusting year/month
+            total_months = ref.month + int(cf_value) - 1
+            years_to_add = total_months // 12
+            new_month = (total_months % 12) + 1
+            return ref.replace(year=ref.year + years_to_add, month=new_month)
+        elif cf_info.units == "years":
+            return ref.replace(year=ref.year + int(cf_value))
+        else:
+            logging.warning("Unknown CF time unit: %s", cf_info.units)
+            return None
+    except (ValueError, OverflowError) as e:
+        logging.warning("Failed to convert CF time %s: %s", cf_value, e)
+        return None
+
+
+def extract_cf_time_from_gdal(ds: "osgeo.gdal.Dataset") -> CFTimeInfo | None:  # noqa: F821
+    """Extract CF time dimension metadata from a GDAL dataset.
+
+    Looks for NetCDF time dimension metadata in GDAL's metadata domains.
+
+    Args:
+        ds: GDAL dataset (typically opened from NetCDF)
+
+    Returns:
+        CFTimeInfo instance or None if no time dimension found
+    """
+    metadata = ds.GetMetadata()
+
+    # Look for time units (NetCDF convention)
+    time_units = metadata.get("time#units")
+    if not time_units:
+        # Try alternate metadata keys
+        for key in metadata:
+            if key.endswith("#units") and "time" in key.lower():
+                time_units = metadata[key]
+                break
+
+    if not time_units:
+        return None
+
+    # Get calendar (default to standard)
+    calendar = metadata.get("time#calendar", "standard")
+
+    # Parse units string
+    cf_info = parse_cf_time_units(time_units, calendar)
+    if cf_info is None:
+        return None
+
+    # Extract time values from NETCDF_DIM_time_VALUES
+    time_values_str = metadata.get("NETCDF_DIM_time_VALUES")
+    if time_values_str:
+        # Format: "{val1,val2,val3,...}"
+        try:
+            values_str = time_values_str.strip("{}")
+            cf_info.values = [float(v) for v in values_str.split(",")]
+        except (ValueError, AttributeError) as e:
+            logging.warning("Failed to parse time values: %s", e)
+
+    logging.info(
+        "Detected CF time dimension: %d values, units='%s', calendar='%s'",
+        len(cf_info.values),
+        cf_info.raw_units_string,
+        cf_info.calendar,
+    )
+
+    return cf_info
+
+
+def get_band_time_value(band: "osgeo.gdal.Band") -> float | None:  # noqa: F821
+    """Get the CF time value for a raster band.
+
+    Args:
+        band: GDAL raster band
+
+    Returns:
+        CF time value (in the units specified by cf:units) or None if not a time-dimensioned band
+    """
+    metadata = band.GetMetadata()
+    time_value_str = metadata.get("NETCDF_DIM_time")
+    if time_value_str is not None:
+        try:
+            return float(time_value_str)
+        except ValueError:
+            pass
+    return None
 
 
 @dataclasses.dataclass
@@ -553,6 +781,14 @@ def read_geotiff(
         tx4326 = osgeo.osr.CoordinateTransformation(src_sref, wgs84)
         minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326, pixel_window)
 
+        # Extract CF time dimension metadata if available (e.g., from NetCDF)
+        cf_time = extract_cf_time_from_gdal(src_ds)
+        band_time_values = None
+        if cf_time is not None:
+            # Get CF time value for each band
+            band_time_values = [get_band_time_value(band) for band in src_bands]
+            logging.info("Band time values (first 10): %s", band_time_values[:10])
+
         raster_geometry = RasterGeometry(
             [gdaltype_bandtypes[band.DataType].name for band in src_bands],
             [
@@ -571,6 +807,8 @@ def read_geotiff(
             minlon,
             maxlat,
             maxlon,
+            cf_time=cf_time,
+            band_time_values=band_time_values,
         )
 
         pipe.send(raster_geometry)
@@ -738,17 +976,32 @@ def get_raquet_dimensions(
 
 
 def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
-    """Create table schema and band column names for RasterGeometry instance"""
-    band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
+    """Create table schema and band column names for RasterGeometry instance
 
-    # Create table schema based on band count
-    schema = pyarrow.schema(
-        [
-            ("block", pyarrow.uint64()),
-            ("metadata", pyarrow.string()),
-            *[(bname, pyarrow.binary()) for bname in band_names],
-        ]
-    )
+    For time-series data (CF time present), creates a single band column since
+    all bands represent the same variable at different time steps.
+    For regular multi-band data, creates one column per band.
+    """
+    # Build column list
+    columns = [
+        ("block", pyarrow.uint64()),
+        ("metadata", pyarrow.string()),
+    ]
+
+    # Add time columns if CF time dimension is present
+    if rg.cf_time is not None:
+        columns.append(("time_cf", pyarrow.float64()))
+        columns.append(("time_ts", pyarrow.timestamp("us")))
+        # For time-series, all bands are the same variable - use single column
+        band_names = ["band_1"]
+    else:
+        # Standard multi-band: one column per band
+        band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
+
+    # Add band columns
+    columns.extend((bname, pyarrow.binary()) for bname in band_names)
+
+    schema = pyarrow.schema(columns)
 
     return schema, band_names
 
@@ -769,16 +1022,27 @@ def create_metadata(
 
     See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
     """
-    metadata_json = {
-        "version": "0.1.0",
-        "compression": "gzip",
-        "block_resolution": rg.zoom,
-        "minresolution": minresolution,
-        "maxresolution": rg.zoom,
-        "nodata": rg.nodata,
-        "num_blocks": block_count,
-        "num_pixels": block_count * (2**block_zoom) * (2**block_zoom),
-        "bands": [
+    # For time-series data, we have one band column but stats from the first band
+    # For regular data, we have one band per column
+    if rg.cf_time is not None:
+        # Time-series: single band representing the variable
+        # Use first band's type/colorinterp/colortable, combine stats from all
+        combined_stats = None
+        for stats in band_stats:
+            combined_stats = combine_stats(combined_stats, stats)
+
+        bands_metadata = [
+            {
+                "type": rg.bandtypes[0],
+                "name": "band_1",
+                "colorinterp": rg.bandcolorinterp[0],
+                "colortable": rg.bandcolortable[0],
+                "stats": dict(approximated_stats=True, **combined_stats.__dict__) if combined_stats else None,
+            }
+        ]
+    else:
+        # Standard multi-band
+        bands_metadata = [
             {
                 "type": btype,
                 "name": bname,
@@ -793,9 +1057,41 @@ def create_metadata(
                 rg.bandcolortable,
                 band_stats,
             )
-        ],
+        ]
+
+    metadata_json = {
+        "version": "0.2.0",
+        "compression": "gzip",
+        "block_resolution": rg.zoom,
+        "minresolution": minresolution,
+        "maxresolution": rg.zoom,
+        "nodata": rg.nodata,
+        "num_blocks": block_count,
+        "num_pixels": block_count * (2**block_zoom) * (2**block_zoom),
+        "bands": bands_metadata,
         **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax, block_zoom),
     }
+
+    # Add time metadata if CF time dimension is present
+    if rg.cf_time is not None:
+        cf = rg.cf_time
+        time_meta = {
+            "cf:units": cf.raw_units_string,
+            "cf:calendar": cf.calendar,
+            "interpretation": "period_start",
+            "count": len(cf.values),
+        }
+
+        # Add resolution if we can determine it
+        iso_duration = cf.to_iso_duration()
+        if iso_duration:
+            time_meta["resolution"] = iso_duration
+
+        # Add range if we have values
+        if cf.values:
+            time_meta["range"] = [cf.values[0], cf.values[-1]]
+
+        metadata_json["time"] = time_meta
 
     return metadata_json
 
@@ -919,14 +1215,37 @@ def convert_to_raquet_files(
             if all(block_datum is None for block_datum in block_data):
                 continue
 
-            # Append new row to collection (will be sorted later)
-            all_rows.append(
-                {
-                    "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
-                    "metadata": None,
-                    **{bname: block_data[i] for i, bname in enumerate(band_names)},
-                }
-            )
+            # For time-series data (CF time present), emit separate row per time step
+            # For regular multi-band data, emit single row with all bands as columns
+            if raster_geometry.cf_time is not None and raster_geometry.band_time_values:
+                # Time-series mode: each band is a different time step
+                # Schema has single "band_1" column for data
+                cf = raster_geometry.cf_time
+                for band_idx, data in enumerate(block_data):
+                    cf_value = raster_geometry.band_time_values[band_idx]
+                    if cf_value is None:
+                        continue
+
+                    ts_value = cf_to_timestamp(cf_value, cf)
+
+                    all_rows.append(
+                        {
+                            "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
+                            "metadata": None,
+                            "time_cf": cf_value,
+                            "time_ts": ts_value,
+                            "band_1": data,
+                        }
+                    )
+            else:
+                # Standard mode: all bands in single row
+                all_rows.append(
+                    {
+                        "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
+                        "metadata": None,
+                        **{bname: block_data[i] for i, bname in enumerate(band_names)},
+                    }
+                )
 
             if tile.z > raster_geometry.zoom:
                 raise NotImplementedError("Zoom higher than expected by find_minzoom()")
@@ -944,10 +1263,14 @@ def convert_to_raquet_files(
         for i, stats in enumerate(band_stats):
             logging.info("Band %s %s", i + 1, stats)
 
-        # Sort all rows by block ID for efficient row group pruning
-        # This enables Parquet readers to skip row groups based on block statistics
-        logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
-        all_rows.sort(key=lambda row: row["block"])
+        # Sort all rows by block ID (and time for time-series) for efficient row group pruning
+        # This enables Parquet readers to skip row groups based on block/time statistics
+        if raster_geometry.cf_time is not None:
+            logging.info("Sorting %d rows by (block, time_cf) for optimized row group pruning...", len(all_rows))
+            all_rows.sort(key=lambda row: (row["block"], row.get("time_cf", 0)))
+        else:
+            logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
+            all_rows.sort(key=lambda row: row["block"])
 
         # Build metadata now (we have all the info we need)
         metadata_json = create_metadata(
@@ -967,6 +1290,10 @@ def convert_to_raquet_files(
             "metadata": json.dumps(metadata_json),
             **{bname: None for bname in band_names},
         }
+        # Add time columns to metadata row if CF time is present
+        if raster_geometry.cf_time is not None:
+            metadata_row["time_cf"] = None
+            metadata_row["time_ts"] = None
 
         # Now write sorted rows, splitting into multiple files if target_sizeof is set
         # Use page index for finer-grained filtering and sorting metadata
