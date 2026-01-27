@@ -118,6 +118,7 @@ Download sample RaQuet files to try with DuckDB, the viewer, or your own tools:
 | Dataset | Description | Size | Download |
 |---------|-------------|------|----------|
 | **Europe** | RGB satellite imagery of Europe | 360 KB | [europe.parquet](https://storage.googleapis.com/raquet_demo_data/europe.parquet) |
+| **TCI** | Sentinel-2 True Color Image (high resolution) | 261 MB | [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) |
 | **CFSR SST** | Sea Surface Temperature time-series (1980-2015, 432 monthly steps) | 70 MB | [cfsr_sst.parquet](https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet) |
 
 ```bash
