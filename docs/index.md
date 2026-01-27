@@ -119,6 +119,7 @@ Download sample RaQuet files to try with DuckDB, the viewer, or your own tools:
 |---------|-------------|------|----------|
 | **Europe** | RGB satellite imagery of Europe | 360 KB | [europe.parquet](https://storage.googleapis.com/raquet_demo_data/europe.parquet) |
 | **TCI** | Sentinel-2 True Color Image (high resolution) | 261 MB | [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) |
+| **Spain Solar GHI** | Global Horizontal Irradiation from [Global Solar Atlas](https://globalsolaratlas.info/) | 5.7 MB | [spain_solar_ghi.parquet](https://storage.googleapis.com/raquet_demo_data/spain_solar_ghi.parquet) |
 | **CFSR SST** | Sea Surface Temperature time-series (1980-2015, 432 monthly steps) | 70 MB | [cfsr_sst.parquet](https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet) |
 
 ```bash
