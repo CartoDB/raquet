@@ -54,6 +54,43 @@
             font-family: 'SF Mono', Monaco, monospace;
             font-size: 12px; z-index: 100;
         }
+        #debug-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #eee;
+        }
+        #debug-toggle input {
+            width: auto;
+            margin: 0;
+        }
+        #debug-toggle label {
+            margin: 0;
+            font-weight: normal;
+            cursor: pointer;
+        }
+        #debug-legend {
+            display: none;
+            margin-top: 8px;
+            font-size: 11px;
+            color: #666;
+        }
+        #debug-legend.visible {
+            display: block;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 3px 0;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
         .loading { color: #e6a23c !important; }
         .error { color: #f56c6c !important; }
         .success { color: #67c23a !important; }
@@ -92,6 +129,16 @@
             <button id="loadBtn" onclick="loadDataset()">Load Dataset</button>
 
             <div id="status">Enter a URL or select a sample file to get started.</div>
+            <div id="debug-toggle">
+                <input type="checkbox" id="debugMode" onchange="toggleDebugMode()">
+                <label for="debugMode">Debug tile requests</label>
+            </div>
+            <div id="debug-legend">
+                <div class="legend-item"><span class="legend-color" style="background: rgba(255, 100, 100, 0.4); border: 2px solid rgb(255, 100, 100);"></span> Band 1 (red)</div>
+                <div class="legend-item"><span class="legend-color" style="background: rgba(100, 255, 100, 0.4); border: 2px solid rgb(100, 255, 100);"></span> Band 2 (green)</div>
+                <div class="legend-item"><span class="legend-color" style="background: rgba(100, 100, 255, 0.4); border: 2px solid rgb(100, 100, 255);"></span> Band 3 (blue)</div>
+                <div class="legend-item"><span class="legend-color" style="background: rgba(255, 255, 100, 0.4); border: 2px solid rgb(255, 255, 100);"></span> Tile request</div>
+            </div>
             <div id="info-link">
                 <a href="index.html">&larr; Back to RaQuet documentation</a><br>
                 <a href="viewer-how-it-works.html">How the viewer works</a><br>
@@ -154,6 +201,17 @@
         let activeBatches = new Set();
         let cancelDebounceTimeout = null;
 
+        // Debug mode state
+        let debugMode = false;
+        let debugRectangles = []; // Array of { bounds, color, type, timestamp }
+        const DEBUG_COLORS = {
+            tile: [255, 200, 0, 200],        // Yellow/orange for tile request
+            band_0: [255, 50, 50, 180],      // Red for band 1
+            band_1: [50, 255, 50, 180],      // Green for band 2
+            band_2: [50, 50, 255, 180],      // Blue for band 3
+        };
+        const DEBUG_RECT_LIFETIME = 5000; // Rectangles fade after 5 seconds
+
         // UI elements
         const statusEl = document.getElementById('status');
         const statsEl = document.getElementById('stats');
@@ -174,6 +232,134 @@
             const overhead = tilesRendered > 0 ? (httpRequests / tilesRendered).toFixed(1) : '0';
             statsEl.textContent = `Tiles: ${tilesRendered} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
         }
+
+        // Convert tile z/x/y to geographic bounds
+        function tileToBounds(z, x, y) {
+            const n = Math.pow(2, z);
+            const west = (x / n) * 360 - 180;
+            const east = ((x + 1) / n) * 360 - 180;
+            const north = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+            const south = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
+            return { west, south, east, north };
+        }
+
+        // Add a debug rectangle for visualization
+        function addDebugRect(z, x, y, type, bandIndex = null) {
+            if (!debugMode) return;
+
+            const bounds = tileToBounds(z, x, y);
+            const now = Date.now();
+
+            // Calculate inset based on type for non-overlapping visualization
+            // Outer (largest): tile request (yellow)
+            // Middle layers: bands with decreasing size
+            let insetFactor;
+            if (type === 'tile') {
+                insetFactor = 0;
+            } else if (bandIndex !== null) {
+                // Each band gets progressively smaller: 0.02, 0.04, 0.06 inset
+                insetFactor = 0.02 + (bandIndex * 0.02);
+            } else {
+                insetFactor = 0;
+            }
+
+            const width = bounds.east - bounds.west;
+            const height = bounds.north - bounds.south;
+            const inset = Math.min(width, height) * insetFactor;
+
+            const polygon = [
+                [bounds.west + inset, bounds.north - inset],
+                [bounds.east - inset, bounds.north - inset],
+                [bounds.east - inset, bounds.south + inset],
+                [bounds.west + inset, bounds.south + inset],
+                [bounds.west + inset, bounds.north - inset]
+            ];
+
+            const colorKey = bandIndex !== null ? `band_${bandIndex}` : type;
+            const color = DEBUG_COLORS[colorKey] || DEBUG_COLORS.tile;
+
+            debugRectangles.push({
+                polygon,
+                color,
+                type: colorKey,
+                timestamp: now,
+                z, x, y
+            });
+
+            // Clean up old rectangles
+            debugRectangles = debugRectangles.filter(r => now - r.timestamp < DEBUG_RECT_LIFETIME);
+
+            // Update the debug layer
+            updateDebugLayer();
+        }
+
+        // Update the debug layer in deck.gl
+        function updateDebugLayer() {
+            if (!deckInstance || !debugMode) return;
+
+            const now = Date.now();
+
+            // Calculate opacity based on age (fade out over time)
+            const rectanglesWithOpacity = debugRectangles.map(r => {
+                const age = now - r.timestamp;
+                const opacity = Math.max(0, 1 - (age / DEBUG_RECT_LIFETIME));
+                return { ...r, opacity };
+            }).filter(r => r.opacity > 0);
+
+            const debugLayer = new globalThis.deck.PolygonLayer({
+                id: 'debug-requests',
+                data: rectanglesWithOpacity,
+                getPolygon: d => d.polygon,
+                getFillColor: d => [...d.color.slice(0, 3), Math.floor(d.color[3] * d.opacity * 0.5)],
+                getLineColor: d => [...d.color.slice(0, 3), Math.floor(255 * d.opacity)],
+                getLineWidth: 3,
+                lineWidthUnits: 'pixels',
+                filled: true,
+                stroked: true,
+                pickable: false,
+                updateTriggers: {
+                    getFillColor: [now],
+                    getLineColor: [now]
+                }
+            });
+
+            // Get current layers and replace/add debug layer
+            const currentLayers = deckInstance.props.layers.filter(l => l.id !== 'debug-requests');
+            deckInstance.setProps({ layers: [...currentLayers, debugLayer] });
+        }
+
+        // Debug layer refresh interval
+        let debugRefreshInterval = null;
+
+        // Toggle debug mode
+        window.toggleDebugMode = function() {
+            debugMode = document.getElementById('debugMode').checked;
+            document.getElementById('debug-legend').classList.toggle('visible', debugMode);
+
+            if (debugMode) {
+                // Start periodic refresh for fade effect
+                if (!debugRefreshInterval) {
+                    debugRefreshInterval = setInterval(() => {
+                        if (debugMode && debugRectangles.length > 0) {
+                            const now = Date.now();
+                            debugRectangles = debugRectangles.filter(r => now - r.timestamp < DEBUG_RECT_LIFETIME);
+                            updateDebugLayer();
+                        }
+                    }, 100);
+                }
+            } else {
+                // Stop refresh and clear debug layer
+                if (debugRefreshInterval) {
+                    clearInterval(debugRefreshInterval);
+                    debugRefreshInterval = null;
+                }
+                debugRectangles = [];
+                if (deckInstance) {
+                    const currentLayers = deckInstance.props.layers.filter(l => l.id !== 'debug-requests');
+                    deckInstance.setProps({ layers: currentLayers });
+                }
+            }
+        };
 
         // Create a tracked async buffer that counts HTTP requests
         async function createTrackedAsyncBuffer(url) {
@@ -484,7 +670,13 @@
                 const blockId = tileToQuadbin(x, y, z);
                 req.blockId = blockId;
                 req.generation = myGeneration;
+                req.z = z;
+                req.x = x;
+                req.y = y;
                 blockIds.push(blockId);
+
+                // Debug: show tile request
+                addDebugRect(z, x, y, 'tile');
             }
 
             try {
@@ -510,6 +702,18 @@
                         tileCache.set(cacheKey, null);
                         req.resolve(null);
                         continue;
+                    }
+
+                    // Debug: show band reads with slight delay for visual effect
+                    if (debugMode && result.bands) {
+                        result.bands.forEach((band, idx) => {
+                            if (band) {
+                                // Stagger the band rectangles slightly in time for visual effect
+                                setTimeout(() => {
+                                    addDebugRect(req.z, req.x, req.y, 'band', idx);
+                                }, idx * 50);
+                            }
+                        });
                     }
 
                     const image = createImage(result.bands, blockWidth, blockHeight);
@@ -784,6 +988,9 @@
 
                 updateStats();
                 loadBtn.disabled = false;
+
+                // Expose deck instance for debugging
+                window.deckInstance = deckInstance;
 
             } catch (e) {
                 setStatus(`Error: ${e.message}`, 'error');

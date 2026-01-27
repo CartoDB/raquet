@@ -824,6 +824,7 @@ def imageserver_to_raquet(
         compression=parquet_compression.lower() if parquet_compression else None,
         row_group_size=row_group_size,
         write_page_index=True,  # Enable page-level column indexes
+        write_statistics=True,  # Enable column statistics for row group pruning
         sorting_columns=[SortingColumn(0)],  # Column 0 (block) is sorted
     )
 

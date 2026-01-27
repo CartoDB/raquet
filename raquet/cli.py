@@ -550,6 +550,7 @@ def split_zoom_command(
                 compression="zstd",
                 row_group_size=row_group_size,
                 write_page_index=True,
+                write_statistics=True,
                 sorting_columns=[SortingColumn(0)],
             )
 
