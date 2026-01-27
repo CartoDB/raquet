@@ -380,6 +380,7 @@ SELECT * FROM read_raquet('raster.parquet', ST_GeomFromText('POLYGON((...))'));
 RaQuet supports any GDAL-readable raster format:
 - GeoTIFF / Cloud Optimized GeoTIFF (COG)
 - NetCDF (with CF time dimension support - adds `time_cf` and `time_ts` columns)
+- AAIGrid (Esri ASCII Grid)
 - ArcGIS ImageServer
 - And [many more GDAL formats](https://gdal.org/en/stable/drivers/raster/index.html)
 

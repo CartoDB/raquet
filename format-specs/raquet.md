@@ -350,6 +350,7 @@ RaQuet supports conversion from any GDAL-readable raster format, including:
 - **Cloud Optimized GeoTIFF (COG)**: Optimal for large imagery with existing overviews
 - **GeoTIFF**: Standard georeferenced raster format
 - **NetCDF**: Scientific data format with support for CF time dimensions
+- **AAIGrid (Esri ASCII Grid)**: Common interchange format for elevation and scientific data
 - **Other GDAL formats**: Any format supported by [GDAL raster drivers](https://gdal.org/en/stable/drivers/raster/index.html)
 
 ### COG-Specific Optimizations
