@@ -1064,13 +1064,18 @@ def create_metadata(
             )
         ]
 
+    # Convert NaN nodata to None for valid JSON
+    nodata_value = rg.nodata
+    if nodata_value is not None and math.isnan(nodata_value):
+        nodata_value = None
+
     metadata_json = {
         "version": "0.2.0",
         "compression": "gzip",
         "block_resolution": rg.zoom,
         "minresolution": minresolution,
         "maxresolution": rg.zoom,
-        "nodata": rg.nodata,
+        "nodata": nodata_value,
         "num_blocks": block_count,
         "num_pixels": block_count * (2**block_zoom) * (2**block_zoom),
         "bands": bands_metadata,
