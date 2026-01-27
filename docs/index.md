@@ -111,6 +111,28 @@ duckdb -c "SELECT * FROM read_parquet('output.parquet') WHERE block != 0 LIMIT 5
 
 ---
 
+## Sample Data
+
+Download sample RaQuet files to try with DuckDB, the viewer, or your own tools:
+
+| Dataset | Description | Size | Download |
+|---------|-------------|------|----------|
+| **Europe** | RGB satellite imagery of Europe | 360 KB | [europe.parquet](https://storage.googleapis.com/raquet_demo_data/europe.parquet) |
+| **CFSR SST** | Sea Surface Temperature time-series (1980-2015, 432 monthly steps) | 70 MB | [cfsr_sst.parquet](https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet) |
+
+```bash
+# Download and query with DuckDB
+curl -O https://storage.googleapis.com/raquet_demo_data/europe.parquet
+duckdb -c "SELECT * FROM read_parquet('europe.parquet') WHERE block != 0 LIMIT 5"
+
+# Or query directly from cloud storage
+duckdb -c "SELECT * FROM read_parquet('https://storage.googleapis.com/raquet_demo_data/europe.parquet') WHERE block != 0 LIMIT 5"
+```
+
+The CFSR SST dataset demonstrates time-series support with `time_cf` and `time_ts` columns for NetCDF temporal data.
+
+---
+
 ## DuckDB Extension
 
 The **[DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet)** brings full raster analytics capabilities to DuckDB, enabling you to query RaQuet files with PostGIS-style functions.
