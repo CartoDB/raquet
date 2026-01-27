@@ -254,10 +254,12 @@ def read_statistics_numpy(
 
 
 def is_web_mercator(
-    sref: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    sref: "osgeo.osr.SpatialReference | None",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
 ) -> bool:
     """Check if spatial reference is EPSG:3857 web mercator"""
+    if sref is None:
+        return False
     return bool(sref.IsSame(web_mercator))
 
 
@@ -519,6 +521,16 @@ def read_geotiff(
         src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
         src_sref = src_ds.GetSpatialRef()
 
+        # If no CRS defined, try reopening with ASSUME_LONGLAT=YES (useful for NetCDF)
+        if src_sref is None:
+            logging.info("No CRS defined, assuming WGS84 (lon/lat) coordinates")
+            src_ds = osgeo.gdal.OpenEx(
+                geotiff_filename,
+                open_options=["ASSUME_LONGLAT=YES"],
+            )
+            src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
+            src_sref = src_ds.GetSpatialRef()
+
         # Check if we can use COG overviews directly (source is web mercator with overviews)
         overview_count = src_bands[0].GetOverviewCount()
         use_cog_overviews = is_web_mercator(src_sref, web_mercator) and overview_count > 0
@@ -772,7 +784,7 @@ def create_metadata(
                 "name": bname,
                 "colorinterp": bcolorinterp,
                 "colortable": bcolortable,
-                "stats": dict(approximated_stats=True, **stats.__dict__),
+                "stats": dict(approximated_stats=True, **stats.__dict__) if stats else None,
             }
             for btype, bname, bcolorinterp, bcolortable, stats in zip(
                 rg.bandtypes,
