@@ -66,8 +66,8 @@ RaQuet isn't just a specification — it's designed to plug directly into [CARTO
 - **Snowflake** — Full support via [Analytics Toolbox for Snowflake](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-snowflake)
 - **Databricks** — Full support via [Analytics Toolbox for Databricks](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-databricks)
 - **PostgreSQL** — Full support via [Analytics Toolbox for PostgreSQL](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-postgresql)
+- **DuckDB** — Full support via [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) — Query raster tiles with SQL, extract pixel values, compute statistics, and perform band math directly in DuckDB
 - **Redshift** — *Coming soon*
-- **DuckDB** — *Coming soon*
 - **Oracle** — *Coming soon*
 
 </div>
@@ -111,6 +111,81 @@ duckdb -c "SELECT * FROM read_parquet('output.parquet') WHERE block != 0 LIMIT 5
 
 ---
 
+## DuckDB Extension
+
+The **[DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet)** brings full raster analytics capabilities to DuckDB, enabling you to query RaQuet files with PostGIS-style functions.
+
+### Installation
+
+```sql
+-- Coming soon to community extensions
+INSTALL raquet FROM community;
+LOAD raquet;
+
+-- Or build from source
+-- https://github.com/jatorre/duckdb-raquet
+```
+
+### Features
+
+- **Pixel Extraction** — `ST_RasterValue(block, band, lon, lat, metadata)`
+- **Tile Statistics** — `ST_RasterSummaryStats(band, dtype, width, height, compression)`
+- **Region Statistics** — `ST_RegionStats(band, block, geometry, metadata)` for zonal stats
+- **Spatial Filtering** — `ST_Intersects`, `ST_Contains`, `quadbin_polyfill`
+- **Band Math** — `ST_NDVI`, `ST_NormalizedDifference`, `ST_BandMath`
+- **Clipping** — `ST_Clip`, `ST_ClipMask` for geometry-based extraction
+- **Time-Series** — CF conventions support for NetCDF temporal data
+- **Cloud-Native** — Query directly from S3/GCS with predicate pushdown
+
+### Example Queries
+
+```sql
+LOAD raquet;
+
+-- Extract pixel value at a location
+SELECT ST_RasterValue(
+    block, band_1, -122.4194, 37.7749, metadata
+) AS value
+FROM read_parquet('https://storage.googleapis.com/bucket/raster.parquet')
+WHERE block = quadbin_from_lonlat(-122.4194, 37.7749, 14);
+
+-- Compute statistics for tiles in a region
+SELECT
+    block,
+    (ST_RasterSummaryStats(band_1, 'uint8', 256, 256, 'gzip')).mean
+FROM read_parquet('raster.parquet')
+WHERE ST_Intersects(block, ST_GeomFromText('POLYGON((...))'));
+
+-- Calculate NDVI across all tiles
+SELECT
+    block,
+    (ST_NormalizedDifferenceStats(band_nir, band_red, metadata)).mean as ndvi
+FROM read_parquet('satellite.parquet')
+WHERE block != 0;
+
+-- Time-series query (NetCDF data)
+SELECT
+    YEAR(time_ts) as year,
+    AVG((ST_RasterSummaryStats(band_1, 'float64', 256, 256, 'gzip', -9999)).mean) as annual_avg
+FROM read_parquet('climate.parquet')
+WHERE block != 0
+GROUP BY YEAR(time_ts);
+```
+
+### Cloud-Native Performance
+
+Query RaQuet files directly from cloud storage with minimal data transfer:
+
+| Query Type | Data Transfer | Notes |
+|------------|---------------|-------|
+| Single pixel (3 bands) | ~2 KB | Predicate pushdown to storage |
+| 2,352 tiles statistics | ~165 MB | Parallel fetching |
+| Spatial filter | Variable | Only matching tiles fetched |
+
+[View on GitHub →](https://github.com/jatorre/duckdb-raquet)
+
+---
+
 ## How It Works
 
 Each row in a RaQuet file represents a single rectangular tile of raster data:
@@ -136,7 +211,8 @@ Each row in a RaQuet file represents a single rectangular tile of raster data:
 ### Tools
 
 - **[RaQuet Viewer](viewer.html)** - Browser-based viewer using HTTP range requests ([how it works](viewer-how-it-works.html))
-- **[raquet CLI](#cli-reference)** - Convert, inspect, and export RaQuet files
+- **[raquet CLI](https://pypi.org/project/raquet-io/)** - Convert, inspect, and export RaQuet files
+- **[DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet)** - Full raster analytics in DuckDB with PostGIS-style functions
 
 ---
 
@@ -243,6 +319,8 @@ Yes! RaQuet files are standard Parquet files that can be loaded into any Parquet
 
 ### How do I query specific tiles?
 
+**Basic Parquet queries:**
+
 ```sql
 -- Query a specific tile by QUADBIN ID
 SELECT block, band_1, band_2, band_3
@@ -253,6 +331,24 @@ WHERE block = 5270201491262341119;
 SELECT block, band_1, band_2, band_3
 FROM read_parquet('raster.parquet')
 WHERE block BETWEEN 5270201491262341119 AND 5270201491263324159;
+```
+
+**With DuckDB Raquet Extension (recommended):**
+
+```sql
+LOAD raquet;
+
+-- Query by coordinates (extension handles QUADBIN conversion)
+SELECT ST_RasterValue(block, band_1, -122.4, 37.8, metadata) as value
+FROM read_parquet('raster.parquet')
+WHERE block = quadbin_from_lonlat(-122.4, 37.8, 14);
+
+-- Spatial filter with geometry
+SELECT * FROM read_parquet('raster.parquet')
+WHERE ST_Intersects(block, ST_GeomFromText('POLYGON((...))'));
+
+-- Or use the read_raquet macro with automatic spatial filtering
+SELECT * FROM read_raquet('raster.parquet', ST_GeomFromText('POLYGON((...))'));
 ```
 
 ### What raster formats can I convert to RaQuet?
@@ -266,6 +362,30 @@ RaQuet supports any GDAL-readable raster format:
 ### Is there a size limit?
 
 RaQuet can handle rasters of any size. For very large datasets, consider using `raquet-io split-zoom` to create separate files per zoom level for optimal query performance.
+
+### How do I perform raster analytics with DuckDB?
+
+Use the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) for full raster analytics capabilities:
+
+```sql
+LOAD raquet;
+
+-- Zonal statistics: average elevation within a polygon
+WITH region AS (
+    SELECT ST_GeomFromText('POLYGON((-122.5 37.7, -122.3 37.7, -122.3 37.9, -122.5 37.9, -122.5 37.7))') as geom
+)
+SELECT (ST_RegionStats(band_1, block, region.geom, metadata)).mean as avg_elevation
+FROM read_parquet('dem.parquet'), region
+WHERE ST_Intersects(block, region.geom);
+```
+
+The extension provides:
+- 10-100x faster than PostGIS Raster for analytical workloads
+- Parallel processing across CPU cores
+- Cloud-native with S3/GCS predicate pushdown
+- Time-series support for NetCDF data
+
+[View performance comparison →](https://github.com/jatorre/duckdb-raquet/blob/main/docs/PERFORMANCE_COMPARISON.md)
 
 ---
 
@@ -336,6 +456,18 @@ raquet-io split-zoom large_raster.parquet output_dir/
 ```
 
 This allows queries to target specific zoom levels without scanning the entire file.
+
+### DuckDB Extension Performance
+
+The DuckDB Raquet Extension provides significant performance improvements over traditional raster databases:
+
+| Operation | DuckDB Raquet | PostGIS Raster | Speedup |
+|-----------|---------------|----------------|---------|
+| Single point extraction | 0.030s | 0.048s | 1.6x |
+| All tiles statistics | 0.15s | 2.2s | **14.6x** |
+| Band math (NDVI) | 0.69s | 72.6s | **105x** |
+
+[View full benchmark comparison →](https://github.com/jatorre/duckdb-raquet/blob/main/docs/PERFORMANCE_COMPARISON.md)
 
 ---
 
