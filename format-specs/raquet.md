@@ -1,4 +1,4 @@
-# RaQuet Specification v0.2.0
+# RaQuet Specification v0.3.0
 
 ## Overview
 
@@ -97,124 +97,87 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 ```json
 {
-    "version": "0.2.0",
+    "version": "0.3.0",
+    "width": 9216,
+    "height": 7936,
+    "crs": "EPSG:3857",
+    "bounds": [-19.69, 26.43, 5.63, 44.09],
+    "bounds_crs": "EPSG:4326",
     "compression": "gzip",
-    "block_resolution": 5,
-    "minresolution": 2,
-    "maxresolution": 5,
-    "nodata": 0,
-    "bounds": [-180.0, -90.0, 180.0, 90.0],
-    "center": [0.0, 0.0, 5],
-    "width": 65536,
-    "height": 32768,
-    "block_width": 256,
-    "block_height": 256,
-    "num_blocks": 32768,
-    "num_pixels": 2147483648,
-    "pixel_resolution": 13,
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 3,
+        "max_zoom": 9,
+        "pixel_zoom": 17,
+        "num_blocks": 1116
+    },
+    "time": {
+        "cf:units": "minutes since 1980-01-01 00:00:00",
+        "cf:calendar": "standard",
+        "resolution": "P1M",
+        "interpretation": "period_start",
+        "count": 432,
+        "range": [0, 18889920]
+    },
     "bands": [
         {
-            "type": "uint8",
             "name": "band_1",
-            "stats": {
-                "min": 0.0,
-                "max": 255.0,
-                "mean": 28.66,
-                "stddev": 41.57,
-                "sum": 2866073.99,
-                "sum_squares": 1e15,
-                "count": 100000,
-                "quantiles": {
-                    "3": [0.25, 0.5, 0.75],
-                    "4": [0.2, 0.4, 0.6, 0.8]
-                },
-                "top_values": {
-                    "0": 1000,
-                    "1": 800,
-                    "2": 600
-                },
-                "approximated_stats": true
-            },
-            "colorinterp": "red",
-            "nodata": "0",
-            "colortable": null
+            "description": "Global Horizontal Irradiation",
+            "type": "float32",
+            "nodata": null,
+            "unit": "kWh/m²/day",
+            "scale": null,
+            "offset": null,
+            "colorinterp": "undefined",
+            "colortable": null,
+            "STATISTICS_MINIMUM": 0.0,
+            "STATISTICS_MAXIMUM": 6.42,
+            "STATISTICS_MEAN": 0.67,
+            "STATISTICS_STDDEV": 1.63,
+            "STATISTICS_VALID_PERCENT": 100.0,
+            "histogram": {
+                "min": -0.01,
+                "max": 6.17,
+                "buckets": 256,
+                "counts": [55644410, 0, "..."]
+            }
         }
-    ],
+    ]
 }
 ```
 
 ### Metadata Fields Description
+
+- **Version Information**
+  - `version`: String indicating the RaQuet specification version. Current version is "0.3.0".
+
+- **Raster Dimensions**
+  - `width`, `height`: Integers specifying full resolution raster dimensions in pixels.
+
+- **Coordinate Reference System**
+  - `crs`: String indicating the CRS of the raster data. Always "EPSG:3857" (Web Mercator) for RaQuet.
+  - `bounds`: Array [west, south, east, north] specifying geographic extent.
+  - `bounds_crs`: String indicating the CRS of the bounds. Always "EPSG:4326" (WGS84) for RaQuet.
 
 - **Compression Information**
   - `compression`: String indicating the compression method used for band data.
     - Values: "gzip" or null.
     - When null, band data is stored uncompressed.
 
-- **Resolution Information**
-  - `block_resolution`: Integer specifying the base resolution level for blocks (QUADBIN tiles). The range is 0-26.
-  - `minresolution`: Integer indicating the minimum resolution level in the dataset, including overviews.
-  - `maxresolution`: Integer indicating the maximum resolution level (same as block_resolution).
-  - `pixel_resolution`: Integer computed as block_resolution + log4(block_size), representing the resolution level for individual pixels.
-
-- **Band Information**
-  Each band entry in the `bands` array contains:
-  - `type`: String indicating the data type. Valid values: `uint8, int8, uint16, int16, uint32, int32, uint64, int64, float32, float64`.
-  - `name`: String identifier for the band, matching the column name in the Parquet file.
-  - `stats`: Object containing statistical information:
-    - `min`, `max`: Numeric values representing data range.
-    - `mean`, `stddev`: Numeric values for distribution statistics.
-    - `sum`: Total sum of all values.
-    - `sum_squares`: Sum of squares, useful for variance calculations.
-    - `count`: Number of valid pixels (excluding NoData).
-    - `quantiles`: Optional object mapping quantiles to their values:
-      - Keys: String representation of quantile.
-      - Values: Array of quantile boundary values in ascending order
-      - Example:
-        ```json
-         {
-            "3": [10, 40],
-            "4": [10, 20, 60]
-         }
-        ```
-    - `top_values`: Optional object for discrete/categorical data:
-      - Keys: String representation of pixel values
-      - Values: Integer count of pixels with that value
-      - Example:
-        ```json
-        {
-          "0": 1000,   // 1000 pixels have value 0
-          "1": 800,    // 800 pixels have value 1
-          "2": 600     // 600 pixels have value 2
-        }
-        ```
-    - `version`: String indicating the statistics computation version.
-    - `approximated_stats`: Boolean indicating if statistics are approximated.
-  - `colorinterp`: Optional string indicating color interpretation. Acepted values are valid [GDAL color interpretation vañues](https://gdal.org/en/stable/user/raster_data_model.html). Examples: `"red"`, `"green"`, `"blue"`, `"alpha"`, `"palette"`.
-  - `nodata`: String representation of the band-specific NoData value.
-  - `colortable`: Optional object mapping pixel values to RGBA colors. When present:
-    - Keys: String representation of pixel values (0-255 for uint8)
-    - Values: Arrays of 4 integers [red, green, blue, alpha], each in range 0-255
-    - Used with `colorinterp: "palette"` to define color mapping
-    - Example:
-      ```json
-      {
-        "0": [0, 0, 0, 255],    // Black, fully opaque
-        "1": [255, 0, 0, 255],  // Red, fully opaque
-        "255": [0, 0, 0, 0]     // Transparent (typical NoData value)
-      }
-      ```
-
-- **Spatial Information**
-  - `bounds`: Array [west, south, east, north] specifying geographic extent in WGS84 coordinates.
-  - `center`: Array [longitude, latitude, resolution] indicating the center point and resolution level.
-  - `width`, `height`: Integers specifying full resolution raster dimensions in pixels.
-  - `block_width`, `block_height`: Integers specifying tile dimensions in pixels.
-  - `num_blocks`: Integer count of non-empty blocks in the dataset.
-  - `num_pixels`: Integer total count of pixels in the full resolution raster.
+- **Tiling Information**
+  - `tiling`: Object containing tile/block configuration:
+    - `scheme`: String identifying the tiling scheme. Always "quadbin" for RaQuet.
+    - `block_width`, `block_height`: Integers specifying tile dimensions in pixels.
+    - `min_zoom`: Integer indicating the minimum zoom level (most zoomed out overview).
+    - `max_zoom`: Integer indicating the maximum zoom level (native resolution).
+    - `pixel_zoom`: Integer indicating the zoom level for individual pixels (max_zoom + log4(block_size)).
+    - `num_blocks`: Integer count of non-empty blocks in the dataset.
 
 - **Time Information** (optional, present when `time_cf` column exists)
   - `time`: Object containing CF convention time metadata:
-    - `cf:units`: String specifying the CF time units (e.g., "minutes since 1980-01-01 00:00:00", "days since 1850-01-01"). This follows the [CF Conventions](https://cfconventions.org/Data/cf-conventions/cf-conventions-1.11/cf-conventions.html#time-coordinate) time specification.
+    - `cf:units`: String specifying the CF time units (e.g., "minutes since 1980-01-01 00:00:00"). This follows the [CF Conventions](https://cfconventions.org/Data/cf-conventions/cf-conventions-1.11/cf-conventions.html#time-coordinate) time specification.
     - `cf:calendar`: String specifying the calendar system. Valid values:
       - `"standard"` or `"gregorian"`: Standard Gregorian calendar (default)
       - `"proleptic_gregorian"`: Gregorian calendar extended to dates before 1582-10-15
@@ -222,30 +185,83 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
       - `"365_day"` or `"noleap"`: No leap years
       - `"366_day"` or `"all_leap"`: Every year is a leap year
       - `"julian"`: Julian calendar
-    - `cf:standard_name`: Optional string, typically "time" per CF conventions.
     - `resolution`: Optional string in [ISO 8601 duration format](https://en.wikipedia.org/wiki/ISO_8601#Durations) indicating the time step (e.g., "P1M" for monthly, "P1D" for daily, "PT1H" for hourly).
     - `interpretation`: String indicating how time values should be interpreted. Value: `"period_start"` (time represents the beginning of each period).
     - `count`: Integer number of unique time steps in the dataset.
     - `range`: Array [min, max] of the first and last `time_cf` values.
 
+- **Band Information**
+  Each band entry in the `bands` array contains:
+  - `name`: String identifier for the band, matching the column name in the Parquet file.
+  - `description`: Optional string with human-readable band description (from GDAL GetDescription).
+  - `type`: String indicating the data type. Valid values: `uint8, int8, uint16, int16, uint32, int32, uint64, int64, float32, float64`.
+  - `nodata`: The band-specific NoData value, or null if not set.
+  - `unit`: Optional string indicating physical units (from GDAL GetUnitType). Examples: "meters", "kWh/m²/day".
+  - `scale`: Optional float for converting DN to physical values: `physical = DN * scale + offset` (from GDAL GetScale).
+  - `offset`: Optional float for converting DN to physical values (from GDAL GetOffset).
+  - `colorinterp`: Optional string indicating color interpretation. Values are [GDAL color interpretations](https://gdal.org/en/stable/user/raster_data_model.html): `"red"`, `"green"`, `"blue"`, `"alpha"`, `"gray"`, `"palette"`, `"undefined"`.
+  - `colortable`: Optional object mapping pixel values to RGBA colors (for palette images):
+    ```json
+    {
+      "0": [0, 0, 0, 255],
+      "1": [255, 0, 0, 255],
+      "255": [0, 0, 0, 0]
+    }
+    ```
+
+- **Band Statistics** (GDAL-compatible keys)
+  Each band entry also contains statistics using GDAL-compatible key names:
+  - `STATISTICS_MINIMUM`: Numeric minimum value.
+  - `STATISTICS_MAXIMUM`: Numeric maximum value.
+  - `STATISTICS_MEAN`: Numeric mean value.
+  - `STATISTICS_STDDEV`: Numeric standard deviation.
+  - `STATISTICS_VALID_PERCENT`: Percentage of valid (non-nodata) pixels (0-100).
+
+- **Histogram** (optional)
+  - `histogram`: Object containing GDAL-style histogram:
+    - `min`: Histogram minimum value.
+    - `max`: Histogram maximum value.
+    - `buckets`: Number of buckets (typically 256).
+    - `counts`: Array of pixel counts per bucket.
+
 ### Examples of Common Use Cases
 
-TODO: fix these incomplete examples
-
-1. **Single-band Byte Raster (e.g., Land Classification)**
+1. **Single-band Scientific Data (e.g., Solar Irradiation)**
 ```json
 {
-    "compression": null,
-    "block_resolution": 5,
+    "version": "0.3.0",
+    "width": 9216,
+    "height": 7936,
+    "crs": "EPSG:3857",
+    "bounds": [-19.69, 26.43, 5.63, 44.09],
+    "bounds_crs": "EPSG:4326",
+    "compression": "gzip",
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 3,
+        "max_zoom": 9,
+        "pixel_zoom": 17,
+        "num_blocks": 1116
+    },
     "bands": [{
-        "type": "uint8",
         "name": "band_1",
-        "stats": {
-            "min": 0.0,
-            "max": 10.0,
-            "mean": 3.2,
-            "stddev": 2.1,
-            "top_values": {"0": 1000, "1": 800, "2": 600}
+        "description": "Global Horizontal Irradiation",
+        "type": "float32",
+        "nodata": null,
+        "unit": "kWh/m²/day",
+        "colorinterp": "undefined",
+        "STATISTICS_MINIMUM": 0.0,
+        "STATISTICS_MAXIMUM": 6.42,
+        "STATISTICS_MEAN": 0.67,
+        "STATISTICS_STDDEV": 1.63,
+        "STATISTICS_VALID_PERCENT": 100.0,
+        "histogram": {
+            "min": -0.01,
+            "max": 6.17,
+            "buckets": 256,
+            "counts": [55644410, 0, "..."]
         }
     }]
 }
@@ -254,77 +270,131 @@ TODO: fix these incomplete examples
 2. **RGB Satellite Image**
 ```json
 {
+    "version": "0.3.0",
+    "width": 1024,
+    "height": 1024,
+    "crs": "EPSG:3857",
+    "bounds": [0.0, 40.98, 45.0, 66.51],
+    "bounds_crs": "EPSG:4326",
     "compression": "gzip",
-    "block_resolution": 8,
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 4,
+        "max_zoom": 6,
+        "pixel_zoom": 14,
+        "num_blocks": 16
+    },
     "bands": [
         {
-            "type": "uint8",
             "name": "band_1",
+            "type": "uint8",
             "colorinterp": "red",
-            "stats": {"min": 0.0, "max": 255.0}
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255,
+            "STATISTICS_MEAN": 127.5,
+            "STATISTICS_STDDEV": 45.2,
+            "STATISTICS_VALID_PERCENT": 100.0
         },
         {
-            "type": "uint8",
             "name": "band_2",
+            "type": "uint8",
             "colorinterp": "green",
-            "stats": {"min": 0.0, "max": 255.0}
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255,
+            "STATISTICS_MEAN": 135.2,
+            "STATISTICS_STDDEV": 42.1,
+            "STATISTICS_VALID_PERCENT": 100.0
         },
         {
-            "type": "uint8",
             "name": "band_3",
+            "type": "uint8",
             "colorinterp": "blue",
-            "stats": {"min": 0.0, "max": 255.0}
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255,
+            "STATISTICS_MEAN": 98.7,
+            "STATISTICS_STDDEV": 38.9,
+            "STATISTICS_VALID_PERCENT": 100.0
         }
     ]
 }
 ```
 
-3. **Float32 Scientific Data (e.g., Elevation)**
+3. **Elevation Data with Units**
 ```json
 {
+    "version": "0.3.0",
+    "width": 32768,
+    "height": 14848,
+    "crs": "EPSG:3857",
+    "bounds": [-180.0, -60.24, 180.0, 65.37],
+    "bounds_crs": "EPSG:4326",
     "compression": "gzip",
-    "block_resolution": 6,
-    "nodata": null,
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 0,
+        "max_zoom": 7,
+        "pixel_zoom": 15,
+        "num_blocks": 7424
+    },
     "bands": [{
-        "type": "float32",
-        "name": "elevation",
-        "stats": {
-            "min": -413.0,
-            "max": 8848.0,
-            "mean": 339.2,
-            "stddev": 784.5,
-            "approximated_stats": false
-        }
+        "name": "band_1",
+        "description": "Terrain elevation above sea level",
+        "type": "int16",
+        "nodata": -32768,
+        "unit": "meters",
+        "colorinterp": "undefined",
+        "STATISTICS_MINIMUM": -413,
+        "STATISTICS_MAXIMUM": 8848,
+        "STATISTICS_MEAN": 339.2,
+        "STATISTICS_STDDEV": 784.5,
+        "STATISTICS_VALID_PERCENT": 74.5
     }]
 }
 ```
 
-4. **Time-Series Climate Data (e.g., Monthly Sea Surface Temperature)**
+4. **Time-Series Climate Data (NetCDF with CF conventions)**
 ```json
 {
-    "version": "0.2.0",
+    "version": "0.3.0",
+    "width": 1440,
+    "height": 721,
+    "crs": "EPSG:3857",
+    "bounds": [-180.0, -90.0, 180.0, 90.0],
+    "bounds_crs": "EPSG:4326",
     "compression": "gzip",
-    "block_resolution": 5,
-    "nodata": -999000000,
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 0,
+        "max_zoom": 5,
+        "pixel_zoom": 13,
+        "num_blocks": 3
+    },
     "time": {
         "cf:units": "minutes since 1980-01-01 00:00:00",
         "cf:calendar": "standard",
-        "cf:standard_name": "time",
         "resolution": "P1M",
         "interpretation": "period_start",
         "count": 432,
         "range": [0, 18889920]
     },
     "bands": [{
-        "type": "float64",
         "name": "sst",
-        "stats": {
-            "min": 271.3,
-            "max": 303.7,
-            "mean": 286.9,
-            "stddev": 11.4,
-            "approximated_stats": true
-        }
+        "description": "Sea Surface Temperature",
+        "type": "float64",
+        "nodata": -9999,
+        "unit": "K",
+        "colorinterp": "undefined",
+        "STATISTICS_MINIMUM": 271.3,
+        "STATISTICS_MAXIMUM": 303.7,
+        "STATISTICS_MEAN": 286.9,
+        "STATISTICS_STDDEV": 11.4,
+        "STATISTICS_VALID_PERCENT": 67.2
     }]
 }
 ```

@@ -115,19 +115,26 @@ class RasterGeometry:
     maxlon: float
     cf_time: CFTimeInfo | None = None  # CF time dimension metadata
     band_time_values: list[float | None] | None = None  # CF time value for each band
+    # GDAL band metadata (v0.3.0)
+    band_scales: list[float | None] | None = None
+    band_offsets: list[float | None] | None = None
+    band_units: list[str] | None = None
+    band_descriptions: list[str] | None = None
+    band_nodatas: list[float | None] | None = None  # Per-band nodata values
 
 
 @dataclasses.dataclass
 class RasterStats:
     """Convenience wrapper for raster statistics"""
 
-    count: int
+    count: int  # Valid (non-nodata) pixel count
     min: int | float
     max: int | float
     mean: int | float
     stddev: int | float
     sum: int | float
     sum_squares: int | float
+    total_pixels: int = 0  # Total pixels including nodata (for valid_percent)
 
     def scale_by(self, zoom: int) -> "RasterStats":
         """Return approximate equivalent stats for a higher zoom"""
@@ -139,7 +146,15 @@ class RasterStats:
             self.stddev,
             self.sum * 4**zoom,
             self.sum_squares * 4**zoom,
+            self.total_pixels * 4**zoom,
         )
+
+    @property
+    def valid_percent(self) -> float:
+        """Percentage of valid (non-nodata) pixels"""
+        if self.total_pixels == 0:
+            return 100.0
+        return (self.count / self.total_pixels) * 100.0
 
 
 @dataclasses.dataclass
@@ -429,6 +444,7 @@ def combine_stats(
         stddev=prev_stats.stddev * prev_weight + curr_stats.stddev * curr_weight,
         sum=prev_stats.sum + curr_stats.sum,
         sum_squares=prev_stats.sum_squares + curr_stats.sum_squares,
+        total_pixels=prev_stats.total_pixels + curr_stats.total_pixels,
     )
 
     return next_stats
@@ -438,6 +454,7 @@ def read_statistics_python(
     values: list[int | float], nodata: int | float | None
 ) -> RasterStats | None:
     """Calculate statistics for list of raw band values and optional nodata value"""
+    total_pixels = len(values)
     if nodata is not None:
         values = [val for val in values if val != nodata and not math.isnan(val)]
 
@@ -452,6 +469,7 @@ def read_statistics_python(
         stddev=statistics.stdev(values),
         sum=sum(val for val in values),
         sum_squares=sum(val**2 for val in values),
+        total_pixels=total_pixels,
     )
 
 
@@ -459,6 +477,7 @@ def read_statistics_numpy(
     values: "numpy.array", nodata: int | float | None
 ) -> RasterStats | None:
     """Calculate statistics for array of numeric values and optional nodata value"""
+    total_pixels = values.size
     if nodata is not None:
         bad_values_mask = (values == nodata) | numpy.isnan(values)
         masked_values = numpy.ma.masked_array(values, bad_values_mask)
@@ -483,6 +502,7 @@ def read_statistics_numpy(
         stddev=float(masked_values.std()),
         sum=ptype(masked_values.sum()),
         sum_squares=float((masked_values.astype(ptype) ** 2).sum()),
+        total_pixels=total_pixels,
     )
 
 
@@ -628,20 +648,36 @@ def create_tile_ds(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
     tile: mercantile.Tile,
     block_zoom: int,
+    numpy_module: "module | None" = None,  # noqa: F821
 ) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_raster)
     # Initialize warped tile dataset and its bands
+    tile_size = 2**block_zoom
     tile_ds = driver.Create(
         f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif",
-        2**block_zoom,
-        2**block_zoom,
+        tile_size,
+        tile_size,
         ds.RasterCount,
         ds.GetRasterBand(1).DataType,
     )
     tile_ds.SetProjection(web_mercator.ExportToWkt())
 
     for band_num in range(1, 1 + ds.RasterCount):
-        if (nodata := ds.GetRasterBand(band_num).GetNoDataValue()) is not None:
-            tile_ds.GetRasterBand(band_num).SetNoDataValue(nodata)
+        src_band = ds.GetRasterBand(band_num)
+        nodata = src_band.GetNoDataValue()
+        dst_band = tile_ds.GetRasterBand(band_num)
+
+        if nodata is not None:
+            dst_band.SetNoDataValue(nodata)
+            # Initialize tile with nodata values to avoid garbage in uncovered areas
+            if numpy_module is not None:
+                # Use numpy for efficient fill
+                fill_value = nodata
+                dtype = numpy_module.float64  # Safe default that works for all types
+                fill_array = numpy_module.full((tile_size, tile_size), fill_value, dtype=dtype)
+                dst_band.WriteArray(fill_array)
+            else:
+                # Fallback: fill with nodata using GDAL
+                dst_band.Fill(nodata)
 
     # Convert mercator coordinates to pixel coordinates
     xmin, ymin, xmax, ymax = mercantile.xy_bounds(tile)
@@ -814,15 +850,39 @@ def read_raster(
             maxlon,
             cf_time=cf_time,
             band_time_values=band_time_values,
+            # GDAL band metadata (v0.3.0)
+            band_scales=[band.GetScale() for band in src_bands],
+            band_offsets=[band.GetOffset() for band in src_bands],
+            band_units=[band.GetUnitType() or "" for band in src_bands],
+            band_descriptions=[band.GetDescription() or "" for band in src_bands],
+            band_nodatas=[band.GetNoDataValue() for band in src_bands],
         )
 
         pipe.send(raster_geometry)
 
         # Driver and options for the warps to come
         gtiff_driver = osgeo.gdal.GetDriverByName("GTiff")
-        opts = osgeo.gdal.WarpOptions(
-            resampleAlg=resampling_algorithms[resampling_algorithm]
+
+        # Get nodata value for warp options
+        nodata_value = src_ds.GetRasterBand(1).GetNoDataValue()
+
+        # WarpOptions for reading from source at max zoom
+        opts_source = osgeo.gdal.WarpOptions(
+            resampleAlg=resampling_algorithms[resampling_algorithm],
+            srcNodata=nodata_value,
+            dstNodata=nodata_value,
         )
+
+        # WarpOptions for creating overviews from child tiles
+        # Use Average resampling for better overview quality with nodata handling
+        opts_overview = osgeo.gdal.WarpOptions(
+            resampleAlg=osgeo.gdal.GRA_Average,
+            srcNodata=nodata_value,
+            dstNodata=nodata_value,
+        )
+
+        # Numpy module for tile initialization (if available)
+        numpy_mod = numpy if HAS_NUMPY else None
 
         minzoom = find_minzoom(raster_geometry, block_zoom)
         stats_zoom = max(minzoom, raster_geometry.zoom + STATS_ZOOM_OFFSET)
@@ -846,7 +906,7 @@ def read_raster(
         while frames:
             frame = frames.pop()
             tile_ds: osgeo.gdal.Dataset | None = None
-            create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom
+            create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom, numpy_mod
             do_stats = frame.tile.z == stats_zoom
 
             if frame.tile.z > raster_geometry.zoom:
@@ -857,7 +917,7 @@ def read_raster(
                 logging.info("Warp %s from original dataset", frame.tile)
                 tile_ds = create_tile_ds(*create_args)
                 osgeo.gdal.Warp(
-                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts
+                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts_source
                 )
                 d, s = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
                 pipe.send((frame.tile, d, s))
@@ -886,16 +946,18 @@ def read_raster(
                             options=osgeo.gdal.WarpOptions(
                                 overviewLevel=ovr_idx,
                                 resampleAlg=osgeo.gdal.GRA_NearestNeighbour,
+                                srcNodata=nodata_value,
+                                dstNodata=nodata_value,
                             ),
                         )
                         cog_overview_used = True
 
                 if not cog_overview_used:
-                    # Fall back to building from child tiles
+                    # Fall back to building from child tiles using Average resampling
                     logging.info("Overview %s from %s", frame.tile, frame.outputs)
                     for sub_ds in frame.outputs:
                         osgeo.gdal.Warp(
-                            destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
+                            destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts_overview
                         )
 
                 d, s1 = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
@@ -954,9 +1016,9 @@ def read_metadata(table) -> dict:
 
 
 def get_raquet_dimensions(
-    zoom: int, xmin: int, ymin: int, xmax: int, ymax: int, block_zoom: int
-) -> dict[str, int]:
-    """Get dictionary of basic dimensions for RaQuet metadata from tile bounds"""
+    zoom: int, xmin: int, ymin: int, xmax: int, ymax: int, block_zoom: int, minresolution: int, block_count: int
+) -> dict:
+    """Get dictionary of dimensions for RaQuet v0.3.0 metadata from tile bounds"""
     # First and last tile in rectangular coverage
     upper_left = mercantile.Tile(x=xmin, y=ymin, z=zoom)
     lower_right = mercantile.Tile(x=xmax, y=ymax, z=zoom)
@@ -970,13 +1032,18 @@ def get_raquet_dimensions(
     nw, se = mercantile.bounds(upper_left), mercantile.bounds(lower_right)
 
     return {
-        "bounds": [nw.west, se.south, se.east, nw.north],
-        "center": [nw.west / 2 + se.east / 2, se.south / 2 + nw.north / 2, zoom],
         "width": raster_width,
         "height": raster_height,
-        "block_width": block_width,
-        "block_height": block_height,
-        "pixel_resolution": zoom + block_zoom,
+        "bounds": [nw.west, se.south, se.east, nw.north],
+        "tiling": {
+            "scheme": "quadbin",
+            "block_width": block_width,
+            "block_height": block_height,
+            "min_zoom": minresolution,
+            "max_zoom": zoom,
+            "pixel_zoom": zoom + block_zoom,
+            "num_blocks": block_count,
+        },
     }
 
 
@@ -1011,6 +1078,67 @@ def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
     return schema, band_names
 
 
+def _sanitize_nodata(nodata: float | int | None) -> float | int | None:
+    """Convert NaN nodata to None for valid JSON"""
+    if nodata is not None and isinstance(nodata, float) and math.isnan(nodata):
+        return None
+    return nodata
+
+
+def _create_band_metadata(
+    band_idx: int,
+    btype: str,
+    bname: str,
+    bcolorinterp: str,
+    bcolortable: dict | None,
+    stats: RasterStats | None,
+    rg: RasterGeometry,
+) -> dict:
+    """Create v0.3.0 band metadata with GDAL-compatible statistics keys"""
+    # Get per-band GDAL metadata
+    nodata = None
+    if rg.band_nodatas and band_idx < len(rg.band_nodatas):
+        nodata = _sanitize_nodata(rg.band_nodatas[band_idx])
+
+    description = ""
+    if rg.band_descriptions and band_idx < len(rg.band_descriptions):
+        description = rg.band_descriptions[band_idx] or ""
+
+    unit = ""
+    if rg.band_units and band_idx < len(rg.band_units):
+        unit = rg.band_units[band_idx] or ""
+
+    scale = None
+    if rg.band_scales and band_idx < len(rg.band_scales):
+        scale = rg.band_scales[band_idx]
+
+    offset = None
+    if rg.band_offsets and band_idx < len(rg.band_offsets):
+        offset = rg.band_offsets[band_idx]
+
+    band_meta = {
+        "name": bname,
+        "description": description,
+        "type": btype,
+        "nodata": nodata,
+        "unit": unit,
+        "scale": scale,
+        "offset": offset,
+        "colorinterp": bcolorinterp,
+        "colortable": bcolortable,
+    }
+
+    # Add GDAL-compatible statistics if available
+    if stats is not None:
+        band_meta["STATISTICS_MINIMUM"] = stats.min
+        band_meta["STATISTICS_MAXIMUM"] = stats.max
+        band_meta["STATISTICS_MEAN"] = stats.mean
+        band_meta["STATISTICS_STDDEV"] = stats.stddev
+        band_meta["STATISTICS_VALID_PERCENT"] = stats.valid_percent
+
+    return band_meta
+
+
 def create_metadata(
     rg: RasterGeometry,
     band_names: list[str],
@@ -1023,7 +1151,7 @@ def create_metadata(
     ymax: float,
     block_zoom: int,
 ) -> dict:
-    """Create a dictionary of RaQuet metadata
+    """Create a dictionary of RaQuet v0.3.0 metadata
 
     See https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#metadata-specification
     """
@@ -1037,49 +1165,54 @@ def create_metadata(
             combined_stats = combine_stats(combined_stats, stats)
 
         bands_metadata = [
-            {
-                "type": rg.bandtypes[0],
-                "name": "band_1",
-                "colorinterp": rg.bandcolorinterp[0],
-                "colortable": rg.bandcolortable[0],
-                "stats": dict(approximated_stats=True, **combined_stats.__dict__) if combined_stats else None,
-            }
+            _create_band_metadata(
+                0,
+                rg.bandtypes[0],
+                "band_1",
+                rg.bandcolorinterp[0],
+                rg.bandcolortable[0],
+                combined_stats,
+                rg,
+            )
         ]
     else:
         # Standard multi-band
         bands_metadata = [
-            {
-                "type": btype,
-                "name": bname,
-                "colorinterp": bcolorinterp,
-                "colortable": bcolortable,
-                "stats": dict(approximated_stats=True, **stats.__dict__) if stats else None,
-            }
-            for btype, bname, bcolorinterp, bcolortable, stats in zip(
-                rg.bandtypes,
-                band_names,
-                rg.bandcolorinterp,
-                rg.bandcolortable,
-                band_stats,
+            _create_band_metadata(
+                i,
+                btype,
+                bname,
+                bcolorinterp,
+                bcolortable,
+                stats,
+                rg,
+            )
+            for i, (btype, bname, bcolorinterp, bcolortable, stats) in enumerate(
+                zip(
+                    rg.bandtypes,
+                    band_names,
+                    rg.bandcolorinterp,
+                    rg.bandcolortable,
+                    band_stats,
+                )
             )
         ]
 
-    # Convert NaN nodata to None for valid JSON
-    nodata_value = rg.nodata
-    if nodata_value is not None and math.isnan(nodata_value):
-        nodata_value = None
+    # Get dimensions and tiling info
+    dimensions = get_raquet_dimensions(
+        rg.zoom, xmin, ymin, xmax, ymax, block_zoom, minresolution, block_count
+    )
 
     metadata_json = {
-        "version": "0.2.0",
+        "version": "0.3.0",
+        "width": dimensions["width"],
+        "height": dimensions["height"],
+        "crs": "EPSG:3857",
+        "bounds": dimensions["bounds"],
+        "bounds_crs": "EPSG:4326",
+        "tiling": dimensions["tiling"],
         "compression": "gzip",
-        "block_resolution": rg.zoom,
-        "minresolution": minresolution,
-        "maxresolution": rg.zoom,
-        "nodata": nodata_value,
-        "num_blocks": block_count,
-        "num_pixels": block_count * (2**block_zoom) * (2**block_zoom),
         "bands": bands_metadata,
-        **get_raquet_dimensions(rg.zoom, xmin, ymin, xmax, ymax, block_zoom),
     }
 
     # Add time metadata if CF time dimension is present

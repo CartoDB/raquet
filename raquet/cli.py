@@ -13,7 +13,7 @@ from pathlib import Path
 import click
 import pyarrow.parquet as pq
 
-from . import raster2raquet, raquet2geotiff, imageserver
+from . import raster2raquet, raquet2geotiff, imageserver, validate as validate_module
 
 # Backwards compatibility alias
 geotiff2raquet = raster2raquet
@@ -650,6 +650,58 @@ def split_zoom_command(
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+@cli.command("validate")
+@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.option("-v", "--verbose", is_flag=True, help="Show detailed validation output")
+@click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
+def validate_command(file: Path, verbose: bool, json_output: bool):
+    """Validate a Raquet file for correctness.
+
+    Performs comprehensive validation including:
+    - Schema validation (required columns)
+    - Metadata validation (version, structure)
+    - Pyramid validation (all zoom levels have data)
+    - Band statistics validation
+    - Data integrity checks
+
+    FILE is the path to a Raquet (.parquet) file.
+
+    \b
+    Examples:
+        raquet validate raster.parquet
+        raquet validate raster.parquet -v
+        raquet validate raster.parquet --json
+    """
+    try:
+        result = validate_module.validate_raquet(str(file))
+
+        if json_output:
+            import json as json_lib
+            output = {
+                "is_valid": result.is_valid,
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "stats": result.stats,
+            }
+            click.echo(json_lib.dumps(output, indent=2, default=str))
+        else:
+            click.echo(str(result))
+
+            if verbose and result.metadata:
+                import json as json_lib
+                click.echo("\nFull Metadata:")
+                click.echo(json_lib.dumps(result.metadata, indent=2))
+
+        sys.exit(0 if result.is_valid else 1)
+
+    except Exception as e:
+        click.echo(f"Error validating file: {e}", err=True)
         if verbose:
             import traceback
             traceback.print_exc()
