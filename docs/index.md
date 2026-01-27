@@ -22,7 +22,7 @@ RaQuet is a specification for storing and querying raster data using [Apache Par
 - **Cloud-Native**: Query raster data directly from cloud storage using DuckDB, BigQuery, or any Parquet-compatible tool
 - **Efficient**: QUADBIN spatial indexing enables fast tile lookups with row group pruning
 - **Simple**: Standard Parquet format works with existing data warehouse infrastructure
-- **Interoperable**: Convert from GeoTIFF, COG, or ArcGIS ImageServer
+- **Interoperable**: Convert from GeoTIFF, COG, NetCDF, or ArcGIS ImageServer
 
 ---
 
@@ -94,8 +94,9 @@ We're collaborating with the community to define best practices for spatial data
 # Install
 pip install raquet-io
 
-# Convert a GeoTIFF to RaQuet
-raquet-io convert geotiff input.tif output.parquet
+# Convert a raster (GeoTIFF, COG, NetCDF) to RaQuet
+raquet-io convert raster input.tif output.parquet
+raquet-io convert raster climate.nc climate.parquet  # NetCDF with time dimension
 
 # Inspect a RaQuet file
 raquet-io inspect output.parquet
@@ -164,20 +165,23 @@ raquet-io inspect landcover.parquet
 raquet-io inspect landcover.parquet -v  # verbose
 ```
 
-#### `raquet-io convert geotiff`
+#### `raquet-io convert raster`
 
-Convert a GeoTIFF to RaQuet format.
+Convert any GDAL-supported raster (GeoTIFF, COG, NetCDF, etc.) to RaQuet format.
 
 ```bash
-raquet-io convert geotiff input.tif output.parquet
+raquet-io convert raster input.tif output.parquet
+raquet-io convert raster climate.nc climate.parquet  # NetCDF with time dimension
 
 # With options
-raquet-io convert geotiff input.tif output.parquet \
+raquet-io convert raster input.tif output.parquet \
   --resampling bilinear \
   --block-size 512 \
   --row-group-size 200 \
   -v
 ```
+
+**Note:** `raquet-io convert geotiff` is still supported as an alias.
 
 | Option | Description |
 |--------|-------------|
@@ -253,9 +257,11 @@ WHERE block BETWEEN 5270201491262341119 AND 5270201491263324159;
 
 ### What raster formats can I convert to RaQuet?
 
-Currently supported:
+RaQuet supports any GDAL-readable raster format:
 - GeoTIFF / Cloud Optimized GeoTIFF (COG)
+- NetCDF (with CF time dimension support - adds `time_cf` and `time_ts` columns)
 - ArcGIS ImageServer
+- And [many more GDAL formats](https://gdal.org/en/stable/drivers/raster/index.html)
 
 ### Is there a size limit?
 
@@ -273,7 +279,7 @@ RaQuet files **must have blocks sorted by QUADBIN ID** for optimal performance. 
 
 ```bash
 # The CLI automatically sorts blocks during conversion
-raquet-io convert geotiff input.tif output.parquet
+raquet-io convert raster input.tif output.parquet
 ```
 
 ### Row Group Size
@@ -290,7 +296,7 @@ Row group size affects HTTP request efficiency when using client-side viewers. O
 **Recommendation:** Use `--row-group-size 8` for files optimized for client-side web viewing:
 
 ```bash
-raquet-io convert geotiff input.tif output.parquet --row-group-size 8
+raquet-io convert raster input.tif output.parquet --row-group-size 8
 ```
 
 For server-side or SQL queries (DuckDB, BigQuery), larger row groups (200+) are more efficient.
