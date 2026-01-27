@@ -253,6 +253,37 @@ def read_statistics_numpy(
     )
 
 
+def is_web_mercator(
+    sref: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+) -> bool:
+    """Check if spatial reference is EPSG:3857 web mercator"""
+    return bool(sref.IsSame(web_mercator))
+
+
+def find_matching_overview(
+    band: "osgeo.gdal.Band",  # noqa: F821 (osgeo types safely imported in read_geotiff)
+    target_reduction: float,
+    tolerance: float = 0.1,
+) -> int | None:
+    """Find overview index that matches target reduction factor within tolerance.
+
+    Args:
+        band: GDAL raster band to check for overviews
+        target_reduction: Desired reduction factor (e.g., 2.0 for half resolution)
+        tolerance: Acceptable relative difference (default 10%)
+
+    Returns:
+        Overview index (0-based) or None if no matching overview found.
+    """
+    for i in range(band.GetOverviewCount()):
+        ovr = band.GetOverview(i)
+        ovr_reduction = band.XSize / ovr.XSize  # actual reduction factor
+        if abs(ovr_reduction - target_reduction) / target_reduction < tolerance:
+            return i
+    return None
+
+
 def find_bounds(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_geotiff)
     transform: "osgeo.osr.CoordinateTransformation",  # noqa: F821 (osgeo types safely imported in read_geotiff)
@@ -488,6 +519,20 @@ def read_geotiff(
         src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
         src_sref = src_ds.GetSpatialRef()
 
+        # Check if we can use COG overviews directly (source is web mercator with overviews)
+        overview_count = src_bands[0].GetOverviewCount()
+        use_cog_overviews = is_web_mercator(src_sref, web_mercator) and overview_count > 0
+        if use_cog_overviews:
+            logging.info(
+                "Source is web mercator with %d overviews - will use COG overviews directly",
+                overview_count,
+            )
+        elif overview_count > 0:
+            logging.info(
+                "Source has %d overviews but is not web mercator - will rebuild pyramids",
+                overview_count,
+            )
+
         tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
         pixel_window = find_pixel_window(src_ds, tx3857)
         resolution = find_resolution(src_ds, tx3857, pixel_window)
@@ -562,13 +607,42 @@ def read_geotiff(
                 d, s = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
                 pipe.send((frame.tile, d, s))
             elif not frame.inputs:
-                # Read overview pixels from earlier outputs
-                logging.info("Overview %s from %s", frame.tile, frame.outputs)
+                # Build overview tile - either from COG overviews or from child tiles
                 tile_ds = create_tile_ds(*create_args)
-                for sub_ds in frame.outputs:
-                    osgeo.gdal.Warp(
-                        destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
-                    )
+
+                # Try to use COG overview if available
+                cog_overview_used = False
+                if use_cog_overviews:
+                    zoom_diff = raster_geometry.zoom - frame.tile.z
+                    reduction_factor = 2 ** zoom_diff
+                    ovr_idx = find_matching_overview(src_bands[0], reduction_factor)
+
+                    if ovr_idx is not None:
+                        # Read directly from COG overview - preserves user's original resampling
+                        logging.info(
+                            "Read %s from COG overview %d (reduction %.1fx)",
+                            frame.tile,
+                            ovr_idx,
+                            reduction_factor,
+                        )
+                        osgeo.gdal.Warp(
+                            destNameOrDestDS=tile_ds,
+                            srcDSOrSrcDSTab=src_ds,
+                            options=osgeo.gdal.WarpOptions(
+                                overviewLevel=ovr_idx,
+                                resampleAlg=osgeo.gdal.GRA_NearestNeighbour,
+                            ),
+                        )
+                        cog_overview_used = True
+
+                if not cog_overview_used:
+                    # Fall back to building from child tiles
+                    logging.info("Overview %s from %s", frame.tile, frame.outputs)
+                    for sub_ds in frame.outputs:
+                        osgeo.gdal.Warp(
+                            destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts
+                        )
+
                 d, s1 = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
                 s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
                 pipe.send((frame.tile, d, s2))
