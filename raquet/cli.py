@@ -565,8 +565,13 @@ def export_group():
 @export_group.command("geotiff")
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
 @click.argument("output_file", type=click.Path(path_type=Path))
+@click.option(
+    "--overviews",
+    is_flag=True,
+    help="Include RaQuet overview tiles as GeoTIFF overviews",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
-def export_geotiff(input_file: Path, output_file: Path, verbose: bool):
+def export_geotiff(input_file: Path, output_file: Path, overviews: bool, verbose: bool):
     """Export a Raquet file to GeoTIFF format.
 
     INPUT_FILE is the path to the source Raquet (.parquet) file.
@@ -575,14 +580,17 @@ def export_geotiff(input_file: Path, output_file: Path, verbose: bool):
     \b
     Examples:
         raquet export geotiff landcover.parquet landcover.tif
+        raquet export geotiff raster.parquet output.tif --overviews
         raquet export geotiff raster.parquet output.tif -v
     """
     setup_logging(verbose)
 
     try:
         click.echo(f"Exporting {input_file} to GeoTIFF format...")
+        if overviews:
+            click.echo("  Including RaQuet overviews in output")
 
-        raquet2geotiff.main(str(input_file), str(output_file))
+        raquet2geotiff.main(str(input_file), str(output_file), include_overviews=overviews)
 
         click.echo(f"Successfully created {output_file}")
 

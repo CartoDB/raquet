@@ -57,13 +57,43 @@ GDAL_COLOR_INTERP = {
 }
 
 
-def write_geotiff(metadata: dict, geotiff_filename: str, pipe: multiprocessing.Pipe):
+def get_metadata_compat(metadata: dict, key: str, default=None):
+    """Get metadata value with v0.2.0/v0.3.0 compatibility.
+
+    v0.3.0 moved some fields into nested 'tiling' object.
+    """
+    # v0.3.0 tiling fields
+    tiling_keys = {
+        "block_width": "block_width",
+        "block_height": "block_height",
+        "minresolution": "min_zoom",
+        "maxresolution": "max_zoom",
+    }
+
+    # Check v0.3.0 tiling object first
+    if "tiling" in metadata and key in tiling_keys:
+        tiling = metadata["tiling"]
+        v3_key = tiling_keys[key]
+        if v3_key in tiling:
+            return tiling[v3_key]
+
+    # Fall back to v0.2.0 direct access
+    return metadata.get(key, default)
+
+
+def write_geotiff(
+    metadata: dict,
+    geotiff_filename: str,
+    pipe: multiprocessing.Pipe,
+    include_overviews: bool = False,
+):
     """Worker process that writes a GeoTIFF through pipes.
 
     Args:
         metadata: dictionary of RaQuet metadata
         geotiff_filename: Name of GeoTIFF file to write
         pipe: Connection to receive data from parent
+        include_overviews: If True, write RaQuet overview tiles to GeoTIFF overviews
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -105,6 +135,12 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe: multiprocessing.P
             "Expect just one band type"
         )
 
+        # Get block dimensions (compatible with v0.2.0 and v0.3.0)
+        block_width = get_metadata_compat(metadata, "block_width")
+        block_height = get_metadata_compat(metadata, "block_height")
+        max_zoom = get_metadata_compat(metadata, "maxresolution")
+        min_zoom = get_metadata_compat(metadata, "minresolution")
+
         # Create empty GeoTIFF with compression
         driver = osgeo.gdal.GetDriverByName("GTiff")
         output_width, output_height = metadata["width"], metadata["height"]
@@ -117,19 +153,35 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe: multiprocessing.P
             options=[
                 "COMPRESS=DEFLATE",
                 "TILED=YES",
-                f"BLOCKXSIZE={metadata['block_width']}",
-                f"BLOCKYSIZE={metadata['block_height']}",
+                f"BLOCKXSIZE={block_width}",
+                f"BLOCKYSIZE={block_height}",
             ],
         )
 
         # Set projection
         raster.SetProjection(srs.ExportToWkt())
 
-        # Set geotransform
+        # Set geotransform for base resolution
         xres = (xmax - xmin) / output_width
         yres = (ymax - ymin) / output_height
         geotransform = (xmin, xres, 0, ymax, 0, -yres)
         raster.SetGeoTransform(geotransform)
+
+        # If including overviews, calculate overview levels from zoom range
+        overview_factors = []
+        if include_overviews and min_zoom is not None and max_zoom is not None:
+            for z in range(max_zoom - 1, min_zoom - 1, -1):
+                factor = 2 ** (max_zoom - z)
+                overview_factors.append(factor)
+
+            if overview_factors:
+                logging.info(f"Creating overview levels: {overview_factors}")
+                # Create empty overview structure using NONE resampling
+                # We'll overwrite with actual RaQuet tiles
+                raster.BuildOverviews("NEAREST", overview_factors)
+
+        # Collect overview tiles to write after base tiles
+        overview_tiles = []
 
         while True:
             received = pipe.recv()
@@ -139,59 +191,112 @@ def write_geotiff(metadata: dict, geotiff_filename: str, pipe: multiprocessing.P
 
             tile, *block_data = received
 
-            # Get mercator corner coordinates for this tile
-            ulx, _, _, uly = mercantile.xy_bounds(tile)
+            # Check if this is a base tile or overview tile
+            if tile.z == max_zoom:
+                # Base resolution tile - write directly to raster
+                ulx, _, _, uly = mercantile.xy_bounds(tile)
+                xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
+                yoff = int(round((uly - geotransform[3]) / geotransform[5]))
 
-            # Convert mercator coordinates to pixel coordinates
-            xoff = int(round((ulx - geotransform[0]) / geotransform[1]))
-            yoff = int(round((uly - geotransform[3]) / geotransform[5]))
+                for i, block_datum in enumerate(block_data):
+                    band = raster.GetRasterBand(i + 1)
 
-            # Write to raster
-            for i, block_datum in enumerate(block_data):
-                band = raster.GetRasterBand(i + 1)
+                    if metadata.get("nodata") is not None and band.GetNoDataValue() is None:
+                        band.SetNoDataValue(metadata["nodata"])
 
-                if metadata.get("nodata") is not None and band.GetNoDataValue() is None:
-                    band.SetNoDataValue(metadata["nodata"])
+                    # Handle per-band nodata (v0.3.0)
+                    band_meta = metadata.get("bands", [{}])[i]
+                    if band_meta.get("nodata") is not None and band.GetNoDataValue() is None:
+                        band.SetNoDataValue(band_meta["nodata"])
 
-                if (
-                    metadata.get("bands")[i].get("colortable") is not None
-                    and band.GetColorTable() is None
-                ):
-                    color_dict = metadata["bands"][i]["colortable"]
-                    colorTable = osgeo.gdal.ColorTable()
-                    for index, rgba in color_dict.items():
-                        colorTable.SetColorEntry(int(index), tuple(rgba))
-                    band.SetColorTable(colorTable)
+                    if band_meta.get("colortable") is not None and band.GetColorTable() is None:
+                        color_dict = band_meta["colortable"]
+                        colorTable = osgeo.gdal.ColorTable()
+                        for index, rgba in color_dict.items():
+                            colorTable.SetColorEntry(int(index), tuple(rgba))
+                        band.SetColorTable(colorTable)
 
-                if metadata.get("bands")[i].get("colorinterp") is not None:
-                    band.SetColorInterpretation(
-                        GDAL_COLOR_INTERP[metadata["bands"][i]["colorinterp"]]
+                    if band_meta.get("colorinterp") is not None:
+                        band.SetColorInterpretation(
+                            GDAL_COLOR_INTERP[band_meta["colorinterp"]]
+                        )
+
+                    band.WriteRaster(xoff, yoff, block_width, block_height, block_datum)
+
+            elif include_overviews and tile.z < max_zoom:
+                # Overview tile - save for later
+                overview_tiles.append((tile, block_data))
+
+        # Write overview tiles
+        if overview_tiles:
+            logging.info(f"Writing {len(overview_tiles)} overview tiles...")
+            for tile, block_data in overview_tiles:
+                # Find which overview level this zoom corresponds to
+                factor = 2 ** (max_zoom - tile.z)
+                ovr_index = overview_factors.index(factor) if factor in overview_factors else -1
+
+                if ovr_index < 0:
+                    continue
+
+                # Calculate pixel coordinates at this overview level
+                ovr_width = output_width // factor
+                ovr_height = output_height // factor
+
+                # Skip if overview is smaller than block size (can't fit full tiles)
+                if ovr_width < block_width or ovr_height < block_height:
+                    logging.debug(
+                        f"Skipping overview z={tile.z} - image {ovr_width}x{ovr_height} "
+                        f"smaller than block {block_width}x{block_height}"
                     )
+                    continue
 
-                band.WriteRaster(
-                    xoff,
-                    yoff,
-                    metadata["block_width"],
-                    metadata["block_height"],
-                    block_datum,
-                )
+                ovr_xres = (xmax - xmin) / ovr_width
+                ovr_yres = (ymax - ymin) / ovr_height
+
+                ulx, _, _, uly = mercantile.xy_bounds(tile)
+                xoff = int(round((ulx - xmin) / ovr_xres))
+                yoff = int(round((ymax - uly) / ovr_yres))
+
+                # Clamp write dimensions to overview bounds
+                write_width = min(block_width, ovr_width - xoff)
+                write_height = min(block_height, ovr_height - yoff)
+
+                if write_width <= 0 or write_height <= 0:
+                    continue
+
+                for i, block_datum in enumerate(block_data):
+                    band = raster.GetRasterBand(i + 1)
+                    ovr_band = band.GetOverview(ovr_index)
+                    if ovr_band is not None:
+                        # If we need partial write, we'd need to decode/re-encode
+                        # For now, only write full blocks that fit
+                        if write_width == block_width and write_height == block_height:
+                            ovr_band.WriteRaster(xoff, yoff, block_width, block_height, block_datum)
 
     finally:
         pipe.close()
 
 
-def open_geotiff_in_process(metadata: dict, geotiff_filename: str):
-    """Opens a bidirectional connection to a GeoTIFF reader in another process.
+def open_geotiff_in_process(
+    metadata: dict, geotiff_filename: str, include_overviews: bool = False
+):
+    """Opens a bidirectional connection to a GeoTIFF writer in another process.
+
+    Args:
+        metadata: RaQuet metadata dictionary
+        geotiff_filename: Output GeoTIFF path
+        include_overviews: If True, include RaQuet overviews in GeoTIFF
 
     Returns:
-        Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
+        Pipe for sending tile data to the writer process
     """
     # Create a communication pipe
     child_recv, parent_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
     process = multiprocessing.Process(
-        target=write_geotiff, args=(metadata, geotiff_filename, child_recv)
+        target=write_geotiff,
+        args=(metadata, geotiff_filename, child_recv, include_overviews),
     )
     process.start()
 
@@ -255,12 +360,13 @@ def read_metadata(table) -> dict:
     return json.loads(block_zero.column("metadata")[0].as_py())
 
 
-def main(raquet_filename, geotiff_filename):
+def main(raquet_filename, geotiff_filename, include_overviews: bool = False):
     """Read RaQuet file and write to a GeoTIFF datasource
 
     Args:
         raquet_filename: RaQuet filename
         geotiff_filename: GeoTIFF filename
+        include_overviews: If True, include RaQuet overviews in the output GeoTIFF
     """
     table = pyarrow.parquet.read_table(raquet_filename)
 
@@ -268,7 +374,10 @@ def main(raquet_filename, geotiff_filename):
     table = table.sort_by("block")
     metadata = read_metadata(table)
 
-    pipe = open_geotiff_in_process(metadata, geotiff_filename)
+    # Get max zoom (compatible with v0.2.0 and v0.3.0)
+    max_zoom = get_metadata_compat(metadata, "maxresolution")
+
+    pipe = open_geotiff_in_process(metadata, geotiff_filename, include_overviews)
 
     try:
         # Process table one row at a time
@@ -279,7 +388,9 @@ def main(raquet_filename, geotiff_filename):
             if block == 0:
                 continue
             x, y, z = quadbin.cell_to_tile(block)
-            if z != metadata["maxresolution"]:
+
+            # Skip tiles not at max zoom unless including overviews
+            if z != max_zoom and not include_overviews:
                 continue
 
             # Get band data for this row and decompress if needed
