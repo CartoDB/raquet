@@ -68,7 +68,22 @@ raquet-io convert geotiff input.tif output.parquet \
 | `--resampling` | Resampling algorithm: `near`, `bilinear`, `cubic`, etc. (default: `near`) |
 | `--block-size` | Block size in pixels (default: 256) |
 | `--target-size` | Target size for auto zoom calculation |
+| `--overviews` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
+| `--min-zoom` | Minimum zoom level for overviews (overrides auto calculation) |
+| `--streaming` | Memory-safe two-pass conversion for large files |
 | `-v, --verbose` | Enable verbose output |
+
+**Large file conversion:**
+```bash
+# Skip overviews for faster conversion (native resolution only)
+raquet-io convert geotiff large.tif output.parquet --overviews none
+
+# Memory-safe streaming mode for very large files
+raquet-io convert geotiff huge.tif output.parquet --streaming -v
+
+# Limit overview pyramid to zoom 5 and above
+raquet-io convert geotiff input.tif output.parquet --min-zoom 5
+```
 
 #### From ArcGIS ImageServer
 
