@@ -239,6 +239,7 @@ def _convert_raster_impl(
     verbose: bool,
     overviews: str,
     min_zoom: int | None,
+    streaming: bool,
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
@@ -255,6 +256,8 @@ def _convert_raster_impl(
             click.echo("  Overview mode: none (native resolution only)")
         elif min_zoom is not None:
             click.echo(f"  Min zoom override: {min_zoom}")
+        if streaming:
+            click.echo("  Streaming mode: enabled (memory-safe two-pass conversion)")
 
         raster2raquet.main(
             str(input_file),
@@ -266,6 +269,7 @@ def _convert_raster_impl(
             row_group_size,
             overview_mode,
             min_zoom,
+            streaming,
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -323,6 +327,11 @@ def _convert_raster_impl(
     default=None,
     help="Minimum zoom level for overviews (overrides auto calculation)",
 )
+@click.option(
+    "--streaming",
+    is_flag=True,
+    help="Use two-pass streaming mode for memory-safe conversion of large files",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_raster(
     input_file: Path,
@@ -334,6 +343,7 @@ def convert_raster(
     row_group_size: int,
     overviews: str,
     min_zoom: int | None,
+    streaming: bool,
     verbose: bool,
 ):
     """Convert a raster file to Raquet format.
@@ -351,14 +361,19 @@ def convert_raster(
         --min-zoom N        Limit overviews to zoom N and above
 
     \b
+    Memory options:
+        --streaming         Two-pass conversion for large files (lower memory usage)
+
+    \b
     Examples:
         raquet convert raster landcover.tif landcover.parquet
         raquet convert raster temperature.nc temperature.parquet
         raquet convert raster dem.tif dem.parquet --resampling bilinear
         raquet convert raster large.tif output.parquet --overviews none -v
         raquet convert raster large.tif output.parquet --min-zoom 5 -v
+        raquet convert raster huge.tif output.parquet --streaming -v
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming)
 
 
 @convert_group.command("geotiff")
@@ -406,6 +421,11 @@ def convert_raster(
     default=None,
     help="Minimum zoom level for overviews (overrides auto calculation)",
 )
+@click.option(
+    "--streaming",
+    is_flag=True,
+    help="Use two-pass streaming mode for memory-safe conversion of large files",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_geotiff(
     input_file: Path,
@@ -417,6 +437,7 @@ def convert_geotiff(
     row_group_size: int,
     overviews: str,
     min_zoom: int | None,
+    streaming: bool,
     verbose: bool,
 ):
     """Convert a GeoTIFF file to Raquet format (alias for 'convert raster').
@@ -429,8 +450,9 @@ def convert_geotiff(
         raquet convert geotiff landcover.tif landcover.parquet
         raquet convert geotiff dem.tif dem.parquet --resampling bilinear
         raquet convert geotiff large.tif output.parquet --overviews none
+        raquet convert geotiff huge.tif output.parquet --streaming
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming)
 
 
 @convert_group.command("imageserver")

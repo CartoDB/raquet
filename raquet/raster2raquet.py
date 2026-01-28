@@ -35,6 +35,7 @@ import re
 import statistics
 import struct
 import sys
+import tempfile
 import typing
 
 import mercantile
@@ -1344,6 +1345,7 @@ def main(
     row_group_size: int = 200,
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
+    streaming: bool = False,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1356,6 +1358,7 @@ def main(
         row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override
+        streaming: Use two-pass streaming mode for memory-safe conversion of large files
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -1378,6 +1381,7 @@ def main(
         row_group_size,
         overview_mode,
         min_zoom_override,
+        streaming,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1391,6 +1395,7 @@ def convert_to_raquet_files(
     row_group_size: int = 200,
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
+    streaming: bool = False,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1403,6 +1408,7 @@ def convert_to_raquet_files(
         row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override
+        streaming: Use two-pass streaming mode for memory-safe conversion of large files
 
     Yields output filenames as they are written.
 
@@ -1410,6 +1416,10 @@ def convert_to_raquet_files(
     row group pruning when querying. This allows Parquet readers to skip
     entire row groups based on block statistics, significantly reducing
     data transfer for remote file access.
+
+    When streaming=True, tiles are written to a temporary file first, then
+    sorted and written to the final output. This uses O(row_group_size) memory
+    instead of O(all_tiles), making it suitable for large rasters.
     """
     raster_geometry, pipe = open_raster_in_process(
         input_filename,
@@ -1423,12 +1433,28 @@ def convert_to_raquet_files(
     try:
         schema, band_names = create_schema(raster_geometry)
 
-        # Initialize empty lists to collect ALL rows and stats before sorting
-        # Note: This requires holding all rows in memory before writing
-        all_rows, band_stats = [], [None for _ in band_names]
-
+        # Initialize stats tracking (small, always in memory)
+        band_stats = [None for _ in band_names]
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
         minresolution, block_count = math.inf, 0
+
+        # Streaming mode: write tiles to temp file, then sort
+        # Non-streaming mode: accumulate in memory (faster for small files)
+        if streaming:
+            logging.info("Streaming mode: writing tiles to temporary file")
+            temp_file = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
+            temp_path = temp_file.name
+            temp_file.close()
+
+            # Create temp writer without sorting metadata (will sort later)
+            temp_writer = pyarrow.parquet.ParquetWriter(temp_path, schema)
+            temp_rows = []  # Small buffer for batching writes
+        else:
+            # Non-streaming: accumulate all rows in memory
+            all_rows = []
+            temp_path = None
+            temp_writer = None
+            temp_rows = None
 
         while True:
             received = pipe.recv()
@@ -1437,7 +1463,7 @@ def convert_to_raquet_files(
                 break
 
             # Expand message to block to retrieve
-            tile, block_data, block_stats = received
+            tile, block_data, tile_stats = received
             minresolution = min(minresolution, tile.z)
 
             logging.info(
@@ -1453,37 +1479,40 @@ def convert_to_raquet_files(
             if all(block_datum is None for block_datum in block_data):
                 continue
 
-            # For time-series data (CF time present), emit separate row per time step
-            # For regular multi-band data, emit single row with all bands as columns
+            # Build row(s) for this tile
+            rows_to_add = []
             if raster_geometry.cf_time is not None and raster_geometry.band_time_values:
                 # Time-series mode: each band is a different time step
-                # Schema has single "band_1" column for data
                 cf = raster_geometry.cf_time
                 for band_idx, data in enumerate(block_data):
                     cf_value = raster_geometry.band_time_values[band_idx]
                     if cf_value is None:
                         continue
-
                     ts_value = cf_to_timestamp(cf_value, cf)
-
-                    all_rows.append(
-                        {
-                            "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
-                            "metadata": None,
-                            "time_cf": cf_value,
-                            "time_ts": ts_value,
-                            "band_1": data,
-                        }
-                    )
-            else:
-                # Standard mode: all bands in single row
-                all_rows.append(
-                    {
+                    rows_to_add.append({
                         "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
                         "metadata": None,
-                        **{bname: block_data[i] for i, bname in enumerate(band_names)},
-                    }
-                )
+                        "time_cf": cf_value,
+                        "time_ts": ts_value,
+                        "band_1": data,
+                    })
+            else:
+                # Standard mode: all bands in single row
+                rows_to_add.append({
+                    "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
+                    "metadata": None,
+                    **{bname: block_data[i] for i, bname in enumerate(band_names)},
+                })
+
+            # Add rows to appropriate destination
+            if streaming:
+                temp_rows.extend(rows_to_add)
+                # Flush to temp file periodically to keep memory low
+                if len(temp_rows) >= row_group_size:
+                    flush_rows_to_file(temp_writer, schema, temp_rows)
+                    temp_rows = []
+            else:
+                all_rows.extend(rows_to_add)
 
             if tile.z > raster_geometry.zoom:
                 raise NotImplementedError("Zoom higher than expected by find_minzoom()")
@@ -1494,21 +1523,50 @@ def convert_to_raquet_files(
                 xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
                 block_count += 1
 
-            if any(block_stats):
+            if any(tile_stats):
                 # Accumulate band statistics and real bounds based on included tiles
-                band_stats = [combine_stats(*bs) for bs in zip(band_stats, block_stats)]
+                band_stats = [combine_stats(*bs) for bs in zip(band_stats, tile_stats)]
 
         for i, stats in enumerate(band_stats):
             logging.info("Band %s %s", i + 1, stats)
 
-        # Sort all rows by block ID (and time for time-series) for efficient row group pruning
-        # This enables Parquet readers to skip row groups based on block/time statistics
-        if raster_geometry.cf_time is not None:
-            logging.info("Sorting %d rows by (block, time_cf) for optimized row group pruning...", len(all_rows))
-            all_rows.sort(key=lambda row: (row["block"], row.get("time_cf", 0)))
+        # Handle streaming vs non-streaming finalization
+        if streaming:
+            # Flush remaining rows to temp file
+            if temp_rows:
+                flush_rows_to_file(temp_writer, schema, temp_rows)
+            temp_writer.close()
+
+            # Read temp file and sort
+            logging.info("Streaming: reading and sorting temporary file...")
+            temp_table = pyarrow.parquet.read_table(temp_path)
+
+            # Sort by block ID (and time for time-series)
+            if raster_geometry.cf_time is not None:
+                logging.info("Sorting %d rows by (block, time_cf)...", len(temp_table))
+                sort_keys = [("block", "ascending"), ("time_cf", "ascending")]
+            else:
+                logging.info("Sorting %d rows by block ID...", len(temp_table))
+                sort_keys = [("block", "ascending")]
+
+            sorted_indices = pyarrow.compute.sort_indices(temp_table, sort_keys=sort_keys)
+            sorted_table = temp_table.take(sorted_indices)
+
+            # Clean up temp file
+            os.unlink(temp_path)
+            temp_path = None
+
+            # Convert sorted table back to row iterator for writing
+            all_rows = sorted_table.to_pylist()
+            del sorted_table, temp_table  # Free memory
         else:
-            logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
-            all_rows.sort(key=lambda row: row["block"])
+            # Non-streaming: sort in-memory rows
+            if raster_geometry.cf_time is not None:
+                logging.info("Sorting %d rows by (block, time_cf) for optimized row group pruning...", len(all_rows))
+                all_rows.sort(key=lambda row: (row["block"], row.get("time_cf", 0)))
+            else:
+                logging.info("Sorting %d rows by block ID for optimized row group pruning...", len(all_rows))
+                all_rows.sort(key=lambda row: row["block"])
 
         # Build metadata now (we have all the info we need)
         metadata_json = create_metadata(
