@@ -119,6 +119,9 @@ raquet-io convert imageserver https://server/.../ImageServer output.parquet \
 # Export to GeoTIFF
 raquet-io export geotiff input.parquet output.tif
 
+# Include RaQuet overviews in GeoTIFF (uses pre-computed overview tiles)
+raquet-io export geotiff input.parquet output.tif --overviews
+
 # With verbose output
 raquet-io export geotiff input.parquet output.tif -v
 ```
