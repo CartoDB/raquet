@@ -138,11 +138,7 @@ ORDER BY year;
 
 Think of RaQuet as storing a raster where **each tile is a row** and **each band is a column**.
 
-| block | band_1 | band_2 | band_3 | metadata |
-|-------|--------|--------|--------|----------|
-| 0 | NULL | NULL | NULL | `{"version": "0.3.0", ...}` |
-| 5270498377487261695 | `<gzip>` | `<gzip>` | `<gzip>` | NULL |
-| 5270498377487327231 | `<gzip>` | `<gzip>` | `<gzip>` | NULL |
+<img src="{{ site.baseurl }}/assets/raquet-diagram.png" alt="RaQuet converts raster tiles to Parquet table rows" style="max-width: 100%; margin: 2rem 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
 
 - **block** — [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) cell ID (tile location + zoom level)
 - **band_N** — Gzip-compressed pixel data (row-major)
