@@ -1,6 +1,6 @@
 [project]
 name = "raquet-io"
-version = "0.5.0"
+version = "0.6.0"
 description = "RaQuet - Raster data in Parquet format with QUADBIN spatial indexing"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
