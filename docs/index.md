@@ -1,513 +1,188 @@
 ---
 layout: default
-title: Home
+title: Overview
+hero: true
+hero_tagline: "Query rasters with SQL. Treat rasters as tables. Bring raster data into the lakehouse."
 ---
 
-<p align="center">
-  <img src="{{ site.baseurl }}/assets/logo.svg" alt="RaQuet" width="400">
-  <br>
-  <em>An open source project by <a href="https://carto.com">CARTO</a></em>
-</p>
+## What is RaQuet?
 
-# RaQuet: Raster + Parquet
-
-<p style="font-size: 1.2em; color: #666; margin-top: -10px;">
-Bring raster data into the lakehouse — query rasters with SQL, powered by production-grade analytics from CARTO.
-</p>
-
-RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), enabling efficient cloud-native raster workflows. Developed by [CARTO](https://carto.com), RaQuet brings raster data into the modern data stack.
-
-## Why RaQuet?
-
-- **Cloud-Native**: Query raster data directly from cloud storage using DuckDB, BigQuery, or any Parquet-compatible tool
-- **Efficient**: QUADBIN spatial indexing enables fast tile lookups with row group pruning
-- **Simple**: Standard Parquet format works with existing data warehouse infrastructure
-- **Interoperable**: Convert from GeoTIFF, COG, NetCDF, or ArcGIS ImageServer
+<div class="feature-grid">
+  <div class="feature-card">
+    <h3>Format</h3>
+    <p>RaQuet defines an open specification for storing raster data in Apache Parquet. Each tile becomes a row, each band becomes a column. Standard format, no proprietary extensions.</p>
+    <a href="https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md">Read the specification →</a>
+  </div>
+  <div class="feature-card">
+    <h3>Tools</h3>
+    <p>Convert any GDAL-supported raster (GeoTIFF, NetCDF, COG) to RaQuet. Query with DuckDB, visualize in the browser, or load into your data warehouse.</p>
+    <a href="{{ site.baseurl }}/cli">View CLI reference →</a>
+  </div>
+  <div class="feature-card">
+    <h3>Ecosystem</h3>
+    <p>RaQuet is designed to work with the modern analytics stack. Full support for BigQuery, Snowflake, Databricks, DuckDB, and PostgreSQL through CARTO's Analytics Toolbox.</p>
+    <a href="{{ site.baseurl }}/engines">See supported engines →</a>
+  </div>
+</div>
 
 ---
 
 ## Why Parquet for Raster Data?
 
-RaQuet exists to bring raster data into the same analytical ecosystem where vector data already lives. Over the last decade, vector geospatial data has successfully integrated into cloud data warehouses and lakehouses through open formats like Parquet, GeoParquet, and table formats like Iceberg. Raster data, however, remains locked in GIS- and HPC-oriented formats like GeoTIFF/COG and Zarr — powerful, but largely invisible to SQL engines and analytics platforms.
+**We believe people want to access their raster data like any other type of data: in SQL.**
 
-RaQuet bridges that gap by encoding rasters as Parquet. This makes raster tiles queryable with DuckDB, BigQuery, Snowflake, Spark, Trino/Presto — and makes rasters governable, versionable, and joinable inside the lakehouse.
+You shouldn't have to export data and perform vector-raster intersections outside your analytics platform. But today, you can't just query a raster. Raster data remains locked in GIS- and HPC-oriented formats like GeoTIFF/COG and Zarr — powerful, but largely invisible to SQL engines.
 
-> **Key idea:** COG/Zarr optimize storage & access. RaQuet optimizes integration & computation in the modern data stack.
+RaQuet builds on the pioneering work of [PostGIS Raster](https://postgis.net/docs/RT_reference.html), which first demonstrated SQL-based raster analytics. But instead of being tied to PostgreSQL, RaQuet uses **Apache Parquet** — an open columnar format supported by virtually every modern analytics engine.
 
-<p align="center" style="margin: 30px 0;">
-  <img src="{{ site.baseurl }}/assets/one-does-not-simply-query-a-raster.jpg" alt="Meme: One does not simply query a raster" style="max-width: 520px; width: 100%; border-radius: 8px;">
-  <br>
-  <em style="color: #666;">Because in most analytics stacks… you don't simply query a raster.</em>
-  <br>
-  <small style="color: #999; font-size: 0.75em;">Meme image used for illustrative purposes.</small>
-</p>
-
-### RaQuet vs COG vs Zarr
-
-These formats serve different workflows and are **complementary**, not competing:
-
-| | **COG (GeoTIFF)** | **Zarr** | **RaQuet** |
-|---|---|---|---|
-| **Best for** | GIS pipelines | Scientific / array computing | Analytics / lakehouse |
-| **Strengths** | Optimized for GDAL-style window reads and visualization. Great for tiling + overviews. | Chunked multidimensional arrays (NumPy/Xarray/HPC). Parallel-friendly and cloud-native. | Parquet-native: works with warehouses and SQL engines. Joins with vector data in the same stack. |
-| **Limitation** | Not natively queryable in SQL engines | Requires specialized runtimes/APIs (not warehouse-native) | Designed for tiles, not arbitrary window reads |
-
-**RaQuet is complementary to COG and Zarr** — it's the representation designed for SQL + lakehouse workflows.
-
-### Backed by Production Analytics Engines
-
-RaQuet isn't just a specification — it's designed to plug directly into [CARTO's Analytics Toolbox](https://carto.com/analytics-toolbox), which already runs **natively inside major data warehouses**. This means you get production-grade spatial functions, not just file format support.
-
-<div style="margin: 20px 0;">
-
-**Supported platforms:**
-
-- **BigQuery** — Full support via [Analytics Toolbox for BigQuery](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery)
-- **Snowflake** — Full support via [Analytics Toolbox for Snowflake](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-snowflake)
-- **Databricks** — Full support via [Analytics Toolbox for Databricks](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-databricks)
-- **PostgreSQL** — Full support via [Analytics Toolbox for PostgreSQL](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-postgresql)
-- **DuckDB** — Full support via [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) — Query raster tiles with SQL, extract pixel values, compute statistics, and perform band math directly in DuckDB
-- **Redshift** — *Coming soon*
-- **Oracle** — *Coming soon*
-
-</div>
-
-With CARTO's toolboxes, you can perform spatial joins between raster tiles and vector geometries, run zonal statistics, and build ML pipelines — all in pure SQL, inside your warehouse.
-
-### Roadmap: Apache Iceberg Integration
-
-<p style="background: #f0f7ff; border-left: 4px solid #0066cc; padding: 12px 16px; margin: 20px 0;">
-<strong>Status:</strong> Active development — not yet generally available.
-</p>
-
-We're actively working on support for registering RaQuet datasets as [Apache Iceberg](https://iceberg.apache.org/) tables. The goal: **publish rasters directly into Iceberg catalogs** so they can be discovered and queried like any other table in your lakehouse.
-
-GeoParquet brought vector data into the lakehouse. RaQuet does the same for raster. Iceberg unifies them under a single governance and query layer — enabling true multimodal spatial analytics where vector and raster live side by side, versioned together, and queryable with the same SQL engine.
-
-We're collaborating with the community to define best practices for spatial data in Iceberg. Follow progress on the [GitHub repository](https://github.com/CartoDB/raquet) or reach out if you're interested in early access.
+> **Key insight:** With RaQuet, **raster files become tables** in your data warehouse. Instead of treating rasters as opaque files, you can query them, join them with vector data, and govern them — all in the same system.
 
 ---
 
-## Quick Start
+## RaQuet Principles
 
-```bash
-# Install
-pip install raquet-io
+RaQuet's goal is to **align GIS with the rest of the analytics industry** — particularly Open Table Formats like Apache Iceberg and the separation of storage and compute.
 
-# Convert a raster (GeoTIFF, COG, NetCDF) to RaQuet
-raquet-io convert raster input.tif output.parquet
-raquet-io convert raster climate.nc climate.parquet  # NetCDF with time dimension
+- **SQL-First** — Query raster data with standard SQL in DuckDB, BigQuery, Snowflake, Spark, or any Parquet-compatible engine
+- **Tables, Not Files** — Rasters become queryable tables, not opaque binary blobs
+- **Interoperable** — Works with existing data warehouse infrastructure and governance
+- **Cloud-Native** — QUADBIN spatial indexing enables efficient tile lookups with row group pruning
+- **Open Format** — Standard Parquet with no proprietary extensions
 
-# Inspect a RaQuet file
-raquet-io inspect output.parquet
+---
 
-# Query with DuckDB
-duckdb -c "SELECT * FROM read_parquet('output.parquet') WHERE block != 0 LIMIT 5"
-```
+## RaQuet vs COG vs Zarr
 
-## Try It Now
+**RaQuet isn't competing with traditional raster formats** — it targets a different problem entirely: **interoperability in the analytics world**.
 
-**[Open the RaQuet Viewer](viewer.html)** - A client-side viewer powered by [hyparquet](https://github.com/hyparam/hyparquet). Load any RaQuet file from a URL and explore it interactively using HTTP range requests, no server required!
+| | **COG (GeoTIFF)** | **Zarr** | **RaQuet** |
+|---|---|---|---|
+| **Best for** | GIS pipelines, visualization | Scientific computing (HPC) | Analytics / lakehouse / SQL |
+| **Ecosystem** | GDAL, QGIS, rasterio | Xarray, Dask, Pangeo | DuckDB, BigQuery, Snowflake, Spark |
+| **Strength** | Window reads, tiling, overviews | Chunked arrays, parallel compute | SQL queries, joins with vector data |
+| **Limitation** | Not queryable in SQL | Requires specialized runtimes | Designed for tiles, not window reads |
+
+**RaQuet works out of the box** in most analytics systems — and often provides comparable or better performance than pipelines involving export/import steps.
 
 ---
 
 ## Sample Data
 
-Download sample RaQuet files to try with DuckDB, the viewer, or your own tools:
+Try these example RaQuet files — query them directly from cloud storage:
 
-| Dataset | Description | Size | Download |
-|---------|-------------|------|----------|
-| **Europe** | RGB satellite imagery of Europe | 360 KB | [europe.parquet](https://storage.googleapis.com/raquet_demo_data/europe.parquet) |
-| **TCI** | Sentinel-2 True Color Image (high resolution) | 261 MB | [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) |
-| **Spain Solar GHI** | Global Horizontal Irradiation from [Global Solar Atlas](https://globalsolaratlas.info/) | 5.7 MB | [spain_solar_ghi.parquet](https://storage.googleapis.com/raquet_demo_data/spain_solar_ghi.parquet) |
-| **World Solar PVOUT** | Global PV power output potential from [Global Solar Atlas](https://globalsolaratlas.info/download/world) | 224 MB | [world_solar_pvout.parquet](https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet) |
-| **World Elevation** | Global terrain elevation from [Global Solar Atlas](https://globalsolaratlas.info/download/world) | 807 MB | [world_elevation.parquet](https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet) |
-| **CFSR SST** | Sea Surface Temperature time-series (1980-2015, 432 monthly steps) | 70 MB | [cfsr_sst.parquet](https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet) |
+| Dataset | Source | Source Size | RaQuet Size | URL |
+|---------|--------|-------------|-------------|-----|
+| **World Elevation** | AAIGrid | 3.2 GB | 805 MB | [world_elevation.parquet](https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet) |
+| **World Solar PVOUT** | AAIGrid | 2.8 GB | 255 MB | [world_solar_pvout.parquet](https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet) |
+| **CFSR SST** | NetCDF | 854 MB | 75 MB | [cfsr_sst.parquet](https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet) |
+| **TCI (Sentinel-2)** | GeoTIFF | 224 MB | 256 MB | [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) |
+| **Spain Solar GHI** | GeoTIFF | — | 15 MB | [spain_solar_ghi.parquet](https://storage.googleapis.com/raquet_demo_data/spain_solar_ghi.parquet) |
 
-```bash
-# Download and query with DuckDB
-curl -O https://storage.googleapis.com/raquet_demo_data/europe.parquet
-duckdb -c "SELECT * FROM read_parquet('europe.parquet') WHERE block != 0 LIMIT 5"
-
-# Or query directly from cloud storage
-duckdb -c "SELECT * FROM read_parquet('https://storage.googleapis.com/raquet_demo_data/europe.parquet') WHERE block != 0 LIMIT 5"
-```
-
-The CFSR SST dataset demonstrates time-series support with `time_cf` and `time_ts` columns for NetCDF temporal data.
+Data sources: [Global Solar Atlas](https://globalsolaratlas.info/), [Copernicus Sentinel-2](https://sentinel.esa.int/), [CFSR Reanalysis](https://rda.ucar.edu/datasets/ds093.0/)
 
 ---
 
-## DuckDB Extension
+## Example Queries
 
-The **[DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet)** brings full raster analytics capabilities to DuckDB, enabling you to query RaQuet files with PostGIS-style functions.
-
-### Installation
-
-```sql
--- Coming soon to community extensions
-INSTALL raquet FROM community;
-LOAD raquet;
-
--- Or build from source
--- https://github.com/jatorre/duckdb-raquet
-```
-
-### Features
-
-- **Pixel Extraction** — `ST_RasterValue(block, band, lon, lat, metadata)`
-- **Tile Statistics** — `ST_RasterSummaryStats(band, dtype, width, height, compression)`
-- **Region Statistics** — `ST_RegionStats(band, block, geometry, metadata)` for zonal stats
-- **Spatial Filtering** — `ST_Intersects`, `ST_Contains`, `quadbin_polyfill`
-- **Band Math** — `ST_NDVI`, `ST_NormalizedDifference`, `ST_BandMath`
-- **Clipping** — `ST_Clip`, `ST_ClipMask` for geometry-based extraction
-- **Time-Series** — CF conventions support for NetCDF temporal data
-- **Cloud-Native** — Query directly from S3/GCS with predicate pushdown
-
-### Example Queries
+### Get Elevation at Madrid
 
 ```sql
 LOAD raquet;
 
--- Extract pixel value at a location
-SELECT ST_RasterValue(
-    block, band_1, -122.4194, 37.7749, metadata
-) AS value
-FROM read_parquet('https://storage.googleapis.com/bucket/raster.parquet')
-WHERE block = quadbin_from_lonlat(-122.4194, 37.7749, 14);
-
--- Compute statistics for tiles in a region
+WITH point AS (
+    SELECT 'POINT(-3.7038 40.4168)'::GEOMETRY AS geom
+)
 SELECT
-    block,
-    (ST_RasterSummaryStats(band_1, 'uint8', 256, 256, 'gzip')).mean
-FROM read_parquet('raster.parquet')
-WHERE ST_Intersects(block, ST_GeomFromText('POLYGON((...))'));
-
--- Calculate NDVI across all tiles
-SELECT
-    block,
-    (ST_NormalizedDifferenceStats(band_nir, band_red, metadata)).mean as ndvi
-FROM read_parquet('satellite.parquet')
-WHERE block != 0;
-
--- Time-series query (NetCDF data)
-SELECT
-    YEAR(time_ts) as year,
-    AVG((ST_RasterSummaryStats(band_1, 'float64', 256, 256, 'gzip', -9999)).mean) as annual_avg
-FROM read_parquet('climate.parquet')
-WHERE block != 0
-GROUP BY YEAR(time_ts);
+    ST_RasterValue(block, band_1, point.geom, metadata) AS elevation_meters
+FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet')
+CROSS JOIN point
+WHERE ST_RasterIntersects(block, point.geom);
 ```
 
-### Cloud-Native Performance
+### Sum Solar Potential in a Region
 
-Query RaQuet files directly from cloud storage with minimal data transfer:
+```sql
+LOAD raquet;
 
-| Query Type | Data Transfer | Notes |
-|------------|---------------|-------|
-| Single pixel (3 bands) | ~2 KB | Predicate pushdown to storage |
-| 2,352 tiles statistics | ~165 MB | Parallel fetching |
-| Spatial filter | Variable | Only matching tiles fetched |
+WITH area AS (
+    SELECT ST_GeomFromText('POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))') AS geom
+)
+SELECT
+    SUM(ST_RasterSummaryStat(block, band_1, 'sum', metadata)) AS total_pvout
+FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet')
+CROSS JOIN area
+WHERE ST_RasterIntersects(block, area.geom);
+```
 
-[View on GitHub →](https://github.com/jatorre/duckdb-raquet)
+### Time-Series Analysis
+
+```sql
+LOAD raquet;
+
+SELECT
+    YEAR(time_ts) AS year,
+    AVG(ST_RasterSummaryStat(block, band_1, 'mean', metadata)) AS avg_sst
+FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet')
+GROUP BY YEAR(time_ts)
+ORDER BY year;
+```
+
+**Key functions:**
+- `read_raquet(file)` — Table function that propagates metadata automatically
+- `ST_RasterValue(block, band, geom, metadata)` — Returns pixel value at a POINT
+- `ST_RasterIntersects(block, geom)` — Spatial filter (EPSG:4326)
 
 ---
 
 ## How It Works
 
-Each row in a RaQuet file represents a single rectangular tile of raster data:
+Think of RaQuet as storing a raster where **each tile is a row** and **each band is a column**.
 
 | block | band_1 | band_2 | band_3 | metadata |
 |-------|--------|--------|--------|----------|
-| 0 | NULL | NULL | NULL | `{"version": "0.1.0", ...}` |
-| 5270201491262341119 | `<binary>` | `<binary>` | `<binary>` | NULL |
-| 5270201491262406655 | `<binary>` | `<binary>` | `<binary>` | NULL |
+| 0 | NULL | NULL | NULL | `{"version": "0.3.0", ...}` |
+| 5270498377487261695 | `<gzip>` | `<gzip>` | `<gzip>` | NULL |
+| 5270498377487327231 | `<gzip>` | `<gzip>` | `<gzip>` | NULL |
 
-- **block**: [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) cell ID encoding tile location and zoom level
-- **band_N**: Gzip-compressed binary pixel data (row-major order)
-- **metadata**: JSON metadata in the special `block=0` row
+- **block** — [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) cell ID (tile location + zoom level)
+- **band_N** — Gzip-compressed pixel data (row-major)
+- **metadata** — JSON metadata in the `block=0` row
 
-## Resources
-
-### Documentation
-
-- **[Format Specification](https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md)** - Complete technical specification
-- **[CLI Reference](#cli-reference)** - Command-line tool documentation
-- **[Python API](https://github.com/CartoDB/raquet#python-api)** - Programmatic usage
-
-### Tools
-
-- **[RaQuet Viewer](viewer.html)** - Browser-based viewer using HTTP range requests ([how it works](viewer-how-it-works.html))
-- **[raquet CLI](https://pypi.org/project/raquet-io/)** - Convert, inspect, and export RaQuet files
-- **[DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet)** - Full raster analytics in DuckDB with PostGIS-style functions
+RaQuet requires **Web Mercator (EPSG:3857)** projection to leverage QUADBIN spatial indexing for efficient filtering.
 
 ---
 
-## CLI Reference
-
-### Installation
+## Getting Started
 
 ```bash
-# Basic installation
+# Install
 pip install raquet-io
 
-# With all features
-pip install "raquet-io[all]"
-```
-
-**Note:** GDAL must be installed separately. On macOS: `brew install gdal`
-
-### Commands
-
-#### `raquet-io inspect`
-
-Display metadata and statistics for a RaQuet file.
-
-```bash
-raquet-io inspect landcover.parquet
-raquet-io inspect landcover.parquet -v  # verbose
-```
-
-#### `raquet-io convert raster`
-
-Convert any GDAL-supported raster (GeoTIFF, COG, NetCDF, etc.) to RaQuet format.
-
-```bash
+# Convert a raster to RaQuet
 raquet-io convert raster input.tif output.parquet
-raquet-io convert raster climate.nc climate.parquet  # NetCDF with time dimension
 
-# With options
-raquet-io convert raster input.tif output.parquet \
-  --resampling bilinear \
-  --block-size 512 \
-  --row-group-size 200 \
-  -v
+# Validate the output
+raquet-io validate output.parquet
+
+# Inspect metadata
+raquet-io inspect output.parquet
 ```
 
-**Note:** `raquet-io convert geotiff` is still supported as an alias.
-
-| Option | Description |
-|--------|-------------|
-| `--zoom-strategy` | `auto`, `lower`, `upper` (default: `auto`) |
-| `--resampling` | `near`, `bilinear`, `cubic`, etc. |
-| `--block-size` | Block size in pixels (default: 256) |
-| `--row-group-size` | Rows per Parquet row group (default: 200) |
-| `-v, --verbose` | Enable verbose output |
-
-#### `raquet-io convert imageserver`
-
-Convert an ArcGIS ImageServer to RaQuet format.
-
-```bash
-raquet-io convert imageserver https://server/.../ImageServer output.parquet \
-  --bbox "-122.5,37.5,-122.0,38.0" \
-  --resolution 12
-```
-
-#### `raquet-io export geotiff`
-
-Export a RaQuet file back to GeoTIFF.
-
-```bash
-raquet-io export geotiff input.parquet output.tif
-```
-
-#### `raquet-io split-zoom`
-
-Split a RaQuet file by zoom level for optimized remote access.
-
-```bash
-raquet-io split-zoom input.parquet output_dir/
-```
+<div style="margin-top: 2rem;">
+<a href="{{ site.baseurl }}/viewer" class="btn btn-primary">Try the Viewer</a>
+<a href="{{ site.baseurl }}/cli" class="btn btn-secondary" style="border-color: var(--color-accent); color: var(--color-accent);">CLI Reference</a>
+</div>
 
 ---
 
-## FAQ
+## Roadmap: Apache Iceberg Integration
 
-### What's the difference between RaQuet and COG (Cloud Optimized GeoTIFF)?
+<div class="notice notice-info">
+<strong>Status:</strong> Active development — not yet generally available.
+</div>
 
-COG and RaQuet serve different layers of the data stack. COG is ideal for classic raster access patterns: window reads, visualization, GDAL pipelines, and serving tiles to web maps. RaQuet targets a different problem: making raster data **computable and governable** inside data warehouses and lakehouses using Parquet.
+We're working on registering RaQuet datasets as [Apache Iceberg](https://iceberg.apache.org/) tables — enabling rasters to be discovered and queried alongside vector data in your lakehouse.
 
-Think of it this way: COG is how you store and serve rasters; RaQuet is how you analyze and join them with the rest of your data.
+GeoParquet brought vector data into the lakehouse. RaQuet does the same for raster. Iceberg unifies them under a single governance layer.
 
-| Feature | RaQuet | COG |
-|---------|--------|-----|
-| Format | Parquet | GeoTIFF |
-| Query Tool | SQL (DuckDB, BigQuery) | GDAL, rasterio |
-| Index Type | QUADBIN (discrete tiles) | Internal overviews |
-| Data Warehouse | Native support | Requires conversion |
-| Best for | Analytics, joins, SQL workflows | Visualization, window reads, GIS pipelines |
-
-RaQuet is ideal when you need SQL-based queries, want to join raster with vector data, or need lakehouse governance (versioning, lineage, access control).
-
-### Can I use RaQuet with BigQuery or Snowflake?
-
-Yes! RaQuet files are standard Parquet files that can be loaded into any Parquet-compatible data warehouse. The QUADBIN indexing works natively with CARTO's Analytics Toolbox.
-
-### How do I query specific tiles?
-
-**Basic Parquet queries:**
-
-```sql
--- Query a specific tile by QUADBIN ID
-SELECT block, band_1, band_2, band_3
-FROM read_parquet('raster.parquet')
-WHERE block = 5270201491262341119;
-
--- Query a range of tiles (efficient with sorted data)
-SELECT block, band_1, band_2, band_3
-FROM read_parquet('raster.parquet')
-WHERE block BETWEEN 5270201491262341119 AND 5270201491263324159;
-```
-
-**With DuckDB Raquet Extension (recommended):**
-
-```sql
-LOAD raquet;
-
--- Query by coordinates (extension handles QUADBIN conversion)
-SELECT ST_RasterValue(block, band_1, -122.4, 37.8, metadata) as value
-FROM read_parquet('raster.parquet')
-WHERE block = quadbin_from_lonlat(-122.4, 37.8, 14);
-
--- Spatial filter with geometry
-SELECT * FROM read_parquet('raster.parquet')
-WHERE ST_Intersects(block, ST_GeomFromText('POLYGON((...))'));
-
--- Or use the read_raquet macro with automatic spatial filtering
-SELECT * FROM read_raquet('raster.parquet', ST_GeomFromText('POLYGON((...))'));
-```
-
-### What raster formats can I convert to RaQuet?
-
-RaQuet supports any GDAL-readable raster format:
-- GeoTIFF / Cloud Optimized GeoTIFF (COG)
-- NetCDF (with CF time dimension support - adds `time_cf` and `time_ts` columns)
-- AAIGrid (Esri ASCII Grid)
-- ArcGIS ImageServer
-- And [many more GDAL formats](https://gdal.org/en/stable/drivers/raster/index.html)
-
-### Is there a size limit?
-
-RaQuet can handle rasters of any size. For very large datasets, consider using `raquet-io split-zoom` to create separate files per zoom level for optimal query performance.
-
-### How do I perform raster analytics with DuckDB?
-
-Use the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) for full raster analytics capabilities:
-
-```sql
-LOAD raquet;
-
--- Zonal statistics: average elevation within a polygon
-WITH region AS (
-    SELECT ST_GeomFromText('POLYGON((-122.5 37.7, -122.3 37.7, -122.3 37.9, -122.5 37.9, -122.5 37.7))') as geom
-)
-SELECT (ST_RegionStats(band_1, block, region.geom, metadata)).mean as avg_elevation
-FROM read_parquet('dem.parquet'), region
-WHERE ST_Intersects(block, region.geom);
-```
-
-The extension provides:
-- 10-100x faster than PostGIS Raster for analytical workloads
-- Parallel processing across CPU cores
-- Cloud-native with S3/GCS predicate pushdown
-- Time-series support for NetCDF data
-
-[View performance comparison →](https://github.com/jatorre/duckdb-raquet/blob/main/docs/PERFORMANCE_COMPARISON.md)
-
----
-
-## Performance Considerations
-
-RaQuet is optimized for efficient remote access. Here are key recommendations:
-
-### Block Sorting (Critical)
-
-RaQuet files **must have blocks sorted by QUADBIN ID** for optimal performance. This enables Parquet row group pruning, reducing data transfer by 90%+ for typical queries.
-
-```bash
-# The CLI automatically sorts blocks during conversion
-raquet-io convert raster input.tif output.parquet
-```
-
-### Row Group Size
-
-Row group size affects HTTP request efficiency when using client-side viewers. Our testing with hyparquet shows:
-
-| Row Group Size | HTTP Requests/Tile | Reduction vs RG=1 | Best For |
-|----------------|-------------------|-------------------|----------|
-| 1 | ~11.3 | baseline | Maximum precision (rarely needed) |
-| 4 | ~7.4 | 35% fewer | Good balance |
-| 8-16 | ~5.1-5.3 | 54-55% fewer | **Recommended for web viewers** |
-| 200+ | N/A | N/A | Server-side queries, full scans |
-
-**Recommendation:** Use `--row-group-size 8` for files optimized for client-side web viewing:
-
-```bash
-raquet-io convert raster input.tif output.parquet --row-group-size 8
-```
-
-For server-side or SQL queries (DuckDB, BigQuery), larger row groups (200+) are more efficient.
-
-### Query Patterns
-
-**Fast (contiguous read):**
-```sql
--- Range query - uses row group pruning effectively
-SELECT * FROM read_parquet('file.parquet')
-WHERE block BETWEEN 5270201491262341119 AND 5270201491263324159
-```
-
-**Slower (scattered reads):**
-```sql
--- IN clause - may require multiple row group reads
-SELECT * FROM read_parquet('file.parquet')
-WHERE block IN (5270201491262341119, 5280000000000000000, ...)
-```
-
-### Client-Side vs Server-Side
-
-| Environment | Performance | Best For |
-|-------------|-------------|----------|
-| DuckDB (server/native) | Fast (~200ms for 20 tiles) | Production APIs |
-| hyparquet (browser) | Good (HTTP range requests) | Interactive demos, no backend needed |
-
-The browser viewer uses hyparquet with HTTP range requests to fetch only the data needed for visible tiles.
-
-### Zoom Level Splitting
-
-For very large datasets, split by zoom level:
-
-```bash
-raquet-io split-zoom large_raster.parquet output_dir/
-# Creates: zoom_11.parquet, zoom_12.parquet, etc.
-```
-
-This allows queries to target specific zoom levels without scanning the entire file.
-
-### DuckDB Extension Performance
-
-The DuckDB Raquet Extension provides significant performance improvements over traditional raster databases:
-
-| Operation | DuckDB Raquet | PostGIS Raster | Speedup |
-|-----------|---------------|----------------|---------|
-| Single point extraction | 0.030s | 0.048s | 1.6x |
-| All tiles statistics | 0.15s | 2.2s | **14.6x** |
-| Band math (NDVI) | 0.69s | 72.6s | **105x** |
-
-[View full benchmark comparison →](https://github.com/jatorre/duckdb-raquet/blob/main/docs/PERFORMANCE_COMPARISON.md)
-
----
-
-## About
-
-RaQuet is an open source project created and maintained by [**CARTO**](https://carto.com), the leading Location Intelligence platform. CARTO helps organizations unlock the power of spatial data through cloud-native analytics.
-
-Learn more about CARTO's spatial data solutions at [carto.com](https://carto.com).
-
-## License
-
-RaQuet is open source under the [BSD-3-Clause License](https://github.com/CartoDB/raquet/blob/master/LICENSE).
-
-## Contributing
-
-Contributions are welcome! See the [GitHub repository](https://github.com/CartoDB/raquet) for issues and pull requests.
+[Follow progress on GitHub →](https://github.com/CartoDB/raquet)
