@@ -237,6 +237,8 @@ def _convert_raster_impl(
     target_size: int | None,
     row_group_size: int,
     verbose: bool,
+    overviews: str,
+    min_zoom: int | None,
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
@@ -244,8 +246,15 @@ def _convert_raster_impl(
     # Calculate block_zoom from block_size
     block_zoom = int(math.log(block_size) / math.log(2))
 
+    # Convert overview mode
+    overview_mode = raster2raquet.OverviewMode(overviews)
+
     try:
         click.echo(f"Converting {input_file} to Raquet format...")
+        if overview_mode == raster2raquet.OverviewMode.NONE:
+            click.echo("  Overview mode: none (native resolution only)")
+        elif min_zoom is not None:
+            click.echo(f"  Min zoom override: {min_zoom}")
 
         raster2raquet.main(
             str(input_file),
@@ -255,6 +264,8 @@ def _convert_raster_impl(
             block_zoom,
             target_size,
             row_group_size,
+            overview_mode,
+            min_zoom,
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -300,6 +311,18 @@ def _convert_raster_impl(
     default=200,
     help="Rows per Parquet row group (default: 200, smaller = better remote pruning)",
 )
+@click.option(
+    "--overviews",
+    type=click.Choice(["auto", "none"]),
+    default="auto",
+    help="Overview generation: auto (full pyramid) or none (native resolution only)",
+)
+@click.option(
+    "--min-zoom",
+    type=int,
+    default=None,
+    help="Minimum zoom level for overviews (overrides auto calculation)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_raster(
     input_file: Path,
@@ -309,6 +332,8 @@ def convert_raster(
     block_size: int,
     target_size: int | None,
     row_group_size: int,
+    overviews: str,
+    min_zoom: int | None,
     verbose: bool,
 ):
     """Convert a raster file to Raquet format.
@@ -320,13 +345,20 @@ def convert_raster(
     OUTPUT_FILE is the path for the output Raquet (.parquet) file.
 
     \b
+    Overview options (similar to COG):
+        --overviews auto    Build full pyramid from min to max zoom (default)
+        --overviews none    No overviews, only native resolution tiles (fastest)
+        --min-zoom N        Limit overviews to zoom N and above
+
+    \b
     Examples:
         raquet convert raster landcover.tif landcover.parquet
         raquet convert raster temperature.nc temperature.parquet
         raquet convert raster dem.tif dem.parquet --resampling bilinear
-        raquet convert raster large.tif output.parquet --block-size 512 -v
+        raquet convert raster large.tif output.parquet --overviews none -v
+        raquet convert raster large.tif output.parquet --min-zoom 5 -v
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom)
 
 
 @convert_group.command("geotiff")
@@ -362,6 +394,18 @@ def convert_raster(
     default=200,
     help="Rows per Parquet row group (default: 200, smaller = better remote pruning)",
 )
+@click.option(
+    "--overviews",
+    type=click.Choice(["auto", "none"]),
+    default="auto",
+    help="Overview generation: auto (full pyramid) or none (native resolution only)",
+)
+@click.option(
+    "--min-zoom",
+    type=int,
+    default=None,
+    help="Minimum zoom level for overviews (overrides auto calculation)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_geotiff(
     input_file: Path,
@@ -371,6 +415,8 @@ def convert_geotiff(
     block_size: int,
     target_size: int | None,
     row_group_size: int,
+    overviews: str,
+    min_zoom: int | None,
     verbose: bool,
 ):
     """Convert a GeoTIFF file to Raquet format (alias for 'convert raster').
@@ -382,8 +428,9 @@ def convert_geotiff(
     Examples:
         raquet convert geotiff landcover.tif landcover.parquet
         raquet convert geotiff dem.tif dem.parquet --resampling bilinear
+        raquet convert geotiff large.tif output.parquet --overviews none
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom)
 
 
 @convert_group.command("imageserver")

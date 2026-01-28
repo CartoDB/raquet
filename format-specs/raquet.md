@@ -11,7 +11,7 @@ The format organizes raster data in the following way:
 1. The raster is divided into regular tiles (blocks). The block size MUST be divisible by 16. Common block sizes are 256x256 and 512x512.
 2. [QUADBIN](#tiling-scheme) spatial indexing is used to identify and locate tiles. Each tile is assigned a QUADBIN cell ID based on its spatial location. Example: if QUADBIN level is 13 at pixel resolution and the block size is 256x256, the QUADBIN level of the block is 5.
 3. Tile data is stored in a columnar structure for efficient access. Each tile is stored as a row in the file. The data within the bands in the tile is stored as separated columns, and pixels for the band is stored as binary encoded arrays, optionally zlib compressed.
-4. Overview pyramids can be optionally preserved for multi-resolution queries. Overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...).
+4. Overview pyramids are **optional** and can be included for multi-resolution queries (similar to COGs). When present, overview factors MUST be consecutive powers of 2 (e.g., 2, 4, 8, 16, ...). Files without overviews contain only native resolution tiles.
 5. Empty tiles (containing only NoData values) may be excluded to save space.
 6. Rich metadata, containing statistics and other information, is included for data discovery and analysis.
 
@@ -170,10 +170,40 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
   - `tiling`: Object containing tile/block configuration:
     - `scheme`: String identifying the tiling scheme. Always "quadbin" for RaQuet.
     - `block_width`, `block_height`: Integers specifying tile dimensions in pixels.
-    - `min_zoom`: Integer indicating the minimum zoom level (most zoomed out overview).
+    - `min_zoom`: Integer indicating the minimum zoom level (most zoomed out overview available).
     - `max_zoom`: Integer indicating the maximum zoom level (native resolution).
     - `pixel_zoom`: Integer indicating the zoom level for individual pixels (max_zoom + log4(block_size)).
     - `num_blocks`: Integer count of non-empty blocks in the dataset.
+
+  **Overview Availability:**
+  - Overviews are **optional** in RaQuet files, similar to Cloud Optimized GeoTIFFs (COGs).
+  - When `min_zoom == max_zoom`: No overviews exist; only native resolution tiles are available.
+  - When `min_zoom < max_zoom`: Overviews exist for zoom levels from `min_zoom` to `max_zoom`.
+
+  **Client Behavior for Out-of-Range Zoom Requests:**
+
+  When a client requests tiles at a zoom level outside `[min_zoom, max_zoom]`:
+
+  | Requested Zoom    | Behavior                          | Rationale                                |
+  |-------------------|-----------------------------------|------------------------------------------|
+  | `zoom < min_zoom` | Use `min_zoom` (coarsest available) | Graceful fallback for large-area queries |
+  | `zoom > max_zoom` | Use `max_zoom` (finest available)   | Return best available resolution         |
+
+  Graceful fallback is preferred over errors for analytics use cases. A continent-scale query benefits from receiving coarse overview data rather than nothing.
+
+  **Function-Specific Behavior:**
+
+  - **Point queries** (e.g., `ST_RasterValue`):
+    - Return value from the tile at requested zoom if available
+    - If no tile exists at that zoom (sparse pyramid), return NULL
+    - Zoom clamping applies only when explicitly requesting a resolution
+
+  - **Region analytics** (e.g., `ST_RegionStats`):
+    - Resolution parameter accepts: integer, `'auto'`, `'min'`, or `'max'`
+    - Integer values are clamped to `[min_zoom, max_zoom]`
+    - `'auto'` selects optimal resolution based on query area size
+    - `'min'` explicitly requests coarsest available (useful for quick previews)
+    - `'max'` explicitly requests finest available (default)
 
 - **Time Information** (optional, present when `time_cf` column exists)
   - `time`: Object containing CF convention time metadata:
@@ -404,6 +434,43 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 - `time_cf`: CF numeric time (minutes since 1980-01-01)
 - `time_ts`: Derived timestamp (e.g., 1980-01-01T00:00:00)
 - `sst`: Compressed raster tile data
+
+5. **Analytics-Only File (No Overviews)**
+```json
+{
+    "version": "0.3.0",
+    "width": 400752,
+    "height": 131072,
+    "crs": "EPSG:3857",
+    "bounds": [-180.0, -27.74, 180.0, 90.0],
+    "bounds_crs": "EPSG:4326",
+    "compression": "gzip",
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 10,
+        "max_zoom": 10,
+        "pixel_zoom": 18,
+        "num_blocks": 45000
+    },
+    "bands": [{
+        "name": "band_1",
+        "description": "Deforestation Carbon",
+        "type": "float32",
+        "nodata": null,
+        "unit": "tC/ha",
+        "colorinterp": "undefined",
+        "STATISTICS_MINIMUM": 0.0,
+        "STATISTICS_MAXIMUM": 450.0,
+        "STATISTICS_MEAN": 85.2,
+        "STATISTICS_STDDEV": 62.4,
+        "STATISTICS_VALID_PERCENT": 23.5
+    }]
+}
+```
+
+This example shows a large global raster converted without overviews (`min_zoom == max_zoom == 10`). This is suitable for analytics workloads that only query at native resolution and don't need visualization at lower zoom levels. Benefits include faster conversion time, smaller file size, and lower memory requirements during conversion.
 
 ## File Extension
 

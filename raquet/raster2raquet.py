@@ -18,6 +18,7 @@ Required packages:
     - pyarrow <https://pypi.org/project/pyarrow/>
     - quadbin <https://pypi.org/project/quadbin/>
 """
+from __future__ import annotations
 
 import argparse
 import dataclasses
@@ -88,6 +89,18 @@ class ResamplingAlgorithm(enum.StrEnum):
     Q3 = "q3"
     RMS = "rms"
     Sum = "sum"
+
+
+class OverviewMode(enum.StrEnum):
+    """Overview generation mode for RaQuet conversion
+
+    Similar to COG overview options:
+    - NONE: No overviews, only native resolution tiles (fastest, smallest files)
+    - AUTO: Automatic overview generation (default, builds full pyramid)
+    """
+
+    NONE = "none"
+    AUTO = "auto"
 
 
 @dataclasses.dataclass
@@ -726,6 +739,8 @@ def read_raster(
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
     pipe: multiprocessing.Pipe,
+    overview_mode: OverviewMode = OverviewMode.AUTO,
+    min_zoom_override: int | None = None,
 ):
     """Worker process that accesses a raster file through pipes.
 
@@ -735,7 +750,10 @@ def read_raster(
         input_filename: Path to raster file (GeoTIFF, NetCDF, or any GDAL-supported format)
         zoom_strategy: Web mercator zoom level selection
         resampling_algorithm: Resampling method to use
+        block_zoom: Block zoom level (8 for 256px blocks)
         pipe: Connection to send data to parent
+        overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
+        min_zoom_override: Optional minimum zoom level override (overrides AUTO calculation)
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -884,7 +902,20 @@ def read_raster(
         # Numpy module for tile initialization (if available)
         numpy_mod = numpy if HAS_NUMPY else None
 
-        minzoom = find_minzoom(raster_geometry, block_zoom)
+        # Determine minimum zoom based on overview mode and optional override
+        if overview_mode == OverviewMode.NONE:
+            # No overviews: only generate tiles at native resolution
+            minzoom = raster_geometry.zoom
+            logging.info("Overview mode NONE: generating only native resolution tiles (zoom %d)", minzoom)
+        elif min_zoom_override is not None:
+            # User-specified minimum zoom (clamp between 0 and max zoom)
+            minzoom = max(0, min(raster_geometry.zoom, min_zoom_override))
+            logging.info("Min zoom override: generating zoom levels %d to %d", minzoom, raster_geometry.zoom)
+        else:
+            # Auto mode: calculate minimum zoom for reasonable overview
+            minzoom = find_minzoom(raster_geometry, block_zoom)
+            logging.info("Auto mode: generating zoom levels %d to %d", minzoom, raster_geometry.zoom)
+
         stats_zoom = max(minzoom, raster_geometry.zoom + STATS_ZOOM_OFFSET)
         stats_zoom_diff = raster_geometry.zoom - stats_zoom
 
@@ -1014,17 +1045,35 @@ def open_raster_in_process(
     zoom_strategy: ZoomStrategy,
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
+    overview_mode: OverviewMode = OverviewMode.AUTO,
+    min_zoom_override: int | None = None,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a raster reader in another process.
 
+    Args:
+        input_filename: Path to raster file
+        zoom_strategy: Web mercator zoom level selection
+        resampling_algorithm: Resampling method to use
+        block_zoom: Block zoom level (8 for 256px blocks)
+        overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
+        min_zoom_override: Optional minimum zoom level override
+
     Returns:
-        Tuple of (raster_geometry, send_pipe, receive_pipe) for bidirectional communication
+        Tuple of (raster_geometry, receive_pipe) for communication
     """
     # Create communication pipe
     parent_recv, child_send = multiprocessing.Pipe(duplex=False)
 
     # Start worker process
-    args = input_filename, zoom_strategy, resampling_algorithm, block_zoom, child_send
+    args = (
+        input_filename,
+        zoom_strategy,
+        resampling_algorithm,
+        block_zoom,
+        child_send,
+        overview_mode,
+        min_zoom_override,
+    )
     process = multiprocessing.Process(target=read_raster, args=args)
     process.start()
 
@@ -1293,6 +1342,8 @@ def main(
     block_zoom: int,
     target_size: int | None = None,
     row_group_size: int = 200,
+    overview_mode: OverviewMode = OverviewMode.AUTO,
+    min_zoom_override: int | None = None,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1303,6 +1354,8 @@ def main(
         resampling_algorithm: ResamplingAlgorithm member
         target_size: Integer number of bytes for individual parquet files in raquet_destination
         row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
+        overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
+        min_zoom_override: Optional minimum zoom level override
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -1323,6 +1376,8 @@ def main(
         resampling_algorithm,
         block_zoom,
         row_group_size,
+        overview_mode,
+        min_zoom_override,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1334,6 +1389,8 @@ def convert_to_raquet_files(
     resampling_algorithm: ResamplingAlgorithm,
     block_zoom: int,
     row_group_size: int = 200,
+    overview_mode: OverviewMode = OverviewMode.AUTO,
+    min_zoom_override: int | None = None,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1344,6 +1401,8 @@ def convert_to_raquet_files(
         resampling_algorithm: ResamplingAlgorithm member
         block_zoom: Block zoom level (8 for 256px blocks)
         row_group_size: Number of rows per Parquet row group (default 200 for efficient pruning)
+        overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
+        min_zoom_override: Optional minimum zoom level override
 
     Yields output filenames as they are written.
 
@@ -1353,7 +1412,12 @@ def convert_to_raquet_files(
     data transfer for remote file access.
     """
     raster_geometry, pipe = open_raster_in_process(
-        input_filename, zoom_strategy, resampling_algorithm, block_zoom
+        input_filename,
+        zoom_strategy,
+        resampling_algorithm,
+        block_zoom,
+        overview_mode,
+        min_zoom_override,
     )
 
     try:
