@@ -52,17 +52,6 @@ We benchmarked both RaQuet implementations using [TCI.parquet](https://storage.g
 
 **All three approaches query the same parquet files.** A single RaQuet file in cloud storage can be accessed by DuckDB (via HTTPS), BigQuery external tables, or loaded into BigQuery native tables.
 
-### When to Use Each
-
-| Use Case | Recommended |
-|----------|-------------|
-| Interactive exploration | DuckDB — immediate response, no setup |
-| Local file analysis | DuckDB — works offline, no cloud dependency |
-| Small to medium datasets (<10GB) | DuckDB — simpler, faster |
-| Large-scale batch processing (TB+) | BigQuery — distributed compute |
-| Team data sharing | BigQuery — centralized access control |
-| Quick cloud exploration | BigQuery GCS External — no data loading |
-
 ### Architecture Comparison
 
 | Aspect | DuckDB | BigQuery |
