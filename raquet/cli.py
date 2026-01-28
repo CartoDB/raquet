@@ -30,7 +30,7 @@ def setup_logging(verbose: bool):
 
 
 @click.group()
-@click.version_option()
+@click.version_option(package_name="raquet-io")
 def cli():
     """Raquet CLI - Tools for working with Raquet (Raster + Parquet) files.
 

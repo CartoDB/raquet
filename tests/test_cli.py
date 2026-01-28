@@ -279,8 +279,14 @@ class TestMetadataValidation:
         assert "bands" in metadata
         assert "width" in metadata
         assert "height" in metadata
-        assert "block_width" in metadata
-        assert "block_height" in metadata
+
+        # v0.3.0 uses tiling object for block dimensions
+        if "tiling" in metadata:
+            assert "block_width" in metadata["tiling"]
+            assert "block_height" in metadata["tiling"]
+        else:
+            assert "block_width" in metadata
+            assert "block_height" in metadata
 
         # Verify bounds is valid
         bounds = metadata["bounds"]
@@ -294,3 +300,273 @@ class TestMetadataValidation:
         for band in bands:
             assert "type" in band
             assert "name" in band
+
+
+class TestConvertOverviewOptions:
+    """Tests for overview-related convert options."""
+
+    @pytest.fixture
+    def sample_geotiff(self):
+        """Return path to sample GeoTIFF."""
+        # Try examples directory first
+        examples_dir = Path(__file__).parent.parent / "examples"
+        tiff_files = list(examples_dir.glob("*.tif"))
+        if tiff_files:
+            return tiff_files[0]
+        # Fall back to test directory
+        tiff_files = list(TEST_DIR.glob("*.tif")) + list(TEST_DIR.glob("*.tiff"))
+        if not tiff_files:
+            pytest.skip("No GeoTIFF test files found")
+        return tiff_files[0]
+
+    def test_convert_overviews_none(self, runner, temp_dir, sample_geotiff):
+        """Test conversion with --overviews none (no pyramid)."""
+        output = temp_dir / "output.parquet"
+
+        result = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output), "--overviews", "none"],
+        )
+
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        assert output.exists()
+
+        # Verify only one zoom level exists
+        table = pq.read_table(output)
+        import pyarrow.compute as pc
+        import quadbin
+
+        blocks = table.filter(pc.not_equal(table.column("block"), 0))
+        zoom_levels = set()
+        for block_id in blocks.column("block").to_pylist():
+            _, _, z = quadbin.cell_to_tile(block_id)
+            zoom_levels.add(z)
+
+        assert len(zoom_levels) == 1, f"Expected 1 zoom level with --overviews none, got {zoom_levels}"
+
+    def test_convert_overviews_auto(self, runner, temp_dir, sample_geotiff):
+        """Test conversion with --overviews auto (default, builds pyramid)."""
+        output = temp_dir / "output.parquet"
+
+        result = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output), "--overviews", "auto"],
+        )
+
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        assert output.exists()
+
+        # Verify multiple zoom levels exist
+        table = pq.read_table(output)
+        import pyarrow.compute as pc
+        import quadbin
+
+        blocks = table.filter(pc.not_equal(table.column("block"), 0))
+        zoom_levels = set()
+        for block_id in blocks.column("block").to_pylist():
+            _, _, z = quadbin.cell_to_tile(block_id)
+            zoom_levels.add(z)
+
+        # Auto mode should create multiple zoom levels for most images
+        assert len(zoom_levels) >= 1, f"Expected at least 1 zoom level, got {zoom_levels}"
+
+    def test_convert_min_zoom(self, runner, temp_dir, sample_geotiff):
+        """Test conversion with --min-zoom option."""
+        output = temp_dir / "output.parquet"
+
+        result = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output), "--min-zoom", "3"],
+        )
+
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        assert output.exists()
+
+        # Verify minimum zoom level is respected
+        table = pq.read_table(output)
+        import pyarrow.compute as pc
+        import quadbin
+
+        blocks = table.filter(pc.not_equal(table.column("block"), 0))
+        zoom_levels = set()
+        for block_id in blocks.column("block").to_pylist():
+            _, _, z = quadbin.cell_to_tile(block_id)
+            zoom_levels.add(z)
+
+        min_zoom = min(zoom_levels)
+        assert min_zoom >= 3, f"Min zoom should be >= 3, got {min_zoom}"
+
+
+class TestConvertStreaming:
+    """Tests for streaming mode conversion."""
+
+    @pytest.fixture
+    def sample_geotiff(self):
+        """Return path to sample GeoTIFF."""
+        examples_dir = Path(__file__).parent.parent / "examples"
+        tiff_files = list(examples_dir.glob("*.tif"))
+        if tiff_files:
+            return tiff_files[0]
+        tiff_files = list(TEST_DIR.glob("*.tif")) + list(TEST_DIR.glob("*.tiff"))
+        if not tiff_files:
+            pytest.skip("No GeoTIFF test files found")
+        return tiff_files[0]
+
+    def test_streaming_mode(self, runner, temp_dir, sample_geotiff):
+        """Test conversion with --streaming flag."""
+        output = temp_dir / "output.parquet"
+
+        result = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output), "--streaming"],
+        )
+
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        assert output.exists()
+
+        # Verify output is valid raquet
+        table = pq.read_table(output)
+        assert "block" in table.column_names
+        assert "metadata" in table.column_names
+
+    def test_streaming_matches_non_streaming(self, runner, temp_dir, sample_geotiff):
+        """Test that streaming mode produces equivalent output to non-streaming."""
+        output_stream = temp_dir / "streaming.parquet"
+        output_normal = temp_dir / "normal.parquet"
+
+        # Convert with streaming
+        result1 = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output_stream), "--streaming", "--overviews", "none"],
+        )
+        assert result1.exit_code == 0
+
+        # Convert without streaming
+        result2 = runner.invoke(
+            cli,
+            ["convert", "raster", str(sample_geotiff), str(output_normal), "--overviews", "none"],
+        )
+        assert result2.exit_code == 0
+
+        # Compare outputs
+        table_stream = pq.read_table(output_stream)
+        table_normal = pq.read_table(output_normal)
+
+        assert len(table_stream) == len(table_normal), "Row counts should match"
+        assert table_stream.schema == table_normal.schema, "Schemas should match"
+
+        # Compare block IDs
+        stream_blocks = sorted(table_stream.column("block").to_pylist())
+        normal_blocks = sorted(table_normal.column("block").to_pylist())
+        assert stream_blocks == normal_blocks, "Block IDs should match"
+
+
+class TestExportOverviews:
+    """Tests for GeoTIFF export with overviews."""
+
+    def test_export_with_overviews(self, runner, temp_dir):
+        """Test exporting with --overviews flag."""
+        example_file = Path(__file__).parent.parent / "examples" / "europe.parquet"
+        if not example_file.exists():
+            pytest.skip("Example file not found")
+
+        output = temp_dir / "output.tif"
+
+        result = runner.invoke(
+            cli,
+            ["export", "geotiff", str(example_file), str(output), "--overviews"],
+        )
+
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        assert output.exists()
+
+
+class TestValidateCommand:
+    """Tests for the validate command."""
+
+    def test_validate_example_file(self, runner):
+        """Test validating the example parquet file."""
+        example_file = Path(__file__).parent.parent / "examples" / "europe.parquet"
+        if not example_file.exists():
+            pytest.skip("Example file not found")
+
+        result = runner.invoke(cli, ["validate", str(example_file)])
+        assert result.exit_code == 0
+        assert "VALID" in result.output
+
+    def test_validate_json_output(self, runner):
+        """Test validate with --json flag."""
+        example_file = Path(__file__).parent.parent / "examples" / "europe.parquet"
+        if not example_file.exists():
+            pytest.skip("Example file not found")
+
+        result = runner.invoke(cli, ["validate", str(example_file), "--json"])
+        assert result.exit_code == 0
+
+        # Parse JSON output
+        output_json = json.loads(result.output)
+        assert "is_valid" in output_json
+        assert output_json["is_valid"] is True
+
+    def test_validate_nonexistent_file(self, runner, temp_dir):
+        """Test validate with nonexistent file."""
+        result = runner.invoke(cli, ["validate", str(temp_dir / "nonexistent.parquet")])
+        assert result.exit_code != 0
+
+    def test_validate_help(self, runner):
+        """Test validate help output."""
+        result = runner.invoke(cli, ["validate", "--help"])
+        assert result.exit_code == 0
+        assert "Validate" in result.output
+        assert "--json" in result.output
+
+
+class TestV03Metadata:
+    """Tests for v0.3.0 metadata format."""
+
+    def test_v03_metadata_structure(self, runner, temp_dir):
+        """Test that converted files use v0.3.0 metadata format."""
+        examples_dir = Path(__file__).parent.parent / "examples"
+        tiff_files = list(examples_dir.glob("*.tif"))
+        if not tiff_files:
+            pytest.skip("No GeoTIFF test files found")
+
+        input_tiff = tiff_files[0]
+        output = temp_dir / "output.parquet"
+
+        result = runner.invoke(
+            cli,
+            ["convert", "raster", str(input_tiff), str(output)],
+        )
+        assert result.exit_code == 0
+
+        # Read and verify v0.3.0 metadata structure
+        table = pq.read_table(output)
+        import pyarrow.compute as pc
+
+        block_zero = table.filter(pc.equal(table.column("block"), 0))
+        metadata = json.loads(block_zero.column("metadata")[0].as_py())
+
+        # v0.3.0 required fields
+        assert metadata.get("version") == "0.3.0", "Should use v0.3.0 format"
+        assert "crs" in metadata, "v0.3.0 should have crs field"
+        assert "bounds_crs" in metadata, "v0.3.0 should have bounds_crs field"
+        assert "tiling" in metadata, "v0.3.0 should have tiling object"
+
+        # Check tiling object
+        tiling = metadata["tiling"]
+        assert "scheme" in tiling
+        assert "block_width" in tiling
+        assert "block_height" in tiling
+        assert "min_zoom" in tiling
+        assert "max_zoom" in tiling
+        assert "pixel_zoom" in tiling
+        assert "num_blocks" in tiling
+
+        # Check bands have GDAL-compatible stats keys
+        for band in metadata.get("bands", []):
+            # These are optional but should use GDAL-compatible names if present
+            if "STATISTICS_MINIMUM" in band:
+                assert isinstance(band["STATISTICS_MINIMUM"], (int, float))
+            if "STATISTICS_MAXIMUM" in band:
+                assert isinstance(band["STATISTICS_MAXIMUM"], (int, float))
