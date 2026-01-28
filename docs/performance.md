@@ -28,21 +28,62 @@ RaQuet achieves significant compression compared to source formats, especially f
 
 ---
 
-## Query Performance
+## DuckDB vs BigQuery
 
-### Point Query Latency
+We benchmarked both RaQuet implementations using [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) (Sentinel-2 True Color imagery, 261 MB, 3,225 tiles across zoom levels 7-14).
 
-Querying a single point from a remote RaQuet file:
+### Query Performance
 
-| File Size | Cold Query | Warm Query |
-|-----------|------------|------------|
-| 15 MB (Spain GHI) | ~200ms | ~50ms |
-| 255 MB (World PVOUT) | ~300ms | ~80ms |
-| 805 MB (World Elevation) | ~400ms | ~100ms |
+| Query Type | DuckDB | BigQuery Native | BigQuery GCS |
+|------------|--------|-----------------|--------------|
+| Point Query (pixel at coordinate) | 4.0s | 3.2s | 4.7s |
+| Single Tile Statistics | 1.3s | 2.4s | 2.5s |
+| Region Statistics (545 tiles) | 2.7s | 6.0s | ~7s |
+| Resolution Distribution | 0.8s | 2.0s | 2.4s |
+| Full Table Aggregation | 0.7s | 2.0s | 2.6s |
 
-*Tested with DuckDB querying files from Google Cloud Storage. Cold = first query, Warm = subsequent queries with Parquet metadata cached.*
+*DuckDB tested on Apple M3 Max, querying directly from GCS via HTTPS. BigQuery tested with native tables and GCS external tables.*
 
-### How It Works
+### Key Findings
+
+**DuckDB is 2-3x faster** for interactive queries due to native C++ implementation versus BigQuery's JavaScript UDFs. The performance gap is most noticeable on compute-heavy operations like region statistics where DuckDB processes 545 tiles in 2.7s compared to BigQuery's 6s.
+
+**BigQuery GCS external tables** add only 20-30% overhead compared to native tables. This makes them a practical option for exploring RaQuet files without ETL — you can query parquet files directly in GCS and upgrade to native tables later if needed.
+
+**All three approaches query the same parquet files.** A single RaQuet file in cloud storage can be accessed by DuckDB (via HTTPS), BigQuery external tables, or loaded into BigQuery native tables.
+
+### When to Use Each
+
+| Use Case | Recommended |
+|----------|-------------|
+| Interactive exploration | DuckDB — immediate response, no setup |
+| Local file analysis | DuckDB — works offline, no cloud dependency |
+| Small to medium datasets (<10GB) | DuckDB — simpler, faster |
+| Large-scale batch processing (TB+) | BigQuery — distributed compute |
+| Team data sharing | BigQuery — centralized access control |
+| Quick cloud exploration | BigQuery GCS External — no data loading |
+
+### Architecture Comparison
+
+| Aspect | DuckDB | BigQuery |
+|--------|--------|----------|
+| Implementation | C++ Extension | JavaScript UDFs |
+| QUADBIN Functions | Native C++ | CARTO Analytics Toolbox |
+| Raster Decompression | zlib (C) | pako (JavaScript) |
+| Data Access | Local, HTTPS, S3, GCS | Native tables, external tables |
+| Cold Start | <1 second | 2-5 seconds |
+| Scaling | Single machine | Distributed |
+
+### Multi-Resolution Pyramid Queries
+
+RaQuet files contain tiles at multiple zoom levels (overviews). When querying regions:
+
+- **DuckDB:** `quadbin_intersects(block, geometry)` automatically finds tiles at all resolutions
+- **BigQuery:** Use `__RAQUET_REGION_BLOCKS(geom, min_zoom, max_zoom)` to query across pyramid levels. Standard `QUADBIN_POLYFILL_MODE` only returns tiles at a single zoom level.
+
+---
+
+## How Queries Work
 
 1. **Parquet footer read** — Single range request to get file metadata
 2. **Row group pruning** — QUADBIN index enables skipping irrelevant row groups
