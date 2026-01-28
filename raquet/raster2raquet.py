@@ -953,12 +953,43 @@ def read_raster(
                         cog_overview_used = True
 
                 if not cog_overview_used:
-                    # Fall back to building from child tiles using Average resampling
-                    logging.info("Overview %s from %s", frame.tile, frame.outputs)
-                    for sub_ds in frame.outputs:
+                    # Build overview from child tiles using VRT mosaic
+                    # We must combine all children into a VRT first, then warp once
+                    # Sequential warps would overwrite each other's data
+                    logging.info("Overview %s from %d child tiles", frame.tile, len(frame.outputs))
+
+                    if len(frame.outputs) == 1:
+                        # Single child - warp directly
                         osgeo.gdal.Warp(
-                            destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=sub_ds, options=opts_overview
+                            destNameOrDestDS=tile_ds,
+                            srcDSOrSrcDSTab=frame.outputs[0],
+                            options=opts_overview
                         )
+                    else:
+                        # Multiple children - build VRT mosaic first
+                        vrt_path = f"/vsimem/overview-vrt-{frame.tile.z}-{frame.tile.x}-{frame.tile.y}.vrt"
+                        vrt_options = osgeo.gdal.BuildVRTOptions(
+                            srcNodata=nodata_value,
+                            VRTNodata=nodata_value,
+                        )
+                        vrt_ds = osgeo.gdal.BuildVRT(vrt_path, frame.outputs, options=vrt_options)
+                        if vrt_ds is None:
+                            logging.warning("Failed to build VRT for %s, falling back to sequential warp", frame.tile)
+                            for sub_ds in frame.outputs:
+                                osgeo.gdal.Warp(
+                                    destNameOrDestDS=tile_ds,
+                                    srcDSOrSrcDSTab=sub_ds,
+                                    options=opts_overview
+                                )
+                        else:
+                            vrt_ds.FlushCache()
+                            osgeo.gdal.Warp(
+                                destNameOrDestDS=tile_ds,
+                                srcDSOrSrcDSTab=vrt_ds,
+                                options=opts_overview
+                            )
+                            vrt_ds = None
+                            osgeo.gdal.Unlink(vrt_path)
 
                 d, s1 = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
                 s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
