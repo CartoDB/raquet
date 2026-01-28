@@ -221,7 +221,7 @@ body {
    Hero Section
    ======================================== */
 .hero {
-  background: var(--color-primary);
+  background: #e8eef4;
   padding: calc(var(--nav-height) + var(--space-3xl)) 0 var(--space-3xl);
   text-align: center;
   position: relative;
@@ -235,12 +235,12 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  /* Blueprint grid pattern */
+  /* Blueprint grid pattern - graph paper style */
   background-image:
-    linear-gradient(rgba(54, 179, 168, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(54, 179, 168, 0.08) 1px, transparent 1px),
-    linear-gradient(rgba(54, 179, 168, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(54, 179, 168, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(180, 195, 210, 0.8) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(180, 195, 210, 0.8) 1px, transparent 1px),
+    linear-gradient(rgba(200, 210, 220, 0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(200, 210, 220, 0.5) 1px, transparent 1px);
   background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
   opacity: 0.5;
 }
@@ -266,10 +266,10 @@ body {
 }
 
 .hero-subtitle {
-  color: var(--color-accent-light);
+  color: var(--color-accent-dark);
   font-family: var(--font-heading);
   font-size: 1.1rem;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   margin: 0 0 var(--space-lg);
@@ -277,12 +277,11 @@ body {
 }
 
 .hero-tagline {
-  color: var(--color-white);
+  color: var(--color-primary);
   font-family: var(--font-heading);
   font-size: 1.4rem;
   font-weight: 400;
   margin: 0 0 var(--space-xl);
-  opacity: 0.95;
 }
 
 @media (max-width: 768px) {
@@ -300,13 +299,13 @@ body {
 }
 
 .hero-byline {
-  color: rgba(255,255,255,0.7);
+  color: var(--color-text-light);
   font-size: 0.95rem;
   margin: 0;
 }
 
 .hero-byline a {
-  color: var(--color-accent-light);
+  color: var(--color-accent-dark);
   text-decoration: none;
   font-weight: 600;
 }
