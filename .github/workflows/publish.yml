@@ -8,7 +8,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: pypi
+    # environment: pypi  # Uncomment if you want deployment protection rules
     permissions:
       id-token: write  # Required for trusted publishing
     steps:
