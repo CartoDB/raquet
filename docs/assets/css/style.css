@@ -366,14 +366,15 @@ body {
 }
 
 .btn-secondary {
-  background: transparent;
-  color: var(--color-white);
-  border-color: rgba(255,255,255,0.5);
+  background: var(--color-white);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .btn-secondary:hover {
-  background: rgba(255,255,255,0.1);
-  border-color: var(--color-white);
+  background: var(--color-primary);
+  color: var(--color-white);
+  border-color: var(--color-primary);
 }
 
 /* ========================================
