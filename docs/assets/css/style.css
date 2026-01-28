@@ -259,6 +259,17 @@ body {
   }
 }
 
+.hero-subtitle {
+  color: var(--color-accent-light);
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0 0 var(--space-lg);
+  opacity: 0.9;
+}
+
 .hero-tagline {
   color: var(--color-white);
   font-family: var(--font-heading);
