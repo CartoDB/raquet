@@ -4,51 +4,6 @@
 
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
 
-## Design Rationale
-
-This section documents key design decisions and their rationale.
-
-### Why Web Mercator (EPSG:3857)?
-
-RaQuet enforces Web Mercator projection for several reasons:
-
-1. **Universal tiling compatibility**: Web Mercator is the de facto standard for web mapping tiles (Google Maps, OpenStreetMap, Bing Maps). This enables direct visualization without reprojection.
-2. **QUADBIN efficiency**: The QUADBIN spatial index is designed around Web Mercator's power-of-2 tile subdivision.
-3. **Interoperability**: Data can be served directly to web mapping libraries (MapLibre, Leaflet, etc.) without server-side reprojection.
-
-**Trade-offs**: Web Mercator introduces area distortion, particularly at high latitudes, and is not suitable for precise geodetic measurements. For analytics requiring original projection fidelity, consider keeping source data alongside RaQuet exports, or use formats that preserve native projections.
-
-### Why Metadata in a Row vs Parquet File Metadata?
-
-RaQuet stores metadata as a JSON string in a special row (`block = 0`) rather than in Parquet's native key-value metadata:
-
-1. **SQL accessibility**: Metadata can be queried with standard SQL without special Parquet metadata APIs.
-2. **Data warehouse compatibility**: BigQuery, Snowflake, Redshift, and DuckDB can read row data easily; accessing file-level metadata varies by platform.
-3. **Schema consistency**: The metadata row follows the same schema as data rows (block + metadata columns).
-4. **Streaming writes**: Row-based metadata doesn't require rewriting file footers.
-
-**Trade-off**: File identification requires reading the first row rather than just the footer. See [File Identification](#file-identification) for mitigation.
-
-### Why Band-Level Compression (gzip) on Top of Parquet?
-
-RaQuet allows optional gzip compression of band data independently of Parquet's built-in compression:
-
-1. **Cell-level decompression**: Individual tiles can be decompressed without reading entire row groups.
-2. **Network transfer**: Compressed blobs can be transferred and cached efficiently.
-3. **Compatibility**: Works with Parquet readers that don't support all compression codecs.
-
-**Recommendation**: For optimal file size, use RaQuet's band compression (`compression: "gzip"`) **or** Parquet compression (e.g., ZSTD), but not both. Using both adds overhead with minimal benefit. When using Parquet compression without band compression, set `compression: null` in metadata.
-
-### Scope: 2D Rasters with Optional Time Dimension
-
-RaQuet is designed for 2D spatial rasters with an optional time dimension (X, Y, T). It is not intended to replace general-purpose multi-dimensional array formats like Zarr, NetCDF, or HDF5 for:
-
-- Arbitrary n-dimensional data (e.g., spectral × time × depth × lat × lon)
-- Non-spatial array data
-- Complex hierarchical data structures
-
-For 3D+ scientific data, consider Zarr or NetCDF with RaQuet as an export target for spatial visualization layers.
-
 ## Data Organization
 
 The format organizes raster data in the following way:
@@ -654,3 +609,48 @@ Producers MAY extend the metadata with custom fields. To avoid conflicts with fu
 2. Alternatively, custom fields at the root level SHOULD use a namespace prefix (e.g., `"acme:project_id"`).
 
 Readers MUST ignore unrecognized fields to ensure forward compatibility.
+
+## Design Rationale
+
+This section documents key design decisions and their rationale.
+
+### Why Web Mercator (EPSG:3857)?
+
+RaQuet enforces Web Mercator projection for several reasons:
+
+1. **Universal tiling compatibility**: Web Mercator is the de facto standard for web mapping tiles (Google Maps, OpenStreetMap, Bing Maps). This enables direct visualization without reprojection.
+2. **QUADBIN efficiency**: The QUADBIN spatial index is designed around Web Mercator's power-of-2 tile subdivision.
+3. **Interoperability**: Data can be served directly to web mapping libraries (MapLibre, Leaflet, etc.) without server-side reprojection.
+
+**Trade-offs**: Web Mercator introduces area distortion, particularly at high latitudes, and is not suitable for precise geodetic measurements. For analytics requiring original projection fidelity, consider keeping source data alongside RaQuet exports, or use formats that preserve native projections.
+
+### Why Metadata in a Row vs Parquet File Metadata?
+
+RaQuet stores metadata as a JSON string in a special row (`block = 0`) rather than in Parquet's native key-value metadata:
+
+1. **SQL accessibility**: Metadata can be queried with standard SQL without special Parquet metadata APIs.
+2. **Data warehouse compatibility**: BigQuery, Snowflake, Redshift, and DuckDB can read row data easily; accessing file-level metadata varies by platform.
+3. **Schema consistency**: The metadata row follows the same schema as data rows (block + metadata columns).
+4. **Streaming writes**: Row-based metadata doesn't require rewriting file footers.
+
+**Trade-off**: File identification requires reading the first row rather than just the footer. See [File Identification](#file-identification) for mitigation.
+
+### Why Band-Level Compression (gzip) on Top of Parquet?
+
+RaQuet allows optional gzip compression of band data independently of Parquet's built-in compression:
+
+1. **Cell-level decompression**: Individual tiles can be decompressed without reading entire row groups.
+2. **Network transfer**: Compressed blobs can be transferred and cached efficiently.
+3. **Compatibility**: Works with Parquet readers that don't support all compression codecs.
+
+**Recommendation**: For optimal file size, use RaQuet's band compression (`compression: "gzip"`) **or** Parquet compression (e.g., ZSTD), but not both. Using both adds overhead with minimal benefit. When using Parquet compression without band compression, set `compression: null` in metadata.
+
+### Scope: 2D Rasters with Optional Time Dimension
+
+RaQuet is designed for 2D spatial rasters with an optional time dimension (X, Y, T). It is not intended to replace general-purpose multi-dimensional array formats like Zarr, NetCDF, or HDF5 for:
+
+- Arbitrary n-dimensional data (e.g., spectral × time × depth × lat × lon)
+- Non-spatial array data
+- Complex hierarchical data structures
+
+For 3D+ scientific data, consider Zarr or NetCDF with RaQuet as an export target for spatial visualization layers.
