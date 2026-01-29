@@ -1154,15 +1154,31 @@ def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
     # Add band columns
     columns.extend((bname, pyarrow.binary()) for bname in band_names)
 
-    schema = pyarrow.schema(columns)
+    # Create schema with Parquet-level metadata for file identification
+    # This allows readers (e.g., GDAL drivers) to identify RaQuet files
+    # by reading only the Parquet footer
+    schema = pyarrow.schema(columns, metadata={"raquet:version": "0.3.0"})
 
     return schema, band_names
 
 
-def _sanitize_nodata(nodata: float | int | None) -> float | int | None:
-    """Convert NaN nodata to None for valid JSON"""
-    if nodata is not None and isinstance(nodata, float) and math.isnan(nodata):
+def _sanitize_nodata(nodata: float | int | None) -> float | int | str | None:
+    """Encode nodata value for JSON following Zarr v3 conventions.
+
+    Special floating-point values are encoded as strings:
+    - NaN -> "NaN"
+    - +Infinity -> "Infinity"
+    - -Infinity -> "-Infinity"
+
+    See: https://zarr-specs.readthedocs.io/en/latest/v3/data-types/index.html#fill-value-list
+    """
+    if nodata is None:
         return None
+    if isinstance(nodata, float):
+        if math.isnan(nodata):
+            return "NaN"
+        if math.isinf(nodata):
+            return "Infinity" if nodata > 0 else "-Infinity"
     return nodata
 
 
@@ -1285,6 +1301,7 @@ def create_metadata(
     )
 
     metadata_json = {
+        "file_format": "raquet",
         "version": "0.3.0",
         "width": dimensions["width"],
         "height": dimensions["height"],

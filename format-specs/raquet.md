@@ -4,6 +4,51 @@
 
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format.
 
+## Design Rationale
+
+This section documents key design decisions and their rationale.
+
+### Why Web Mercator (EPSG:3857)?
+
+RaQuet enforces Web Mercator projection for several reasons:
+
+1. **Universal tiling compatibility**: Web Mercator is the de facto standard for web mapping tiles (Google Maps, OpenStreetMap, Bing Maps). This enables direct visualization without reprojection.
+2. **QUADBIN efficiency**: The QUADBIN spatial index is designed around Web Mercator's power-of-2 tile subdivision.
+3. **Interoperability**: Data can be served directly to web mapping libraries (MapLibre, Leaflet, etc.) without server-side reprojection.
+
+**Trade-offs**: Web Mercator introduces area distortion, particularly at high latitudes, and is not suitable for precise geodetic measurements. For analytics requiring original projection fidelity, consider keeping source data alongside RaQuet exports, or use formats that preserve native projections.
+
+### Why Metadata in a Row vs Parquet File Metadata?
+
+RaQuet stores metadata as a JSON string in a special row (`block = 0`) rather than in Parquet's native key-value metadata:
+
+1. **SQL accessibility**: Metadata can be queried with standard SQL without special Parquet metadata APIs.
+2. **Data warehouse compatibility**: BigQuery, Snowflake, Redshift, and DuckDB can read row data easily; accessing file-level metadata varies by platform.
+3. **Schema consistency**: The metadata row follows the same schema as data rows (block + metadata columns).
+4. **Streaming writes**: Row-based metadata doesn't require rewriting file footers.
+
+**Trade-off**: File identification requires reading the first row rather than just the footer. See [File Identification](#file-identification) for mitigation.
+
+### Why Band-Level Compression (gzip) on Top of Parquet?
+
+RaQuet allows optional gzip compression of band data independently of Parquet's built-in compression:
+
+1. **Cell-level decompression**: Individual tiles can be decompressed without reading entire row groups.
+2. **Network transfer**: Compressed blobs can be transferred and cached efficiently.
+3. **Compatibility**: Works with Parquet readers that don't support all compression codecs.
+
+**Recommendation**: For optimal file size, use RaQuet's band compression (`compression: "gzip"`) **or** Parquet compression (e.g., ZSTD), but not both. Using both adds overhead with minimal benefit. When using Parquet compression without band compression, set `compression: null` in metadata.
+
+### Scope: 2D Rasters with Optional Time Dimension
+
+RaQuet is designed for 2D spatial rasters with an optional time dimension (X, Y, T). It is not intended to replace general-purpose multi-dimensional array formats like Zarr, NetCDF, or HDF5 for:
+
+- Arbitrary n-dimensional data (e.g., spectral × time × depth × lat × lon)
+- Non-spatial array data
+- Complex hierarchical data structures
+
+For 3D+ scientific data, consider Zarr or NetCDF with RaQuet as an export target for spatial visualization layers.
+
 ## Data Organization
 
 The format organizes raster data in the following way:
@@ -42,7 +87,8 @@ Required columns:
 - Naming convention: Configurable band names, optionally following the convention `band_<band_index>` (e.g., "band_1", "band_2", etc.).
 - Content: Raw binary data of the raster tile.
 - Format: Binary-encoded array of pixel values stored in row-major order (pixels are stored row by row from top to bottom, and within each row from left to right). The encoded array is represented as a flat binary array of the pixel values.
-- Optional compression: Can be zlib compressed.
+- **Endianness**: Little-endian byte order MUST be used for multi-byte data types (int16, int32, float32, etc.).
+- Optional compression: Can be gzip compressed (independent of Parquet-level compression).
 
 #### Metadata Column
 - Type: string
@@ -71,12 +117,41 @@ Required columns:
 - For single-timestep data, time columns MAY be omitted.
 - Time values represent the **start** of each time period (e.g., monthly data for January 1980 has time = 1980-01-01T00:00:00).
 
+**Primary Key with Time Dimension:**
+When `time_cf` is present, the combination of (`block`, `time_cf`) forms the unique key for each row. Multiple rows may have the same `block` value but different timestamps. Without time columns, `block` alone is unique (excluding the metadata row at `block = 0`).
+
 ## Tiling Scheme
 
-RaQuet uses the QUADBIN tiling scheme for spatial indexing. [QUADBIN](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/key-concepts/spatial-indexes#quadbin) is a hierarchical geospatial index based on the Bing Maps Tile System (Quadkey). Designed to be cluster-efficient, it stores in a 64-bit number the information to uniquely identify any of the grid cells that result from uniformly subdividing a map in Mercator projection into four squares at different resolution levels, from 0 to 26 (less than 1m² at the equator). The bit layout is inspired in the H3 design, and provides different modes to store not only cells, but edges, corners or vertices.
+RaQuet uses the **QUADBIN** tiling scheme for spatial indexing. QUADBIN is a hierarchical geospatial index that encodes Web Mercator tile coordinates `(x, y, z)` into a single 64-bit integer. This encoding enables efficient spatial queries and Parquet row group pruning.
 
-The tilling scheme is defined by the following parameters:
-- Each tile is identified by a QUADBIN cell ID (uint64).
+Key properties:
+- **Single-column index**: Location and zoom level in one INT64 value
+- **Morton order**: Spatially adjacent tiles have numerically similar IDs
+- **Resolution range**: Zoom levels 0-26 (sub-meter precision at the equator)
+
+For a complete explanation of the QUADBIN algorithm, bit layout, and encoding examples, see the **[QUADBIN Spatial Index documentation](https://cartodb.github.io/raquet/quadbin)**.
+
+### Reference Implementations
+
+- Python: [quadbin-py](https://github.com/CartoDB/quadbin-py) — `quadbin.tile_to_cell()`, `quadbin.cell_to_tile()`
+- JavaScript: [@carto/quadbin](https://github.com/CartoDB/quadbin-js)
+- SQL: [CARTO Analytics Toolbox](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-bigquery/sql-reference/quadbin)
+
+### Row Ordering Recommendation
+
+For optimal random-access performance when reading from cloud storage (S3, GCS, Azure Blob), producers SHOULD sort rows by QUADBIN cell ID. This enables Parquet row group pruning when filtering by spatial location, as QUADBIN's Morton-order encoding clusters spatially adjacent tiles together.
+
+### Row Group Size Considerations
+
+The optimal Parquet row group size involves trade-offs that depend on the primary use case:
+
+- **Smaller row groups** (e.g., 50-200 rows): Better for web tiling and random tile access, as clients can fetch individual tiles with minimal data transfer overhead.
+- **Larger row groups** (e.g., 1000+ rows): Better for analytics workloads that scan many tiles, as fewer row groups mean less metadata overhead and more efficient columnar reads.
+
+Producers should consider their primary access pattern when choosing row group size. Further research is needed to establish optimal values for different use cases. The reference implementation currently uses 200 rows as a default.
+
+The tiling scheme is defined by the following parameters:
+- Each tile is identified by a QUADBIN cell ID (uint64)
 - The resolution level is encoded in the QUADBIN cell ID
 - Tiles are aligned to the QUADBIN grid at the specified resolution
 - Default tile size is 256x256 pixels
@@ -97,6 +172,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 9216,
     "height": 7936,
@@ -150,7 +226,8 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 ### Metadata Fields Description
 
-- **Version Information**
+- **Format Identification**
+  - `file_format`: String identifying this as a RaQuet file. MUST be `"raquet"`.
   - `version`: String indicating the RaQuet specification version. Current version is "0.3.0".
 
 - **Raster Dimensions**
@@ -224,12 +301,19 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
   Each band entry in the `bands` array contains:
   - `name`: String identifier for the band, matching the column name in the Parquet file.
   - `description`: Optional string with human-readable band description (from GDAL GetDescription).
-  - `type`: String indicating the data type. Valid values: `uint8, int8, uint16, int16, uint32, int32, uint64, int64, float32, float64`.
-  - `nodata`: The band-specific NoData value, or null if not set.
+  - `type`: String indicating the data type. Valid values: `uint8, int8, uint16, int16, uint32, int32, uint64, int64, float16, float32, float64`.
+  - `nodata`: The band-specific NoData value, or null if not set. For special floating-point values, use string encoding following [Zarr v3 conventions](https://zarr-specs.readthedocs.io/en/latest/v3/data-types/index.html#fill-value-list):
+    - `"NaN"` for Not-a-Number
+    - `"Infinity"` for positive infinity
+    - `"-Infinity"` for negative infinity
+    - Numeric values should be encoded with sufficient precision (JSON number or string)
   - `unit`: Optional string indicating physical units (from GDAL GetUnitType). Examples: "meters", "kWh/m²/day".
   - `scale`: Optional float for converting DN to physical values: `physical = DN * scale + offset` (from GDAL GetScale).
   - `offset`: Optional float for converting DN to physical values (from GDAL GetOffset).
-  - `colorinterp`: Optional string indicating color interpretation. Values are [GDAL color interpretations](https://gdal.org/en/stable/user/raster_data_model.html): `"red"`, `"green"`, `"blue"`, `"alpha"`, `"gray"`, `"palette"`, `"undefined"`.
+  - `colorinterp`: Optional string indicating color interpretation. Values follow [GDAL color interpretations](https://gdal.org/en/stable/user/raster_data_model.html) (lowercase):
+    - Basic: `"undefined"`, `"gray"`, `"palette"`, `"red"`, `"green"`, `"blue"`, `"alpha"`
+    - Extended (GDAL 3.5+): `"pan"`, `"coastal"`, `"rededge"`, `"nir"`, `"swir"`, `"mwir"`, `"lwir"`, `"tir"`, `"otherir"`
+    - SAR (GDAL 3.5+): `"sar_ka"`, `"sar_k"`, `"sar_ku"`, `"sar_x"`, `"sar_c"`, `"sar_s"`, `"sar_l"`, `"sar_p"`
   - `colortable`: Optional object mapping pixel values to RGBA colors (for palette images):
     ```json
     {
@@ -259,6 +343,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 1. **Single-band Scientific Data (e.g., Solar Irradiation)**
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 9216,
     "height": 7936,
@@ -300,6 +385,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 2. **RGB Satellite Image**
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 1024,
     "height": 1024,
@@ -354,6 +440,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 3. **Elevation Data with Units**
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 32768,
     "height": 14848,
@@ -389,6 +476,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 4. **Time-Series Climate Data (NetCDF with CF conventions)**
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 1440,
     "height": 721,
@@ -438,6 +526,7 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 5. **Analytics-Only File (No Overviews)**
 ```json
 {
+    "file_format": "raquet",
     "version": "0.3.0",
     "width": 400752,
     "height": 131072,
@@ -507,3 +596,61 @@ When converting NetCDF files with CF (Climate and Forecast) convention time dime
 3. **CF metadata preserved**: Time units, calendar, and reference date stored in metadata
 
 For other data sources, the converter reprojects to Web Mercator and builds pyramids as needed.
+
+## File Identification
+
+To enable fast identification of RaQuet files without fully parsing the metadata row, producers SHOULD include a hint in the Parquet file-level key-value metadata:
+
+- **Key**: `raquet:version`
+- **Value**: The specification version (e.g., `"0.3.0"`)
+
+This allows readers (e.g., a potential GDAL driver) to quickly distinguish RaQuet files from other Parquet files by reading only the Parquet footer.
+
+**Fallback heuristic** for files without the key-value hint: A Parquet file is likely RaQuet if it contains:
+- A `block` column of type INT64
+- A `metadata` column of type STRING/UTF8
+- One or more columns with BYTE_ARRAY type (band data)
+
+## Processing Metadata (Optional)
+
+Producers MAY include a `processing` object in the metadata to document how the file was created:
+
+```json
+{
+    "processing": {
+        "source_crs": "EPSG:4326",
+        "resampling": "bilinear",
+        "overview_resampling": "average",
+        "created_by": "raquet-io 0.7.0",
+        "created_at": "2024-01-15T10:30:00Z"
+    }
+}
+```
+
+Fields:
+- `source_crs`: Original CRS before reprojection to EPSG:3857
+- `resampling`: Algorithm used for reprojection (e.g., `"near"`, `"bilinear"`, `"cubic"`, `"average"`)
+- `overview_resampling`: Algorithm used for overview generation
+- `created_by`: Tool and version that created the file
+- `created_at`: ISO 8601 timestamp of file creation
+
+## Custom Metadata Extension
+
+Producers MAY extend the metadata with custom fields. To avoid conflicts with future specification versions:
+
+1. Custom fields SHOULD be placed under a `custom` object:
+   ```json
+   {
+       "file_format": "raquet",
+       "version": "0.3.0",
+       "custom": {
+           "organization": "ACME Corp",
+           "project_id": "climate-2024",
+           "license": "CC-BY-4.0"
+       }
+   }
+   ```
+
+2. Alternatively, custom fields at the root level SHOULD use a namespace prefix (e.g., `"acme:project_id"`).
+
+Readers MUST ignore unrecognized fields to ensure forward compatibility.

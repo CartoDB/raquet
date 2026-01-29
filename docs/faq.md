@@ -103,6 +103,7 @@ RaQuet v0.3.0 stores metadata as JSON in the `block=0` row:
 
 ```json
 {
+  "file_format": "raquet",
   "version": "0.3.0",
   "width": 32768,
   "height": 14848,

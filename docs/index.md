@@ -182,3 +182,9 @@ We're working on registering RaQuet datasets as [Apache Iceberg](https://iceberg
 GeoParquet brought vector data into the lakehouse. RaQuet does the same for raster. Iceberg unifies them under a single governance layer.
 
 [Follow progress on GitHub →](https://github.com/CartoDB/raquet)
+
+---
+
+## Acknowledgments
+
+Special thanks to [Even Rouault](https://github.com/rouault) for his invaluable feedback on the RaQuet specification. His deep expertise in geospatial formats and GDAL has helped shape RaQuet into a more robust and well-documented standard.

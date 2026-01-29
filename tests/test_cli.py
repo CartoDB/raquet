@@ -548,10 +548,17 @@ class TestV03Metadata:
         metadata = json.loads(block_zero.column("metadata")[0].as_py())
 
         # v0.3.0 required fields
+        assert metadata.get("file_format") == "raquet", "Should have file_format field"
         assert metadata.get("version") == "0.3.0", "Should use v0.3.0 format"
         assert "crs" in metadata, "v0.3.0 should have crs field"
         assert "bounds_crs" in metadata, "v0.3.0 should have bounds_crs field"
         assert "tiling" in metadata, "v0.3.0 should have tiling object"
+
+        # Check Parquet-level metadata for file identification
+        schema_metadata = table.schema.metadata
+        assert schema_metadata is not None, "Should have Parquet-level metadata"
+        assert b"raquet:version" in schema_metadata, "Should have raquet:version in Parquet metadata"
+        assert schema_metadata[b"raquet:version"] == b"0.3.0"
 
         # Check tiling object
         tiling = metadata["tiling"]
