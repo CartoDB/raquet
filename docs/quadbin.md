@@ -33,19 +33,12 @@ At each zoom level `z`:
 - Each tile is identified by `(x, y, z)` coordinates
 - Zoom 0 has 1 tile, zoom 1 has 4 tiles, zoom 10 has ~1 million tiles
 
-```
-Zoom 0:        Zoom 1:           Zoom 2:
-┌─────┐        ┌──┬──┐           ┌─┬─┬─┬─┐
-│     │        │0,0│1,0│         │ │ │ │ │
-│ 0,0 │   →    ├──┼──┤     →    ├─┼─┼─┼─┤
-│     │        │0,1│1,1│         │ │ │ │ │
-└─────┘        └──┴──┘           ├─┼─┼─┼─┤
-                                 │ │ │ │ │
-1 tile         4 tiles           ├─┼─┼─┼─┤
-                                 │ │ │ │ │
-                                 └─┴─┴─┴─┘
-                                 16 tiles
-```
+<figure style="margin: 2rem 0;">
+  <img src="https://www.analyze.earth/posts/web-mercator-tiles/tiles.png" alt="Web Mercator tile pyramid showing zoom levels 0-5 and how tiles subdivide" style="max-width: 100%; background: white; padding: 1rem; border-radius: 8px;">
+  <figcaption style="text-align: center; font-size: 0.9em; color: #666; margin-top: 0.5rem;">
+    Web Mercator tile pyramid. Image from <a href="https://www.analyze.earth/posts/web-mercator-tiles/">analyze.earth</a>.
+  </figcaption>
+</figure>
 
 ---
 
