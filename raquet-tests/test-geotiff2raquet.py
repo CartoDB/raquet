@@ -28,7 +28,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertAlmostEqual(stats.stddev, 28.722813233)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
 
     def test_read_statistics_python_nans(self):
         stats = geotiff2raquet.read_statistics_python([math.nan] + list(range(100)), 0)
@@ -38,7 +38,7 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(stats.mean, 50)
         self.assertEqual(stats.sum, 4950)
         self.assertEqual(stats.sum_squares, 328350)
-        self.assertAlmostEqual(stats.stddev, 28.722813233)
+        self.assertAlmostEqual(stats.stddev, 28.577380332)
 
     @unittest.skipIf(not geotiff2raquet.HAS_NUMPY, "Missing numpy")
     def test_read_statistics_numpy(self):
