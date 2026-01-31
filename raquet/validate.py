@@ -245,7 +245,7 @@ def validate_pyramids(table: pyarrow.Table, metadata: dict) -> tuple[list[str], 
                 else:
                     zoom_stats[z]["all_nodata"] += 1
 
-            except Exception as e:
+            except Exception:
                 # If we can't decompress, assume it has some data
                 zoom_stats[z]["valid"] += 1
 
