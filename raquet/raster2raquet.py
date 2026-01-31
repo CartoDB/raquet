@@ -480,7 +480,7 @@ def read_statistics_python(
         min=min(values),
         max=max(values),
         mean=statistics.mean(values),
-        stddev=statistics.stdev(values),
+        stddev=statistics.pstdev(values),
         sum=sum(val for val in values),
         sum_squares=sum(val**2 for val in values),
         total_pixels=total_pixels,
