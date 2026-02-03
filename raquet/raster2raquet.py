@@ -527,13 +527,32 @@ def read_statistics_numpy(
 ) -> RasterStats | None:
     """Calculate statistics for array of numeric values and optional nodata value"""
     total_pixels = values.size
-    if nodata is not None:
-        bad_values_mask = (values == nodata) | numpy.isnan(values)
-        masked_values = numpy.ma.masked_array(values, bad_values_mask)
-        value_count = int(masked_values.count())
+
+    # Start with NaN filtering for float types
+    if values.dtype in (numpy.float16, numpy.float32, numpy.float64):
+        bad_values_mask = ~numpy.isfinite(values)
     else:
-        masked_values = values
-        value_count = values.size
+        bad_values_mask = numpy.zeros(values.shape, dtype=bool)
+
+    # Add explicit nodata masking
+    if nodata is not None:
+        bad_values_mask = bad_values_mask | (values == nodata)
+
+    # For float data without explicit nodata, use IQR-based outlier detection
+    # to filter extreme fill values (common in EE exports)
+    if nodata is None and values.dtype in (numpy.float16, numpy.float32, numpy.float64):
+        finite_values = values[numpy.isfinite(values)]
+        if len(finite_values) > 100:
+            q1 = numpy.percentile(finite_values, 25)
+            q3 = numpy.percentile(finite_values, 75)
+            iqr = q3 - q1
+            # Use 10*IQR for very permissive outlier detection (catches extreme fill values)
+            lower_bound = q1 - 10 * iqr
+            upper_bound = q3 + 10 * iqr
+            bad_values_mask = bad_values_mask | (values < lower_bound) | (values > upper_bound)
+
+    masked_values = numpy.ma.masked_array(values, bad_values_mask)
+    value_count = int(masked_values.count())
 
     if value_count == 0:
         return None
