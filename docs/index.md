@@ -9,7 +9,7 @@ hero_tagline: "Query rasters with SQL. Treat rasters as tables. Bring raster dat
 
 <div class="feature-grid">
   <div class="feature-card">
-    <h3>Format</h3>
+    <h3>Specification ({{ site.spec_version }})</h3>
     <p>RaQuet defines an open specification for storing raster data in Apache Parquet. Each tile becomes a row, each band becomes a column. Standard format, no proprietary extensions.</p>
     <a href="https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md">Read the specification →</a>
   </div>

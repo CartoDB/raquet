@@ -3,6 +3,10 @@ description: An open source specification for raster data in Parquet format with
 url: https://raquet.io
 baseurl: ""
 
+# Versions (auto-updated by CI)
+cli_version: "0.8.1"
+spec_version: "0.4.0"
+
 # Build settings
 markdown: kramdown
 highlighter: rouge
