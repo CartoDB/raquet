@@ -89,10 +89,10 @@ ORDER BY year;
 
 ### Without Extension
 
-RaQuet files work as standard Parquet even without the extension:
+RaQuet files work as standard Parquet even without the extension, but you need to manually filter the metadata row:
 
 ```sql
--- Basic query (no extension needed)
+-- Basic query (no extension needed, manual metadata filtering)
 SELECT *
 FROM read_parquet('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet')
 WHERE block != 0
@@ -102,6 +102,19 @@ LIMIT 10;
 SELECT metadata
 FROM read_parquet('file.parquet')
 WHERE block = 0;
+```
+
+With the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet), this becomes simpler:
+
+```sql
+INSTALL raquet FROM community;
+LOAD raquet;
+
+-- Cleaner API (metadata row excluded automatically)
+SELECT * FROM read_raquet('file.parquet') LIMIT 10;
+
+-- Read metadata
+SELECT metadata FROM read_raquet_metadata('file.parquet');
 ```
 
 ---

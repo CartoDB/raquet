@@ -68,10 +68,10 @@ The converter automatically reprojects data to Web Mercator during conversion.
 
 ## Can I query RaQuet without the DuckDB extension?
 
-Yes! RaQuet files are standard Parquet files. You can query them with any Parquet-compatible tool:
+Yes! RaQuet files are standard Parquet files. You can query them with any Parquet-compatible tool, but you need to manually filter out the metadata row (`block = 0`):
 
 ```sql
--- Basic Parquet query (no extension needed)
+-- Basic Parquet query (no extension, manual metadata filtering)
 SELECT *
 FROM read_parquet('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet')
 WHERE block != 0
@@ -83,7 +83,20 @@ FROM read_parquet('file.parquet')
 WHERE block = 0;
 ```
 
-However, the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) provides spatial functions like `ST_RasterValue`, `ST_RasterIntersects`, and `read_raquet()` for full raster analytics.
+However, the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) provides a cleaner API that handles metadata automatically, plus spatial raster functions:
+
+```sql
+INSTALL raquet FROM community;
+LOAD raquet;
+
+-- Cleaner API (metadata row excluded automatically)
+SELECT * FROM read_raquet('file.parquet') LIMIT 10;
+
+-- Get metadata
+SELECT metadata FROM read_raquet_metadata('file.parquet');
+
+-- Plus spatial functions like ST_RasterValue, ST_RasterIntersects, etc.
+```
 
 ---
 

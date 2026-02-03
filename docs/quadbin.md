@@ -220,13 +220,28 @@ This property enables:
 In a RaQuet file, each row's `block` column contains a QUADBIN cell ID:
 
 ```sql
--- Get tile coordinates from a RaQuet file
+-- Get tile coordinates from a RaQuet file (raw Parquet, manual filtering)
 SELECT
     block,
     (block >> 52) & 31 AS zoom,
     -- x and y require de-interleaving (use quadbin library)
 FROM read_parquet('raster.parquet')
 WHERE block != 0
+LIMIT 5;
+```
+
+With the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet), you get helper functions and automatic metadata handling:
+
+```sql
+INSTALL raquet FROM community;
+LOAD raquet;
+
+-- Cleaner API (metadata row excluded automatically)
+SELECT
+    block,
+    quadbin_resolution(block) AS zoom,
+    quadbin_to_tile(block) AS tile_xyz
+FROM read_raquet('raster.parquet')
 LIMIT 5;
 ```
 
