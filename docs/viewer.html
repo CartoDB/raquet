@@ -1260,11 +1260,16 @@
                 globalMinMaxComputing = false;
 
                 // Check if metadata has band statistics for global normalization
-                if (raquetMeta?.bands?.length === 1 && raquetMeta.bands[0].statistics) {
-                    const stats = raquetMeta.bands[0].statistics;
-                    if (stats.min !== undefined && stats.max !== undefined) {
-                        globalMinMax = { min: stats.min, max: stats.max };
-                        console.log(`Using band statistics for normalization: min=${stats.min}, max=${stats.max}`);
+                // Statistics can be in STATISTICS_MINIMUM/MAXIMUM (GDAL-style) or min/max fields
+                if (raquetMeta?.bands?.length === 1) {
+                    const band = raquetMeta.bands[0];
+                    const minVal = band.STATISTICS_MINIMUM ?? band.min ?? band.statistics?.min;
+                    const maxVal = band.STATISTICS_MAXIMUM ?? band.max ?? band.statistics?.max;
+                    // Only use if both are valid numbers (not null/undefined/NaN)
+                    if (typeof minVal === 'number' && typeof maxVal === 'number' &&
+                        Number.isFinite(minVal) && Number.isFinite(maxVal)) {
+                        globalMinMax = { min: minVal, max: maxVal };
+                        console.log(`Using band statistics for normalization: min=${minVal}, max=${maxVal}`);
                     }
                 }
 

@@ -1370,12 +1370,23 @@ def _create_band_metadata(
     }
 
     # Add GDAL-compatible statistics if available
+    # Note: NaN values are converted to None for valid JSON output
     if stats is not None:
-        band_meta["STATISTICS_MINIMUM"] = stats.min
-        band_meta["STATISTICS_MAXIMUM"] = stats.max
-        band_meta["STATISTICS_MEAN"] = stats.mean
-        band_meta["STATISTICS_STDDEV"] = stats.stddev
-        band_meta["STATISTICS_VALID_PERCENT"] = stats.valid_percent
+        import math
+
+        def nan_to_none(v):
+            """Convert NaN/Inf to None for JSON serialization."""
+            if v is None:
+                return None
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+
+        band_meta["STATISTICS_MINIMUM"] = nan_to_none(stats.min)
+        band_meta["STATISTICS_MAXIMUM"] = nan_to_none(stats.max)
+        band_meta["STATISTICS_MEAN"] = nan_to_none(stats.mean)
+        band_meta["STATISTICS_STDDEV"] = nan_to_none(stats.stddev)
+        band_meta["STATISTICS_VALID_PERCENT"] = nan_to_none(stats.valid_percent)
 
     return band_meta
 
