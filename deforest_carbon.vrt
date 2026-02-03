@@ -1,0 +1,15 @@
+<VRTDataset rasterXSize="400752" rasterYSize="131072">
+  <SRS dataAxisToSRSAxisMapping="2,1">GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]</SRS>
+  <GeoTransform> -1.8000082337073326e+02,  8.9831528411952154e-04,  0.0000000000000000e+00,  9.0000411685366629e+01,  0.0000000000000000e+00, -8.9831528411952154e-04</GeoTransform>
+  <VRTRasterBand dataType="Float32" band="1">
+    <ColorInterp>Gray</ColorInterp>
+    <SimpleSource>
+      <SourceFilename relativeToVRT="0">/vsicurl/https://data.source.coop/vizzuality/lg-land-carbon-data/deforest_carbon_100m_cog.tif</SourceFilename>
+      <SourceBand>1</SourceBand>
+      <SourceProperties RasterXSize="400752" RasterYSize="131072" DataType="Float32" BlockXSize="512" BlockYSize="512" />
+      <SrcRect xOff="0" yOff="0" xSize="400752" ySize="131072" />
+      <DstRect xOff="0" yOff="0" xSize="400752" ySize="131072" />
+    </SimpleSource>
+  </VRTRasterBand>
+  <OverviewList resampling="nearest">2 4 8 16 32 64 128 256 512</OverviewList>
+</VRTDataset>

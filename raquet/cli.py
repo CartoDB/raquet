@@ -19,6 +19,33 @@ from . import raster2raquet, raquet2geotiff, imageserver, validate as validate_m
 geotiff2raquet = raster2raquet
 
 
+class GDALPath(click.ParamType):
+    """Custom Click type that supports both local paths and GDAL virtual filesystem paths.
+
+    Recognizes paths starting with /vsi (e.g., /vsigs/, /vsicurl/, /vsis3/) and
+    passes them through without local filesystem validation, letting GDAL handle them.
+    """
+
+    name = "gdal_path"
+
+    def __init__(self, exists: bool = False):
+        self.exists = exists
+
+    def convert(self, value, param, ctx):
+        if value is None:
+            return None
+
+        # GDAL virtual filesystem paths - pass through without validation
+        if value.startswith("/vsi"):
+            return value  # Return as string, not Path
+
+        # Local path - use standard Path validation
+        path = Path(value)
+        if self.exists and not path.exists():
+            self.fail(f"Path '{value}' does not exist.", param, ctx)
+        return path
+
+
 # Configure logging
 def setup_logging(verbose: bool):
     """Configure logging based on verbosity."""
@@ -27,6 +54,28 @@ def setup_logging(verbose: bool):
             level=logging.INFO,
             format="%(message)s",
         )
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and (value & (value - 1)) == 0
+
+
+def _validate_block_size_or_exit(block_size: int) -> None:
+    if not _is_power_of_two(block_size):
+        click.echo(
+            "Error: Block size must be a power of two (e.g., 256, 512, 1024).",
+            err=True,
+        )
+        sys.exit(1)
+
+
+def _get_tiling_value(metadata: dict, tiling_key: str, legacy_key: str | None = None, default="N/A"):
+    tiling = metadata.get("tiling")
+    if isinstance(tiling, dict) and tiling_key in tiling:
+        return tiling[tiling_key]
+    if legacy_key is not None:
+        return metadata.get(legacy_key, default)
+    return metadata.get(tiling_key, default)
 
 
 @click.group()
@@ -91,6 +140,12 @@ def inspect_command(file: Path, verbose: bool):
         num_rows = len(table)
         num_blocks = num_rows - 1  # Exclude metadata row
 
+        has_tiling = isinstance(metadata.get("tiling"), dict)
+        block_width = _get_tiling_value(metadata, "block_width", "block_width")
+        block_height = _get_tiling_value(metadata, "block_height", "block_height")
+        min_res = _get_tiling_value(metadata, "min_zoom", "minresolution")
+        max_res = _get_tiling_value(metadata, "max_zoom", "maxresolution")
+
         if use_rich:
             # Rich formatted output
             console.print(f"\n[bold blue]Raquet File:[/bold blue] {file.name}")
@@ -106,7 +161,7 @@ def inspect_command(file: Path, verbose: bool):
             info_table.add_row("Data Blocks", str(num_blocks))
             info_table.add_row("Width", f"{metadata.get('width', 'N/A')} px")
             info_table.add_row("Height", f"{metadata.get('height', 'N/A')} px")
-            info_table.add_row("Block Size", f"{metadata.get('block_width', 'N/A')} x {metadata.get('block_height', 'N/A')} px")
+            info_table.add_row("Block Size", f"{block_width} x {block_height} px")
 
             console.print(info_table)
 
@@ -115,8 +170,12 @@ def inspect_command(file: Path, verbose: bool):
             res_table.add_column("Property", style="cyan")
             res_table.add_column("Value")
 
-            res_table.add_row("Min Resolution", str(metadata.get("minresolution", "N/A")))
-            res_table.add_row("Max Resolution", str(metadata.get("maxresolution", "N/A")))
+            if has_tiling and "minresolution" not in metadata:
+                res_table.add_row("Min Zoom", str(min_res))
+                res_table.add_row("Max Zoom", str(max_res))
+            else:
+                res_table.add_row("Min Resolution", str(min_res))
+                res_table.add_row("Max Resolution", str(max_res))
             res_table.add_row("Compression", metadata.get("compression", "none"))
 
             console.print(res_table)
@@ -178,11 +237,15 @@ def inspect_command(file: Path, verbose: bool):
             click.echo(f"  Data Blocks: {num_blocks}")
             click.echo(f"  Width: {metadata.get('width', 'N/A')} px")
             click.echo(f"  Height: {metadata.get('height', 'N/A')} px")
-            click.echo(f"  Block Size: {metadata.get('block_width', 'N/A')} x {metadata.get('block_height', 'N/A')} px")
+            click.echo(f"  Block Size: {block_width} x {block_height} px")
 
             click.echo("\nResolution:")
-            click.echo(f"  Min Resolution: {metadata.get('minresolution', 'N/A')}")
-            click.echo(f"  Max Resolution: {metadata.get('maxresolution', 'N/A')}")
+            if has_tiling and "minresolution" not in metadata:
+                click.echo(f"  Min Zoom: {min_res}")
+                click.echo(f"  Max Zoom: {max_res}")
+            else:
+                click.echo(f"  Min Resolution: {min_res}")
+                click.echo(f"  Max Resolution: {max_res}")
             click.echo(f"  Compression: {metadata.get('compression', 'none')}")
 
             bounds = metadata.get("bounds", [])
@@ -229,7 +292,7 @@ def convert_group():
 
 
 def _convert_raster_impl(
-    input_file: Path,
+    input_file: Path | str,
     output_file: Path,
     zoom_strategy: str,
     resampling: str,
@@ -243,6 +306,8 @@ def _convert_raster_impl(
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
+
+    _validate_block_size_or_exit(block_size)
 
     # Calculate block_zoom from block_size
     block_zoom = int(math.log(block_size) / math.log(2))
@@ -283,7 +348,7 @@ def _convert_raster_impl(
 
 
 @convert_group.command("raster")
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", type=GDALPath(exists=True))
 @click.argument("output_file", type=click.Path(path_type=Path))
 @click.option(
     "--zoom-strategy",
@@ -377,7 +442,7 @@ def convert_raster(
 
 
 @convert_group.command("geotiff")
-@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("input_file", type=GDALPath(exists=True))
 @click.argument("output_file", type=click.Path(path_type=Path))
 @click.option(
     "--zoom-strategy",
@@ -510,6 +575,7 @@ def convert_imageserver(
         raquet convert imageserver https://server/ImageServer output.parquet --bbox "-122.5,37.5,-122.0,38.0"
     """
     setup_logging(verbose)
+    _validate_block_size_or_exit(block_size)
 
     # Parse bbox if provided
     bbox_tuple = None
@@ -543,6 +609,239 @@ def convert_imageserver(
         click.echo(f"  Bands: {result.get('num_bands', 'N/A')}")
         click.echo(f"  Pixels: {result.get('num_pixels', 'N/A'):,}")
 
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+@convert_group.command("earthengine")
+@click.argument("image_spec")
+@click.argument("output_file", type=click.Path(path_type=Path))
+@click.option(
+    "--gcs-bucket",
+    required=True,
+    help="GCS bucket for temporary export (e.g., 'my-bucket')",
+)
+@click.option(
+    "--gcs-path",
+    default=None,
+    help="Path within bucket for temp file (default: auto-generated)",
+)
+@click.option(
+    "--bands",
+    default=None,
+    help="Comma-separated band names to export (e.g., 'B4,B3,B2')",
+)
+@click.option(
+    "--region",
+    default=None,
+    help="Export region as GeoJSON string or path to .geojson file",
+)
+@click.option(
+    "--scale",
+    type=float,
+    default=10,
+    help="Scale in meters per pixel (default: 10)",
+)
+@click.option(
+    "--crs",
+    default="EPSG:4326",
+    help="Output CRS (default: EPSG:4326, ignored if --tile-zoom is set)",
+)
+@click.option(
+    "--tile-zoom",
+    type=int,
+    default=None,
+    help="Web Mercator tile zoom level for pixel-perfect tile alignment (overrides --scale and --crs)",
+)
+@click.option(
+    "--block-size",
+    type=int,
+    default=256,
+    help="Block size in pixels (default: 256)",
+)
+@click.option(
+    "--resampling",
+    type=click.Choice(["near", "average", "bilinear", "cubic"]),
+    default="near",
+    help="Resampling algorithm (default: near)",
+)
+@click.option(
+    "--overviews",
+    type=click.Choice(["auto", "none"]),
+    default="auto",
+    help="Overview generation: auto (full pyramid) or none (native only)",
+)
+@click.option(
+    "--streaming",
+    is_flag=True,
+    help="Use two-pass streaming mode for memory-safe conversion",
+)
+@click.option(
+    "--keep-temp",
+    is_flag=True,
+    help="Keep temporary GCS file after conversion",
+)
+@click.option(
+    "--project",
+    default=None,
+    help="GCP project ID for Earth Engine",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=None,
+    help="Maximum wait time for export in seconds (default: no limit)",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_earthengine(
+    image_spec: str,
+    output_file: Path,
+    gcs_bucket: str,
+    gcs_path: str | None,
+    bands: str | None,
+    region: str | None,
+    scale: float,
+    crs: str,
+    tile_zoom: int | None,
+    block_size: int,
+    resampling: str,
+    overviews: str,
+    streaming: bool,
+    keep_temp: bool,
+    project: str | None,
+    timeout: float | None,
+    verbose: bool,
+):
+    """Convert a Google Earth Engine image to Raquet format.
+
+    IMAGE_SPEC is the Earth Engine image specification:
+    - Asset ID: COPERNICUS/S2_SR/20230101T100031_20230101T100027_T33UUP
+    - Expression: expr:ee.Image('COPERNICUS/DEM/GLO30').select('DEM')
+
+    OUTPUT_FILE is the path for the output Raquet (.parquet) file.
+
+    Requires a Google Cloud Storage bucket for temporary export.
+    The GCS file will be deleted after successful conversion unless --keep-temp is used.
+
+    \b
+    Examples:
+        # Export Copernicus DEM
+        raquet convert earthengine COPERNICUS/DEM/GLO30 dem.parquet \\
+            --gcs-bucket my-bucket --scale 30
+
+        # Export Sentinel-2 RGB bands with region
+        raquet convert earthengine COPERNICUS/S2_SR/20230101T100031 s2.parquet \\
+            --gcs-bucket my-bucket --bands B4,B3,B2 --scale 10 --region region.geojson
+
+        # Export global MODIS LST at tile zoom 9 (~305m, aligned to Web Mercator tiles)
+        raquet convert earthengine "expr:ee.ImageCollection('MODIS/061/MOD11A1').filterDate('2024-01-01','2024-02-01').select('LST_Day_1km').mean()" lst.parquet \\
+            --gcs-bucket my-bucket --tile-zoom 9
+
+        # Export with custom expression
+        raquet convert earthengine "expr:ee.Image('COPERNICUS/DEM/GLO30')" output.parquet \\
+            --gcs-bucket my-bucket
+    """
+    # Lazy import to handle optional dependency
+    try:
+        from . import earthengine as ee_module
+    except ImportError as e:
+        click.echo(
+            "Error: Earth Engine support requires additional dependencies.\n"
+            "Install with: pip install raquet[earthengine]",
+            err=True,
+        )
+        sys.exit(1)
+
+    setup_logging(verbose)
+    _validate_block_size_or_exit(block_size)
+
+    # Parse bands
+    bands_list = None
+    if bands:
+        bands_list = [b.strip() for b in bands.split(",")]
+
+    # Parse region (could be GeoJSON string or file path)
+    region_dict = None
+    if region:
+        import json
+        if region.strip().startswith("{"):
+            # JSON string
+            try:
+                region_dict = json.loads(region)
+            except json.JSONDecodeError as e:
+                click.echo(f"Error: Invalid GeoJSON string: {e}", err=True)
+                sys.exit(1)
+        else:
+            # File path
+            region_path = Path(region)
+            if not region_path.exists():
+                click.echo(f"Error: Region file not found: {region}", err=True)
+                sys.exit(1)
+            try:
+                region_dict = json.loads(region_path.read_text())
+            except json.JSONDecodeError as e:
+                click.echo(f"Error: Invalid GeoJSON in file {region}: {e}", err=True)
+                sys.exit(1)
+
+    # Progress callback for verbose mode
+    def progress_callback(state: str, elapsed: float):
+        if verbose:
+            click.echo(f"  Export status: {state} ({elapsed:.0f}s elapsed)")
+
+    try:
+        click.echo(f"Converting Earth Engine image to Raquet format...")
+        click.echo(f"  Image: {image_spec}")
+        click.echo(f"  GCS bucket: {gcs_bucket}")
+        if bands_list:
+            click.echo(f"  Bands: {', '.join(bands_list)}")
+        if tile_zoom is not None:
+            # Calculate resolution for display
+            res = 156543.03392804097 / (2**tile_zoom)
+            click.echo(f"  Tile zoom: {tile_zoom} (~{res:.0f}m, EPSG:3857)")
+        else:
+            click.echo(f"  Scale: {scale}m")
+            click.echo(f"  CRS: {crs}")
+
+        result = ee_module.earthengine_to_raquet(
+            image_spec=image_spec,
+            gcs_bucket=gcs_bucket,
+            output_path=str(output_file),
+            gcs_path=gcs_path,
+            bands=bands_list,
+            region=region_dict,
+            scale=scale,
+            crs=crs,
+            tile_zoom=tile_zoom,
+            block_size=block_size,
+            resampling=resampling,
+            overviews=overviews,
+            streaming=streaming,
+            delete_temp=not keep_temp,
+            project=project,
+            timeout=timeout,
+            progress_callback=progress_callback if verbose else None,
+        )
+
+        click.echo(f"\nSuccessfully created {output_file}")
+        click.echo(f"  Export time: {result['export_seconds']:.1f}s")
+        click.echo(f"  Conversion time: {result['convert_seconds']:.1f}s")
+        click.echo(f"  Total time: {result['total_seconds']:.1f}s")
+        if keep_temp:
+            click.echo(f"  Temp file kept at: {result['gcs_uri']}")
+
+    except ee_module.EarthEngineAuthError as e:
+        click.echo(f"Authentication error: {e}", err=True)
+        sys.exit(1)
+    except ee_module.EarthEngineTaskError as e:
+        click.echo(f"Export task failed: {e}", err=True)
+        sys.exit(1)
+    except ee_module.EarthEngineError as e:
+        click.echo(f"Earth Engine error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         if verbose:

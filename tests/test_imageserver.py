@@ -11,8 +11,12 @@ try:
         _transform_bounds_with_crs,
         ImageServerMetadata,
     )
-
-    HAS_IMAGESERVER = True
+    try:
+        import pyproj  # noqa: F401
+    except ImportError:
+        HAS_IMAGESERVER = False
+    else:
+        HAS_IMAGESERVER = True
 except ImportError:
     HAS_IMAGESERVER = False
 

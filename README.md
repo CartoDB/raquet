@@ -1,5 +1,7 @@
 # <img alt="RaQuet" src="logo.svg" width="400">
 
+[![Unit Tests](https://github.com/CartoDB/raquet/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/CartoDB/raquet/actions/workflows/unit-tests.yml)
+
 RaQuet is a specification for storing and querying raster data using [Apache Parquet](https://parquet.apache.org/), a column-oriented data file format. Users of data warehouse platforms rely on the simple interoperability of Parquet files to move data and perform queries.
 
 **[Documentation](https://cartodb.github.io/raquet)** | **[Online Viewer](https://cartodb.github.io/raquet/viewer.html)** | **[Specification](format-specs/raquet.md)**
@@ -192,6 +194,13 @@ result = imageserver_to_raquet(
 )
 
 print(f"Created {result['num_blocks']} blocks with {result['num_bands']} bands")
+```
+
+## Testing
+
+```bash
+# Run unit tests (skips integration tests)
+python -m pytest -m "not integration"
 ```
 
 ## Querying with DuckDB

@@ -1,0 +1,22 @@
+Converting deforest_carbon.vrt to Raquet format...
+Process Process-1:
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.0_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/process.py", line 320, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.0_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jatorre/workspace/raquet/raquet/raster2raquet.py", line 994, in read_raster
+    # Single child - warp directly
+  File "/Users/jatorre/workspace/raquet/raquet/raster2raquet.py", line 713, in read_raster_data_stats
+    for band_num in range(1, 1 + ds.RasterCount):
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jatorre/workspace/raquet/raquet/raster2raquet.py", line 469, in read_statistics_python
+    ) -> RasterStats | None:
+                   ^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.0_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/statistics.py", line 624, in stdev
+    return _float_sqrt_of_frac(mss.numerator, mss.denominator)
+                               ^^^^^^^^^^^^^
+AttributeError: 'float' object has no attribute 'numerator'
+Successfully created deforest_carbon.parquet

@@ -7,7 +7,7 @@ alwaysApply: true
 - This is a Python project
 - Expect that a virtualenv .venv directory already exists and use it when it does
 - The raquet module and requirements are described in pyproject.toml
-- When we run tests in this project, we use the unittest module with this command: `python -m unittest raquet-tests/test-*.py`
+- When we run tests in this project, we use pytest with this command: `python -m pytest -m "not integration"`
 - The project linter is ruff, new commits should always pass lint:
-    - `python -m ruff check raquet/*.py raquet-tests/*.py`
-    - `python -m ruff format raquet/*.py raquet-tests/*.py`
+    - `python -m ruff check raquet/*.py tests/*.py`
+    - `python -m ruff format raquet/*.py tests/*.py`

@@ -82,14 +82,20 @@ def validate_schema(table: pyarrow.Table) -> tuple[list[str], list[str]]:
     elif str(table.schema.field("metadata").type) != "string":
         errors.append(f"Column 'metadata' should be string, got {table.schema.field('metadata').type}")
 
-    # Check for band columns
+    # Check for band columns or interleaved pixels column
     band_columns = [c for c in column_names if c.startswith("band_")]
-    if not band_columns:
-        errors.append("No band columns found (expected columns starting with 'band_')")
+    has_pixels = "pixels" in column_names
+    if not band_columns and not has_pixels:
+        errors.append("No band columns found (expected columns starting with 'band_' or 'pixels')")
     else:
         for band_col in band_columns:
             if str(table.schema.field(band_col).type) not in ("binary", "large_binary"):
                 warnings.append(f"Band column '{band_col}' is {table.schema.field(band_col).type}, expected binary")
+        if has_pixels:
+            if str(table.schema.field("pixels").type) not in ("binary", "large_binary"):
+                warnings.append(f"Pixels column is {table.schema.field('pixels').type}, expected binary")
+        if band_columns and has_pixels:
+            warnings.append("Found both 'band_*' and 'pixels' columns; expected a single band layout")
 
     return errors, warnings
 
