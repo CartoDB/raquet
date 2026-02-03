@@ -216,6 +216,7 @@
         // Global normalization state for consistent coloring across tiles
         let globalMinMax = null; // { min, max } - computed from first batch or metadata
         let globalMinMaxSamples = []; // Collect samples to compute global range
+        let globalMinMaxComputing = false; // Prevent race condition during computation
 
         // Request cancellation - track current batch generation
         let batchGeneration = 0;
@@ -658,6 +659,46 @@
             // For multi-band RGB data, use per-tile normalization (each band already in similar range)
             const useSingleBandMode = validBands.length === 1;
 
+            // Nodata detection: values outside reasonable range are treated as nodata
+            // For single-band scientific data, use percentile-based outlier detection
+            // First pass: identify potential nodata values by looking at distribution
+            let nodataThreshold = null;
+            if (useSingleBandMode) {
+                // Sample values to find outliers
+                const band = validBands[0];
+                const sampleValues = [];
+                const step = Math.max(1, Math.floor(band.length / 5000));
+                for (let i = 0; i < band.length; i += step) {
+                    const v = band[i];
+                    if (Number.isFinite(v)) {
+                        sampleValues.push(v);
+                    }
+                }
+                if (sampleValues.length > 100) {
+                    sampleValues.sort((a, b) => a - b);
+                    const median = sampleValues[Math.floor(sampleValues.length / 2)];
+                    const q1 = sampleValues[Math.floor(sampleValues.length * 0.25)];
+                    const q3 = sampleValues[Math.floor(sampleValues.length * 0.75)];
+                    const iqr = q3 - q1;
+                    // Use 3*IQR as threshold for extreme outliers (more lenient than typical 1.5*IQR)
+                    nodataThreshold = {
+                        min: q1 - 3 * iqr,
+                        max: q3 + 3 * iqr
+                    };
+                }
+            }
+
+            const isNodata = (v) => {
+                if (!Number.isFinite(v)) return true;
+                // Use outlier detection if available
+                if (nodataThreshold) {
+                    if (v < nodataThreshold.min || v > nodataThreshold.max) return true;
+                }
+                // Fallback: very extreme values
+                if (Math.abs(v) > 1e6) return true;
+                return false;
+            };
+
             let minVal, maxVal;
 
             if (useSingleBandMode && globalMinMax) {
@@ -667,18 +708,19 @@
             } else {
                 // Compute from tile data (for RGB or when global not yet computed)
                 // Use percentile-based contrast stretch (2nd-98th percentile)
+                // Filter out nodata values
                 const allValues = [];
                 for (const band of validBands) {
                     const step = Math.max(1, Math.floor(band.length / 10000));
                     for (let i = 0; i < band.length; i += step) {
                         const v = band[i];
-                        if (Number.isFinite(v)) {
+                        if (!isNodata(v)) {
                             allValues.push(v);
                         }
                     }
                 }
 
-                if (allValues.length === 0) return canvas; // All NaN
+                if (allValues.length === 0) return canvas; // All nodata
 
                 allValues.sort((a, b) => a - b);
                 const p2 = allValues[Math.floor(allValues.length * 0.02)];
@@ -688,11 +730,13 @@
                 maxVal = p98;
 
                 // For single-band: collect samples for global range calculation
-                if (useSingleBandMode && !globalMinMax) {
+                // Guard against race condition with globalMinMaxComputing flag
+                if (useSingleBandMode && !globalMinMax && !globalMinMaxComputing) {
                     globalMinMaxSamples.push({ min: p2, max: p98, count: allValues.length });
 
                     // After collecting enough samples, compute global range
                     if (globalMinMaxSamples.length >= 10) {
+                        globalMinMaxComputing = true; // Prevent further additions
                         computeGlobalMinMax();
                     }
                 }
@@ -712,8 +756,8 @@
                 const band = validBands[0];
                 for (let i = 0; i < width * height; i++) {
                     const v = band[i];
-                    if (!Number.isFinite(v)) {
-                        // Transparent for NaN/nodata
+                    if (isNodata(v)) {
+                        // Transparent for nodata values
                         imageData.data[i * 4] = 0;
                         imageData.data[i * 4 + 1] = 0;
                         imageData.data[i * 4 + 2] = 0;
@@ -735,9 +779,9 @@
                     const rv = r ? r[i] : 0;
                     const gv = g ? g[i] : 0;
                     const bv = b ? b[i] : 0;
-                    // Check if any band has nodata
-                    const hasNodata = (r && !Number.isFinite(rv)) || (g && !Number.isFinite(gv)) || (b && !Number.isFinite(bv));
-                    if (hasNodata) {
+                    // Check if any band has nodata (using isNodata for consistency)
+                    const hasNodataPixel = (r && isNodata(rv)) || (g && isNodata(gv)) || (b && isNodata(bv));
+                    if (hasNodataPixel) {
                         imageData.data[i * 4] = 0;
                         imageData.data[i * 4 + 1] = 0;
                         imageData.data[i * 4 + 2] = 0;
@@ -781,54 +825,15 @@
                 };
 
                 console.log(`Global normalization computed: min=${globalMinMax.min.toFixed(2)}, max=${globalMinMax.max.toFixed(2)} (from ${globalMinMaxSamples.length} tiles)`);
-
-                // Invalidate tile cache to re-render with consistent colors
-                // This ensures tiles rendered before global range was computed get updated
-                invalidateTileCacheForRerender();
+                // Note: First 10 tiles may have slightly different colors.
+                // All subsequent tiles will use this global range for consistent coloring.
             }
         }
 
-        // Invalidate cached tiles so they re-render with new global normalization
-        function invalidateTileCacheForRerender() {
-            // Clear the tile cache to force re-fetch with new normalization
-            tileCache.clear();
-            tilesRendered = 0;
-
-            // Force deck.gl to completely recreate the tile layer
-            if (deckInstance) {
-                const layers = deckInstance.props.layers;
-                const basemapLayer = layers.find(l => l.id === 'basemap');
-
-                // Create a fresh TileLayer with a unique ID to force full refresh
-                const newRaquetLayer = new globalThis.deck.TileLayer({
-                    id: 'raquet-' + Date.now(), // Unique ID forces full recreation
-                    getTileData,
-                    minZoom,
-                    maxZoom,
-                    tileSize: blockWidth,
-                    extent: dataBounds,
-                    refinementStrategy: 'no-overlap',
-                    maxRequests: 6,
-                    maxCacheSize: 100,
-                    renderSubLayers: props => {
-                        const {tile, data} = props;
-                        if (!data) return null;
-                        const {west, south, east, north} = tile.bbox;
-                        return new globalThis.deck.BitmapLayer({
-                            id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
-                            image: data,
-                            bounds: [west, south, east, north]
-                        });
-                    }
-                });
-
-                deckInstance.setProps({
-                    layers: basemapLayer ? [basemapLayer, newRaquetLayer] : [newRaquetLayer]
-                });
-
-                console.log('Tile layer recreated for global normalization refresh');
-            }
-        }
+        // Note: We no longer try to refresh existing tiles after computing global normalization.
+        // The first 10 tiles may have slightly inconsistent colors, but all subsequent tiles
+        // will use the global min/max for consistent coloring. Users can reload to get
+        // fully consistent colors if needed.
 
         // Viridis-like colormap for single-band scientific data
         function viridisColormap(t) {
@@ -1252,6 +1257,7 @@
                 pendingRequests.clear();
                 globalMinMax = null;
                 globalMinMaxSamples = [];
+                globalMinMaxComputing = false;
 
                 // Check if metadata has band statistics for global normalization
                 if (raquetMeta?.bands?.length === 1 && raquetMeta.bands[0].statistics) {
