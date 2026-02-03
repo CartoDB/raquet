@@ -537,6 +537,30 @@
                 }
                 return pixels;
             }
+            if (type === 'int16') {
+                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                const pixels = new Int16Array(width * height);
+                for (let i = 0; i < width * height; i++) {
+                    pixels[i] = view.getInt16(i * 2, true);
+                }
+                return pixels;
+            }
+            if (type === 'float32') {
+                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                const pixels = new Float32Array(width * height);
+                for (let i = 0; i < width * height; i++) {
+                    pixels[i] = view.getFloat32(i * 4, true);
+                }
+                return pixels;
+            }
+            if (type === 'float64') {
+                const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                const pixels = new Float64Array(width * height);
+                for (let i = 0; i < width * height; i++) {
+                    pixels[i] = view.getFloat64(i * 8, true);
+                }
+                return pixels;
+            }
             return data;
         }
 
@@ -612,6 +636,8 @@
         }
 
         // Create image from bands with auto-contrast normalization
+        // Handles single-band (grayscale/colormap), RGB, and RGBA
+        // Properly handles NaN/nodata values
         function createImage(bands, width, height) {
             const canvas = document.createElement('canvas');
             canvas.width = width;
@@ -619,45 +645,119 @@
             const ctx = canvas.getContext('2d');
             const imageData = ctx.createImageData(width, height);
 
-            // Find min/max across all bands for consistent normalization
-            let globalMin = Infinity, globalMax = -Infinity;
-            for (const band of bands) {
-                if (!band) continue;
-                for (let i = 0; i < band.length; i++) {
-                    if (band[i] < globalMin) globalMin = band[i];
-                    if (band[i] > globalMax) globalMax = band[i];
-                }
-            }
+            // Filter out null/undefined bands
+            const validBands = bands.filter(b => b != null);
+            if (validBands.length === 0) return canvas;
 
             // Use percentile-based contrast stretch (2nd-98th percentile)
-            // to avoid outliers dominating the range
+            // Filter out NaN and Infinity values
             const allValues = [];
-            for (const band of bands) {
-                if (!band) continue;
+            for (const band of validBands) {
                 // Sample values for percentile calculation (for performance)
                 const step = Math.max(1, Math.floor(band.length / 10000));
                 for (let i = 0; i < band.length; i += step) {
-                    allValues.push(band[i]);
+                    const v = band[i];
+                    if (Number.isFinite(v)) {
+                        allValues.push(v);
+                    }
                 }
             }
+
+            if (allValues.length === 0) return canvas; // All NaN
+
             allValues.sort((a, b) => a - b);
-            const p2 = allValues[Math.floor(allValues.length * 0.02)] || globalMin;
-            const p98 = allValues[Math.floor(allValues.length * 0.98)] || globalMax;
+            const p2 = allValues[Math.floor(allValues.length * 0.02)];
+            const p98 = allValues[Math.floor(allValues.length * 0.98)];
 
             const minVal = p2;
             const maxVal = p98;
             const range = maxVal - minVal || 1;
 
-            const r = bands[0], g = bands[1], b = bands[2];
-            for (let i = 0; i < width * height; i++) {
-                // Normalize to 0-255 with contrast stretch
-                imageData.data[i * 4] = r ? Math.min(255, Math.max(0, Math.round((r[i] - minVal) / range * 255))) : 0;
-                imageData.data[i * 4 + 1] = g ? Math.min(255, Math.max(0, Math.round((g[i] - minVal) / range * 255))) : 0;
-                imageData.data[i * 4 + 2] = b ? Math.min(255, Math.max(0, Math.round((b[i] - minVal) / range * 255))) : 0;
-                imageData.data[i * 4 + 3] = 255;
+            // Helper to normalize a value to 0-255
+            const normalize = (v) => {
+                if (!Number.isFinite(v)) return 0; // NaN/Infinity -> transparent black
+                return Math.min(255, Math.max(0, Math.round((v - minVal) / range * 255)));
+            };
+
+            // Check if single-band (grayscale) or multi-band
+            if (validBands.length === 1) {
+                // Single band - render as grayscale with viridis-like colormap
+                const band = validBands[0];
+                for (let i = 0; i < width * height; i++) {
+                    const v = band[i];
+                    if (!Number.isFinite(v)) {
+                        // Transparent for NaN/nodata
+                        imageData.data[i * 4] = 0;
+                        imageData.data[i * 4 + 1] = 0;
+                        imageData.data[i * 4 + 2] = 0;
+                        imageData.data[i * 4 + 3] = 0;
+                    } else {
+                        // Apply viridis-like colormap
+                        const t = Math.min(1, Math.max(0, (v - minVal) / range));
+                        const rgb = viridisColormap(t);
+                        imageData.data[i * 4] = rgb[0];
+                        imageData.data[i * 4 + 1] = rgb[1];
+                        imageData.data[i * 4 + 2] = rgb[2];
+                        imageData.data[i * 4 + 3] = 255;
+                    }
+                }
+            } else {
+                // Multi-band - use as RGB(A)
+                const r = bands[0], g = bands[1], b = bands[2], a = bands[3];
+                for (let i = 0; i < width * height; i++) {
+                    const rv = r ? r[i] : 0;
+                    const gv = g ? g[i] : 0;
+                    const bv = b ? b[i] : 0;
+                    // Check if any band has nodata
+                    const hasNodata = (r && !Number.isFinite(rv)) || (g && !Number.isFinite(gv)) || (b && !Number.isFinite(bv));
+                    if (hasNodata) {
+                        imageData.data[i * 4] = 0;
+                        imageData.data[i * 4 + 1] = 0;
+                        imageData.data[i * 4 + 2] = 0;
+                        imageData.data[i * 4 + 3] = 0;
+                    } else {
+                        imageData.data[i * 4] = normalize(rv);
+                        imageData.data[i * 4 + 1] = normalize(gv);
+                        imageData.data[i * 4 + 2] = normalize(bv);
+                        imageData.data[i * 4 + 3] = a ? normalize(a[i]) : 255;
+                    }
+                }
             }
             ctx.putImageData(imageData, 0, 0);
             return canvas;
+        }
+
+        // Viridis-like colormap for single-band scientific data
+        function viridisColormap(t) {
+            // Attempt to mimic viridis: dark purple -> blue -> green -> yellow
+            t = Math.max(0, Math.min(1, t));
+            let r, g, b;
+            if (t < 0.25) {
+                // Dark purple to blue
+                const s = t / 0.25;
+                r = Math.round(68 + s * (59 - 68));
+                g = Math.round(1 + s * (82 - 1));
+                b = Math.round(84 + s * (139 - 84));
+            } else if (t < 0.5) {
+                // Blue to teal
+                const s = (t - 0.25) / 0.25;
+                r = Math.round(59 + s * (33 - 59));
+                g = Math.round(82 + s * (145 - 82));
+                b = Math.round(139 + s * (140 - 139));
+            } else if (t < 0.75) {
+                // Teal to green
+                const s = (t - 0.5) / 0.25;
+                r = Math.round(33 + s * (94 - 33));
+                g = Math.round(145 + s * (201 - 145));
+                b = Math.round(140 + s * (98 - 140));
+            } else {
+                // Green to yellow
+                const s = (t - 0.75) / 0.25;
+                r = Math.round(94 + s * (253 - 94));
+                g = Math.round(201 + s * (231 - 201));
+                b = Math.round(98 + s * (37 - 98));
+            }
+            return [r, g, b];
         }
 
         // Fetch tiles for a batch of block IDs
