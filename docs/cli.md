@@ -53,7 +53,7 @@ raquet-io convert raster INPUT_FILE OUTPUT_FILE [OPTIONS]
 |--------|---------|-------------|
 | `--zoom-strategy` | `auto` | Strategy for selecting zoom level: `auto`, `lower`, `upper` |
 | `--resampling` | `near` | Resampling algorithm: `near`, `average`, `bilinear`, `cubic`, `cubicspline`, `lanczos`, `mode`, `max`, `min`, `med`, `q1`, `q3` |
-| `--block-size` | `256` | Block size in pixels |
+| `--block-size` | `256` | Block size in pixels: `256`, `512`, or `1024` (see [Block Size](#block-size)) |
 | `--target-size` | — | Target size for auto zoom calculation |
 | `--row-group-size` | `200` | Rows per Parquet row group (smaller = better remote pruning) |
 | `--band-layout` | `sequential` | Band storage: `sequential` or `interleaved` |
@@ -84,6 +84,35 @@ raquet-io convert raster satellite.tif output.parquet \
   --band-layout interleaved \
   --compression webp \
   --compression-quality 85
+```
+
+### Block Size
+
+The `--block-size` option controls the pixel dimensions of each tile. The default is 256px (the web map standard), but 512px can be beneficial in certain scenarios.
+
+| Block Size | Tiles (same area) | Best For |
+|------------|-------------------|----------|
+| **256px** (default) | More tiles | Standard web maps, maximum compatibility |
+| **512px** | ~75% fewer tiles | High-latency networks, mobile, lossy compression |
+| **1024px** | ~94% fewer tiles | Very large imagery, minimal HTTP overhead |
+
+**When to use 512px:**
+- Lossy compression (JPEG/WebP) — larger tiles compress more efficiently
+- Mobile or high-latency networks — fewer HTTP round-trips
+- Dense satellite imagery — reduces tile count significantly
+
+**Example comparison (same source raster):**
+```
+256px WebP: 17 MB, 3,225 tiles
+512px WebP: 16 MB,   877 tiles (73% fewer tiles, similar size)
+```
+
+```bash
+# Optimized for mobile viewing with lossy compression
+raquet-io convert raster satellite.tif output.parquet \
+  --block-size 512 \
+  --band-layout interleaved \
+  --compression webp
 ```
 
 ### Supported Input Formats
@@ -119,7 +148,7 @@ raquet-io convert imageserver URL OUTPUT_FILE [OPTIONS]
 |--------|---------|-------------|
 | `--token` | — | ArcGIS authentication token |
 | `--bbox` | — | Bounding box filter: `xmin,ymin,xmax,ymax` (WGS84) |
-| `--block-size` | `256` | Block size in pixels |
+| `--block-size` | `256` | Block size in pixels: `256`, `512`, or `1024` |
 | `--resolution` | auto | Target QUADBIN pixel resolution |
 | `--no-compression` | — | Disable gzip compression |
 | `-v, --verbose` | — | Enable verbose output |

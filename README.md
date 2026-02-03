@@ -66,7 +66,7 @@ raquet-io convert geotiff input.tif output.parquet \
 |--------|-------------|
 | `--zoom-strategy` | Zoom level strategy: `auto`, `lower`, `upper` (default: `auto`) |
 | `--resampling` | Resampling algorithm: `near`, `bilinear`, `cubic`, etc. (default: `near`) |
-| `--block-size` | Block size in pixels (default: 256) |
+| `--block-size` | Block size: 256 (default), 512, or 1024. Use 512 for fewer HTTP requests. |
 | `--target-size` | Target size for auto zoom calculation |
 | `--overviews` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
 | `--min-zoom` | Minimum zoom level for overviews (overrides auto calculation) |
@@ -88,6 +88,12 @@ raquet-io convert geotiff satellite.tif output.parquet \
 raquet-io convert geotiff satellite.tif output.parquet \
   --band-layout interleaved \
   --compression jpeg
+
+# 512px blocks for fewer HTTP requests (recommended for mobile/high-latency)
+raquet-io convert geotiff satellite.tif output.parquet \
+  --block-size 512 \
+  --band-layout interleaved \
+  --compression webp
 ```
 
 **Large file conversion:**
@@ -123,7 +129,7 @@ raquet-io convert imageserver https://server/.../ImageServer output.parquet \
 |--------|-------------|
 | `--token` | ArcGIS authentication token |
 | `--bbox` | Bounding box filter in WGS84: `xmin,ymin,xmax,ymax` |
-| `--block-size` | Block size in pixels (default: 256) |
+| `--block-size` | Block size: 256 (default), 512, or 1024. Use 512 for fewer HTTP requests. |
 | `--resolution` | Target QUADBIN pixel resolution (auto if not specified) |
 | `--no-compression` | Disable gzip compression for block data |
 | `-v, --verbose` | Enable verbose output |
