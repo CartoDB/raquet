@@ -16,16 +16,23 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Extract versions
         id: version
         run: |
-          TAG="${GITHUB_REF#refs/tags/v}"
-          echo "cli_version=$TAG" >> $GITHUB_OUTPUT
-          echo "Extracted version: $TAG"
+          # CLI version from tag
+          CLI_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "cli_version=$CLI_VERSION" >> $GITHUB_OUTPUT
+          echo "CLI version: $CLI_VERSION"
+
+          # Spec version from format-specs/raquet.md header
+          SPEC_VERSION=$(head -1 format-specs/raquet.md | grep -oP 'v\K[0-9]+\.[0-9]+\.[0-9]+')
+          echo "spec_version=$SPEC_VERSION" >> $GITHUB_OUTPUT
+          echo "Spec version: $SPEC_VERSION"
 
       - name: Update docs/_config.yml
         run: |
           sed -i "s/^cli_version:.*/cli_version: \"${{ steps.version.outputs.cli_version }}\"/" docs/_config.yml
+          sed -i "s/^spec_version:.*/spec_version: \"${{ steps.version.outputs.spec_version }}\"/" docs/_config.yml
           cat docs/_config.yml
 
       - name: Commit and push
@@ -33,5 +40,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/_config.yml
-          git diff --staged --quiet || git commit -m "Update docs CLI version to ${{ steps.version.outputs.cli_version }}"
+          git diff --staged --quiet || git commit -m "Update docs versions (CLI ${{ steps.version.outputs.cli_version }}, Spec ${{ steps.version.outputs.spec_version }})"
           git push origin master
