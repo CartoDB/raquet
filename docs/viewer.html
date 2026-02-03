@@ -213,6 +213,10 @@
         let batchTimeout = null;
         const BATCH_DELAY = 50;
 
+        // Global normalization state for consistent coloring across tiles
+        let globalMinMax = null; // { min, max } - computed from first batch or metadata
+        let globalMinMaxSamples = []; // Collect samples to compute global range
+
         // Request cancellation - track current batch generation
         let batchGeneration = 0;
         let activeBatches = new Set();
@@ -635,9 +639,10 @@
             }
         }
 
-        // Create image from bands with auto-contrast normalization
+        // Create image from bands with consistent normalization across tiles
         // Handles single-band (grayscale/colormap), RGB, and RGBA
         // Properly handles NaN/nodata values
+        // Uses global min/max for single-band data to avoid grid artifacts
         function createImage(bands, width, height) {
             const canvas = document.createElement('canvas');
             canvas.width = width;
@@ -649,28 +654,50 @@
             const validBands = bands.filter(b => b != null);
             if (validBands.length === 0) return canvas;
 
-            // Use percentile-based contrast stretch (2nd-98th percentile)
-            // Filter out NaN and Infinity values
-            const allValues = [];
-            for (const band of validBands) {
-                // Sample values for percentile calculation (for performance)
-                const step = Math.max(1, Math.floor(band.length / 10000));
-                for (let i = 0; i < band.length; i += step) {
-                    const v = band[i];
-                    if (Number.isFinite(v)) {
-                        allValues.push(v);
+            // For single-band data, use global normalization to avoid grid artifacts
+            // For multi-band RGB data, use per-tile normalization (each band already in similar range)
+            const useSingleBandMode = validBands.length === 1;
+
+            let minVal, maxVal;
+
+            if (useSingleBandMode && globalMinMax) {
+                // Use cached global min/max for consistent coloring
+                minVal = globalMinMax.min;
+                maxVal = globalMinMax.max;
+            } else {
+                // Compute from tile data (for RGB or when global not yet computed)
+                // Use percentile-based contrast stretch (2nd-98th percentile)
+                const allValues = [];
+                for (const band of validBands) {
+                    const step = Math.max(1, Math.floor(band.length / 10000));
+                    for (let i = 0; i < band.length; i += step) {
+                        const v = band[i];
+                        if (Number.isFinite(v)) {
+                            allValues.push(v);
+                        }
+                    }
+                }
+
+                if (allValues.length === 0) return canvas; // All NaN
+
+                allValues.sort((a, b) => a - b);
+                const p2 = allValues[Math.floor(allValues.length * 0.02)];
+                const p98 = allValues[Math.floor(allValues.length * 0.98)];
+
+                minVal = p2;
+                maxVal = p98;
+
+                // For single-band: collect samples for global range calculation
+                if (useSingleBandMode && !globalMinMax) {
+                    globalMinMaxSamples.push({ min: p2, max: p98, count: allValues.length });
+
+                    // After collecting enough samples, compute global range
+                    if (globalMinMaxSamples.length >= 10) {
+                        computeGlobalMinMax();
                     }
                 }
             }
 
-            if (allValues.length === 0) return canvas; // All NaN
-
-            allValues.sort((a, b) => a - b);
-            const p2 = allValues[Math.floor(allValues.length * 0.02)];
-            const p98 = allValues[Math.floor(allValues.length * 0.98)];
-
-            const minVal = p2;
-            const maxVal = p98;
             const range = maxVal - minVal || 1;
 
             // Helper to normalize a value to 0-255
@@ -725,6 +752,61 @@
             }
             ctx.putImageData(imageData, 0, 0);
             return canvas;
+        }
+
+        // Compute global min/max from collected samples
+        function computeGlobalMinMax() {
+            if (globalMinMaxSamples.length === 0) return;
+
+            // Compute weighted average of percentile bounds
+            let totalCount = 0;
+            let weightedMin = 0;
+            let weightedMax = 0;
+
+            for (const sample of globalMinMaxSamples) {
+                totalCount += sample.count;
+                weightedMin += sample.min * sample.count;
+                weightedMax += sample.max * sample.count;
+            }
+
+            if (totalCount > 0) {
+                // Use a slightly expanded range to ensure no clipping
+                const avgMin = weightedMin / totalCount;
+                const avgMax = weightedMax / totalCount;
+                const padding = (avgMax - avgMin) * 0.05; // 5% padding
+
+                globalMinMax = {
+                    min: avgMin - padding,
+                    max: avgMax + padding
+                };
+
+                console.log(`Global normalization computed: min=${globalMinMax.min.toFixed(2)}, max=${globalMinMax.max.toFixed(2)} (from ${globalMinMaxSamples.length} tiles)`);
+
+                // Invalidate tile cache to re-render with consistent colors
+                // This ensures tiles rendered before global range was computed get updated
+                invalidateTileCacheForRerender();
+            }
+        }
+
+        // Invalidate cached tiles so they re-render with new global normalization
+        function invalidateTileCacheForRerender() {
+            // Clear the tile cache to force re-fetch with new normalization
+            tileCache.clear();
+            tilesRendered = 0;
+
+            // Force deck.gl to re-request tiles
+            if (deckInstance) {
+                const layers = deckInstance.props.layers;
+                const raquetLayer = layers.find(l => l.id === 'raquet');
+                if (raquetLayer) {
+                    // Create new layer instance to force tile refresh
+                    const newRaquetLayer = raquetLayer.clone({
+                        updateTriggers: { getTileData: [Date.now()] }
+                    });
+                    const otherLayers = layers.filter(l => l.id !== 'raquet');
+                    deckInstance.setProps({ layers: [...otherLayers, newRaquetLayer] });
+                }
+            }
         }
 
         // Viridis-like colormap for single-band scientific data
@@ -1147,6 +1229,17 @@
                 batchGeneration = 0;
                 activeBatches.clear();
                 pendingRequests.clear();
+                globalMinMax = null;
+                globalMinMaxSamples = [];
+
+                // Check if metadata has band statistics for global normalization
+                if (raquetMeta?.bands?.length === 1 && raquetMeta.bands[0].statistics) {
+                    const stats = raquetMeta.bands[0].statistics;
+                    if (stats.min !== undefined && stats.max !== undefined) {
+                        globalMinMax = { min: stats.min, max: stats.max };
+                        console.log(`Using band statistics for normalization: min=${stats.min}, max=${stats.max}`);
+                    }
+                }
 
                 // Show format info in status
                 const tileSizeInfo = blockWidth !== 256 ? ` ${blockWidth}px` : '';
