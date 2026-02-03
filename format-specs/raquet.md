@@ -1,4 +1,4 @@
-# RaQuet Specification v0.3.0
+# RaQuet Specification v0.4.0
 
 ## Overview
 
@@ -37,13 +37,24 @@ Required columns:
 - Description: QUADBIN cell identifier that encodes the tile's spatial location and zoom level.
 - Special value: `block = 0` is reserved for the metadata row.
 
-#### Band Columns
+#### Band Columns (Sequential Layout)
+When `band_layout` is `"sequential"` (default):
 - Type: bytes
 - Naming convention: Configurable band names, optionally following the convention `band_<band_index>` (e.g., "band_1", "band_2", etc.).
-- Content: Raw binary data of the raster tile.
+- Content: Raw binary data of the raster tile for a single band.
 - Format: Binary-encoded array of pixel values stored in row-major order (pixels are stored row by row from top to bottom, and within each row from left to right). The encoded array is represented as a flat binary array of the pixel values.
 - **Endianness**: Little-endian byte order MUST be used for multi-byte data types (int16, int32, float32, etc.).
 - Optional compression: Can be gzip compressed (independent of Parquet-level compression).
+
+#### Pixels Column (Interleaved Layout)
+When `band_layout` is `"interleaved"`:
+- Type: bytes
+- Column name: `pixels` (single column replaces individual band columns)
+- Content: All bands interleaved at the pixel level (Band Interleaved by Pixel / BIP format).
+- Format: For each pixel in row-major order, all band values are stored consecutively: `[R₀,G₀,B₀,R₁,G₁,B₁,...,Rₙ,Gₙ,Bₙ]` where n = width × height - 1.
+- **Endianness**: Little-endian byte order for multi-byte data types.
+- Compression: Supports gzip (lossless) or JPEG/WebP (lossy). Lossy compression **requires** this layout.
+- **Lossy compression format**: When using JPEG or WebP, the `pixels` column contains a complete encoded image (JPEG/WebP binary data), not raw interleaved bytes. Clients decode using standard image decoders.
 
 #### Metadata Column
 - Type: string
@@ -128,7 +139,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "width": 9216,
     "height": 7936,
     "crs": "EPSG:3857",
@@ -183,7 +194,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 - **Format Identification**
   - `file_format`: String identifying this as a RaQuet file. MUST be `"raquet"`.
-  - `version`: String indicating the RaQuet specification version. Current version is "0.3.0".
+  - `version`: String indicating the RaQuet specification version. Current version is "0.4.0".
 
 - **Raster Dimensions**
   - `width`, `height`: Integers specifying full resolution raster dimensions in pixels.
@@ -193,10 +204,19 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
   - `bounds`: Array [west, south, east, north] specifying geographic extent.
   - `bounds_crs`: String indicating the CRS of the bounds. Always "EPSG:4326" (WGS84) for RaQuet.
 
+- **Band Layout** (optional, defaults to "sequential")
+  - `band_layout`: String indicating how band data is organized.
+    - `"sequential"` (default): Each band stored in a separate column (`band_1`, `band_2`, etc.). This is the traditional layout, optimal for single-band analysis.
+    - `"interleaved"`: All bands stored in a single `pixels` column with pixel-interleaved format (R₀G₀B₀R₁G₁B₁...). This layout is required for lossy compression and may improve performance for RGB visualization.
+
 - **Compression Information**
-  - `compression`: String indicating the compression method used for band data.
-    - Values: "gzip" or null.
-    - When null, band data is stored uncompressed.
+  - `compression`: String indicating the compression method used for band/pixel data.
+    - Values: `"gzip"`, `"jpeg"`, `"webp"`, or `null`.
+    - `"gzip"`: Lossless compression, works with any band layout and data type.
+    - `"jpeg"`: Lossy compression, **requires** `band_layout: "interleaved"` and `uint8` data type. Best for photographic imagery. Supports 1 band (grayscale) or 3 bands (RGB).
+    - `"webp"`: Lossy compression, **requires** `band_layout: "interleaved"` and `uint8` data type. Better compression than JPEG for web imagery. Supports 1-4 bands (grayscale, RGB, RGBA).
+    - When `null`, band data is stored uncompressed.
+  - `compression_quality` (optional): Integer 1-100 for lossy compression quality. Higher values mean better quality but larger files. Default: 85. Ignored for gzip/null compression.
 
 - **Tiling Information**
   - `tiling`: Object containing tile/block configuration:
@@ -299,7 +319,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "width": 9216,
     "height": 7936,
     "crs": "EPSG:3857",
@@ -341,7 +361,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "width": 1024,
     "height": 1024,
     "crs": "EPSG:3857",
@@ -392,11 +412,61 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 }
 ```
 
-3. **Elevation Data with Units**
+3. **RGB Satellite Image with Lossy Compression (Interleaved)**
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
+    "width": 10980,
+    "height": 10980,
+    "crs": "EPSG:3857",
+    "bounds": [32.99, 16.19, 34.03, 17.18],
+    "bounds_crs": "EPSG:4326",
+    "band_layout": "interleaved",
+    "compression": "webp",
+    "compression_quality": 85,
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 6,
+        "max_zoom": 12,
+        "pixel_zoom": 20,
+        "num_blocks": 1840
+    },
+    "bands": [
+        {
+            "name": "red",
+            "type": "uint8",
+            "colorinterp": "red",
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255
+        },
+        {
+            "name": "green",
+            "type": "uint8",
+            "colorinterp": "green",
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255
+        },
+        {
+            "name": "blue",
+            "type": "uint8",
+            "colorinterp": "blue",
+            "STATISTICS_MINIMUM": 0,
+            "STATISTICS_MAXIMUM": 255
+        }
+    ]
+}
+```
+
+This example shows a Sentinel-2 TCI (True Color Image) stored with interleaved band layout and WebP lossy compression. The `pixels` column contains WebP-encoded tiles that browsers can decode natively. This format typically achieves 5-10x smaller file sizes compared to gzip for photographic imagery.
+
+4. **Elevation Data with Units**
+```json
+{
+    "file_format": "raquet",
+    "version": "0.4.0",
     "width": 32768,
     "height": 14848,
     "crs": "EPSG:3857",
@@ -428,11 +498,11 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 }
 ```
 
-4. **Time-Series Climate Data (NetCDF with CF conventions)**
+5. **Time-Series Climate Data (NetCDF with CF conventions)**
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "width": 1440,
     "height": 721,
     "crs": "EPSG:3857",
@@ -478,11 +548,11 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 - `time_ts`: Derived timestamp (e.g., 1980-01-01T00:00:00)
 - `sst`: Compressed raster tile data
 
-5. **Analytics-Only File (No Overviews)**
+6. **Analytics-Only File (No Overviews)**
 ```json
 {
     "file_format": "raquet",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "width": 400752,
     "height": 131072,
     "crs": "EPSG:3857",
@@ -557,7 +627,7 @@ For other data sources, the converter reprojects to Web Mercator and builds pyra
 To enable fast identification of RaQuet files without fully parsing the metadata row, producers SHOULD include a hint in the Parquet file-level key-value metadata:
 
 - **Key**: `raquet:version`
-- **Value**: The specification version (e.g., `"0.3.0"`)
+- **Value**: The specification version (e.g., `"0.4.0"`)
 
 This allows readers (e.g., a potential GDAL driver) to quickly distinguish RaQuet files from other Parquet files by reading only the Parquet footer.
 
@@ -597,7 +667,7 @@ Producers MAY extend the metadata with custom fields. To avoid conflicts with fu
    ```json
    {
        "file_format": "raquet",
-       "version": "0.3.0",
+       "version": "0.4.0",
        "custom": {
            "organization": "ACME Corp",
            "project_id": "climate-2024",

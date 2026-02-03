@@ -124,22 +124,22 @@ def validate_metadata(table: pyarrow.Table) -> tuple[list[str], list[str], dict 
     version = metadata.get("version")
     if version is None:
         errors.append("Missing 'version' in metadata")
-    elif version not in ("0.2.0", "0.3.0"):
-        warnings.append(f"Unknown version '{version}', expected 0.2.0 or 0.3.0")
+    elif version not in ("0.2.0", "0.3.0", "0.4.0"):
+        warnings.append(f"Unknown version '{version}', expected 0.2.0, 0.3.0, or 0.4.0")
 
-    # Validate required fields for v0.3.0
-    if version == "0.3.0":
+    # Validate required fields for v0.3.0+
+    if version in ("0.3.0", "0.4.0"):
         required_fields = ["width", "height", "crs", "bounds", "bounds_crs", "tiling", "compression", "bands"]
         for field in required_fields:
             if field not in metadata:
-                errors.append(f"Missing required field '{field}' in v0.3.0 metadata")
+                errors.append(f"Missing required field '{field}' in v0.3.0+ metadata")
 
         # Validate tiling object
         tiling = metadata.get("tiling", {})
         tiling_fields = ["scheme", "block_width", "block_height", "min_zoom", "max_zoom", "pixel_zoom", "num_blocks"]
         for field in tiling_fields:
             if field not in tiling:
-                errors.append(f"Missing required field 'tiling.{field}' in v0.3.0 metadata")
+                errors.append(f"Missing required field 'tiling.{field}' in v0.3.0+ metadata")
 
         # Validate bands
         bands = metadata.get("bands", [])
