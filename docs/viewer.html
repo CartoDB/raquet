@@ -127,11 +127,15 @@
                 <option value="https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet">CFSR Sea Surface Temperature (time-series)</option>
                 <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/naip_test_v2.parquet">NAIP Aerial Imagery (NY)</option>
                 <option value="https://storage.googleapis.com/bq_ee_exports/raquet-test/riyadh_optimized_v3.parquet">Riyadh</option>
-                <option disabled>── v0.4.0 Interleaved + Lossy ──</option>
-                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_webp.parquet">Sentinel-2 TCI (WebP, 17 MB)</option>
-                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_jpeg.parquet">Sentinel-2 TCI (JPEG, 27 MB)</option>
-                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_gzip.parquet">Sentinel-2 TCI (Interleaved gzip)</option>
-                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_sequential_gzip.parquet">Sentinel-2 TCI (Sequential gzip, 256 MB)</option>
+                <option disabled>── v0.4.0 Lossy (256px tiles) ──</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_webp.parquet">TCI WebP 256px (17 MB, 3225 tiles)</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_jpeg.parquet">TCI JPEG 256px (27 MB, 3225 tiles)</option>
+                <option disabled>── v0.4.0 Lossy (512px tiles) ──</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_512_interleaved_webp.parquet">TCI WebP 512px (16 MB, 877 tiles)</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_512_interleaved_jpeg.parquet">TCI JPEG 512px (26 MB, 877 tiles)</option>
+                <option disabled>── v0.4.0 Lossless ──</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_interleaved_gzip.parquet">TCI Interleaved gzip 256px</option>
+                <option value="https://storage.googleapis.com/raquet_demo_data/experimental/tci_sequential_gzip.parquet">TCI Sequential gzip 256px (baseline)</option>
             </select>
 
             <label>Or enter RaQuet file URL</label>
