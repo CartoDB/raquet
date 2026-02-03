@@ -794,18 +794,39 @@
             tileCache.clear();
             tilesRendered = 0;
 
-            // Force deck.gl to re-request tiles
+            // Force deck.gl to completely recreate the tile layer
             if (deckInstance) {
                 const layers = deckInstance.props.layers;
-                const raquetLayer = layers.find(l => l.id === 'raquet');
-                if (raquetLayer) {
-                    // Create new layer instance to force tile refresh
-                    const newRaquetLayer = raquetLayer.clone({
-                        updateTriggers: { getTileData: [Date.now()] }
-                    });
-                    const otherLayers = layers.filter(l => l.id !== 'raquet');
-                    deckInstance.setProps({ layers: [...otherLayers, newRaquetLayer] });
-                }
+                const basemapLayer = layers.find(l => l.id === 'basemap');
+
+                // Create a fresh TileLayer with a unique ID to force full refresh
+                const newRaquetLayer = new globalThis.deck.TileLayer({
+                    id: 'raquet-' + Date.now(), // Unique ID forces full recreation
+                    getTileData,
+                    minZoom,
+                    maxZoom,
+                    tileSize: blockWidth,
+                    extent: dataBounds,
+                    refinementStrategy: 'no-overlap',
+                    maxRequests: 6,
+                    maxCacheSize: 100,
+                    renderSubLayers: props => {
+                        const {tile, data} = props;
+                        if (!data) return null;
+                        const {west, south, east, north} = tile.bbox;
+                        return new globalThis.deck.BitmapLayer({
+                            id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                            image: data,
+                            bounds: [west, south, east, north]
+                        });
+                    }
+                });
+
+                deckInstance.setProps({
+                    layers: basemapLayer ? [basemapLayer, newRaquetLayer] : [newRaquetLayer]
+                });
+
+                console.log('Tile layer recreated for global normalization refresh');
             }
         }
 
