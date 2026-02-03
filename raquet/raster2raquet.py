@@ -52,6 +52,15 @@ except ImportError:
 else:
     HAS_NUMPY = True
 
+try:
+    from PIL import Image
+    import io
+except ImportError:
+    logging.info("Optional Pillow package is unavailable, lossy compression will not work")
+    HAS_PILLOW = False
+else:
+    HAS_PILLOW = True
+
 # Pixel dimensions of ideal minimum size
 TARGET_MIN_SIZE = 128
 
@@ -102,6 +111,32 @@ class OverviewMode(enum.StrEnum):
 
     NONE = "none"
     AUTO = "auto"
+
+
+class BandLayout(enum.StrEnum):
+    """Band data organization layout
+
+    - SEQUENTIAL: Each band stored in a separate column (default, traditional layout)
+    - INTERLEAVED: All bands interleaved in a single 'pixels' column (BIP format)
+    """
+
+    SEQUENTIAL = "sequential"
+    INTERLEAVED = "interleaved"
+
+
+class CompressionCodec(enum.StrEnum):
+    """Compression codec for band/pixel data
+
+    - GZIP: Lossless compression, works with any layout
+    - JPEG: Lossy compression, requires interleaved uint8 RGB
+    - WEBP: Lossy compression, requires interleaved uint8 RGB/RGBA
+    - NONE: No compression
+    """
+
+    GZIP = "gzip"
+    JPEG = "jpeg"
+    WEBP = "webp"
+    NONE = "none"
 
 
 @dataclasses.dataclass
@@ -706,18 +741,25 @@ def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
     gdaltype_bandtypes: dict[int, BandType] | None,
     include_stats: bool,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ) -> tuple[list[bytes], list[RasterStats | None]]:
-    """Read data and stats from warped bands"""
+    """Read data and stats from warped bands
+
+    For SEQUENTIAL layout: returns list of compressed band data (one per band)
+    For INTERLEAVED layout: returns list with single element (all bands interleaved)
+    """
     block_data, block_stats = [], []
+    raw_bands = []  # Store raw band data for interleaving
 
     for band_num in range(1, 1 + ds.RasterCount):
         band = ds.GetRasterBand(band_num)
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
+
         if not include_stats or gdaltype_bandtypes is None:
-            # No stats wanted, or wanted but not available
             stats = None
         else:
-            # Calculate stats
             band_type = gdaltype_bandtypes[band.DataType]
             if HAS_NUMPY:
                 pixel_arr = numpy.frombuffer(data, dtype=getattr(numpy, band_type.name))
@@ -728,8 +770,82 @@ def read_raster_data_stats(
             logging.info(
                 "Read %s bytes from band %s: %s...", len(data), band_num, data[:32]
             )
-        block_data.append(gzip.compress(data))
         block_stats.append(stats)
+
+        if band_layout == BandLayout.SEQUENTIAL:
+            # Sequential: compress each band separately
+            if compression == CompressionCodec.GZIP:
+                block_data.append(gzip.compress(data))
+            elif compression == CompressionCodec.NONE:
+                block_data.append(data)
+            else:
+                # Lossy compression not supported in sequential mode
+                raise ValueError(f"{compression} compression requires interleaved band layout")
+        else:
+            # Interleaved: collect raw band data for later interleaving
+            raw_bands.append(data)
+
+    if band_layout == BandLayout.INTERLEAVED and raw_bands:
+        # Interleave band data: R0,G0,B0,R1,G1,B1,...
+        width, height = ds.RasterXSize, ds.RasterYSize
+        num_bands = len(raw_bands)
+        num_pixels = width * height
+
+        if compression in (CompressionCodec.JPEG, CompressionCodec.WEBP):
+            # For lossy compression, use Pillow to encode as image
+            if not HAS_PILLOW:
+                raise RuntimeError("Pillow is required for JPEG/WebP compression")
+            if not HAS_NUMPY:
+                raise RuntimeError("NumPy is required for JPEG/WebP compression")
+
+            # Stack bands into numpy array and reshape for Pillow
+            band_arrays = [numpy.frombuffer(b, dtype=numpy.uint8) for b in raw_bands]
+            stacked = numpy.stack(band_arrays, axis=-1).reshape(height, width, num_bands)
+
+            # Determine image mode based on band count
+            if num_bands == 1:
+                mode = "L"
+                img = Image.fromarray(stacked[:, :, 0], mode=mode)
+            elif num_bands == 3:
+                mode = "RGB"
+                img = Image.fromarray(stacked, mode=mode)
+            elif num_bands == 4:
+                mode = "RGBA"
+                img = Image.fromarray(stacked, mode=mode)
+            else:
+                raise ValueError(f"JPEG/WebP compression supports 1, 3, or 4 bands, got {num_bands}")
+
+            # Encode to bytes
+            buffer = io.BytesIO()
+            if compression == CompressionCodec.JPEG:
+                if num_bands == 4:
+                    raise ValueError("JPEG does not support 4 bands (RGBA)")
+                img.save(buffer, format="JPEG", quality=compression_quality)
+            else:  # WebP
+                img.save(buffer, format="WEBP", quality=compression_quality)
+            interleaved_data = buffer.getvalue()
+        else:
+            # For gzip or none, interleave raw bytes
+            if HAS_NUMPY:
+                # Use numpy for efficient interleaving
+                band_arrays = [numpy.frombuffer(b, dtype=numpy.uint8) for b in raw_bands]
+                # Stack bands: shape becomes (num_pixels, num_bands)
+                stacked = numpy.stack(band_arrays, axis=-1)
+                interleaved_bytes = stacked.tobytes()
+            else:
+                # Pure Python fallback
+                interleaved_bytes = bytearray()
+                for i in range(num_pixels):
+                    for band_data in raw_bands:
+                        interleaved_bytes.append(band_data[i])
+                interleaved_bytes = bytes(interleaved_bytes)
+
+            if compression == CompressionCodec.GZIP:
+                interleaved_data = gzip.compress(interleaved_bytes)
+            else:
+                interleaved_data = interleaved_bytes
+
+        block_data = [interleaved_data]
 
     return block_data, block_stats
 
@@ -742,6 +858,9 @@ def read_raster(
     pipe: multiprocessing.Pipe,
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ):
     """Worker process that accesses a raster file through pipes.
 
@@ -755,6 +874,9 @@ def read_raster(
         pipe: Connection to send data to parent
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override (overrides AUTO calculation)
+        band_layout: Band data organization (sequential or interleaved)
+        compression: Compression codec (gzip, jpeg, webp, none)
+        compression_quality: Quality for lossy compression (1-100)
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -951,7 +1073,10 @@ def read_raster(
                 osgeo.gdal.Warp(
                     destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts_source
                 )
-                d, s = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
+                d, s = read_raster_data_stats(
+                    tile_ds, gdaltype_bandtypes, do_stats,
+                    band_layout, compression, compression_quality
+                )
                 pipe.send((frame.tile, d, s))
             elif not frame.inputs:
                 # Build overview tile - either from COG overviews or from child tiles
@@ -1023,7 +1148,10 @@ def read_raster(
                             vrt_ds = None
                             osgeo.gdal.Unlink(vrt_path)
 
-                d, s1 = read_raster_data_stats(tile_ds, gdaltype_bandtypes, do_stats)
+                d, s1 = read_raster_data_stats(
+                    tile_ds, gdaltype_bandtypes, do_stats,
+                    band_layout, compression, compression_quality
+                )
                 s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
                 pipe.send((frame.tile, d, s2))
             else:
@@ -1048,6 +1176,9 @@ def open_raster_in_process(
     block_zoom: int,
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a raster reader in another process.
 
@@ -1058,6 +1189,9 @@ def open_raster_in_process(
         block_zoom: Block zoom level (8 for 256px blocks)
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override
+        band_layout: Band data organization (sequential or interleaved)
+        compression: Compression codec (gzip, jpeg, webp, none)
+        compression_quality: Quality for lossy compression (1-100)
 
     Returns:
         Tuple of (raster_geometry, receive_pipe) for communication
@@ -1074,6 +1208,9 @@ def open_raster_in_process(
         child_send,
         overview_mode,
         min_zoom_override,
+        band_layout,
+        compression,
+        compression_quality,
     )
     process = multiprocessing.Process(target=read_raster, args=args)
     process.start()
@@ -1128,12 +1265,16 @@ def get_raquet_dimensions(
     }
 
 
-def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
+def create_schema(
+    rg: RasterGeometry,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+) -> tuple[pyarrow.lib.Schema, list[str]]:
     """Create table schema and band column names for RasterGeometry instance
 
     For time-series data (CF time present), creates a single band column since
     all bands represent the same variable at different time steps.
-    For regular multi-band data, creates one column per band.
+    For regular multi-band data with sequential layout, creates one column per band.
+    For interleaved layout, creates a single 'pixels' column.
     """
     # Build column list
     columns = [
@@ -1147,6 +1288,9 @@ def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
         columns.append(("time_ts", pyarrow.timestamp("us")))
         # For time-series, all bands are the same variable - use single column
         band_names = ["band_1"]
+    elif band_layout == BandLayout.INTERLEAVED:
+        # Interleaved layout: single 'pixels' column for all bands
+        band_names = ["pixels"]
     else:
         # Standard multi-band: one column per band
         band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
@@ -1157,7 +1301,7 @@ def create_schema(rg: RasterGeometry) -> tuple[pyarrow.lib.Schema, list[str]]:
     # Create schema with Parquet-level metadata for file identification
     # This allows readers (e.g., GDAL drivers) to identify RaQuet files
     # by reading only the Parquet footer
-    schema = pyarrow.schema(columns, metadata={"raquet:version": "0.3.0"})
+    schema = pyarrow.schema(columns, metadata={"raquet:version": "0.4.0"})
 
     return schema, band_names
 
@@ -1247,6 +1391,9 @@ def create_metadata(
     xmax: float,
     ymax: float,
     block_zoom: int,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ) -> dict:
     """Create a dictionary of RaQuet v0.3.0 metadata
 
@@ -1273,7 +1420,10 @@ def create_metadata(
             )
         ]
     else:
-        # Standard multi-band
+        # Standard multi-band (or interleaved)
+        # For metadata, always describe each original band regardless of layout
+        # Generate band names based on original band count, not column names
+        original_band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
         bands_metadata = [
             _create_band_metadata(
                 i,
@@ -1287,7 +1437,7 @@ def create_metadata(
             for i, (btype, bname, bcolorinterp, bcolortable, stats) in enumerate(
                 zip(
                     rg.bandtypes,
-                    band_names,
+                    original_band_names,
                     rg.bandcolorinterp,
                     rg.bandcolortable,
                     band_stats,
@@ -1300,18 +1450,29 @@ def create_metadata(
         rg.zoom, xmin, ymin, xmax, ymax, block_zoom, minresolution, block_count
     )
 
+    # Determine compression string for metadata
+    compression_str = compression.value if compression != CompressionCodec.NONE else None
+
     metadata_json = {
         "file_format": "raquet",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "width": dimensions["width"],
         "height": dimensions["height"],
         "crs": "EPSG:3857",
         "bounds": dimensions["bounds"],
         "bounds_crs": "EPSG:4326",
         "tiling": dimensions["tiling"],
-        "compression": "gzip",
+        "compression": compression_str,
         "bands": bands_metadata,
     }
+
+    # Add band_layout only if not default (sequential)
+    if band_layout == BandLayout.INTERLEAVED:
+        metadata_json["band_layout"] = "interleaved"
+
+    # Add compression_quality for lossy codecs
+    if compression in (CompressionCodec.JPEG, CompressionCodec.WEBP):
+        metadata_json["compression_quality"] = compression_quality
 
     # Add time metadata if CF time dimension is present
     if rg.cf_time is not None:
@@ -1363,6 +1524,9 @@ def main(
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
     streaming: bool = False,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1376,6 +1540,9 @@ def main(
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override
         streaming: Use two-pass streaming mode for memory-safe conversion of large files
+        band_layout: Band data organization (sequential or interleaved)
+        compression: Compression codec (gzip, jpeg, webp, none)
+        compression_quality: Quality for lossy compression (1-100)
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -1399,6 +1566,9 @@ def main(
         overview_mode,
         min_zoom_override,
         streaming,
+        band_layout,
+        compression,
+        compression_quality,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1413,6 +1583,9 @@ def convert_to_raquet_files(
     overview_mode: OverviewMode = OverviewMode.AUTO,
     min_zoom_override: int | None = None,
     streaming: bool = False,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1426,6 +1599,9 @@ def convert_to_raquet_files(
         overview_mode: Overview generation mode (NONE=no overviews, AUTO=full pyramid)
         min_zoom_override: Optional minimum zoom level override
         streaming: Use two-pass streaming mode for memory-safe conversion of large files
+        band_layout: Band data organization (sequential or interleaved)
+        compression: Compression codec (gzip, jpeg, webp, none)
+        compression_quality: Quality for lossy compression (1-100)
 
     Yields output filenames as they are written.
 
@@ -1445,13 +1621,17 @@ def convert_to_raquet_files(
         block_zoom,
         overview_mode,
         min_zoom_override,
+        band_layout,
+        compression,
+        compression_quality,
     )
 
     try:
-        schema, band_names = create_schema(raster_geometry)
+        schema, band_names = create_schema(raster_geometry, band_layout)
 
         # Initialize stats tracking (small, always in memory)
-        band_stats = [None for _ in band_names]
+        # Note: Always track stats for each original band, even in interleaved mode
+        band_stats = [None for _ in raster_geometry.bandtypes]
         xmin, ymin, xmax, ymax = math.inf, math.inf, -math.inf, -math.inf
         minresolution, block_count = math.inf, 0
 
@@ -1597,6 +1777,9 @@ def convert_to_raquet_files(
             xmax,
             ymax,
             block_zoom,
+            band_layout,
+            compression,
+            compression_quality,
         )
         metadata_row = {
             "block": 0,
@@ -1695,6 +1878,27 @@ parser.add_argument(
     type=int,
 )
 
+parser.add_argument(
+    "--band-layout",
+    help="Band data organization: sequential (separate columns) or interleaved (single pixels column)",
+    choices=list(BandLayout),
+    default=BandLayout.SEQUENTIAL,
+)
+
+parser.add_argument(
+    "--compression",
+    help="Compression codec: gzip (lossless), jpeg/webp (lossy, requires interleaved), none",
+    choices=list(CompressionCodec),
+    default=CompressionCodec.GZIP,
+)
+
+parser.add_argument(
+    "--compression-quality",
+    help="Quality for lossy compression (1-100), default=85. Ignored for gzip/none.",
+    type=int,
+    default=85,
+)
+
 if __name__ == "__main__":
     args = parser.parse_args()
     if args.verbose:
@@ -1703,6 +1907,24 @@ if __name__ == "__main__":
     # Zoom offset from tiles to pixels, e.g. 8 = 256px tiles
     block_zoom = int(math.log(args.block_size) / math.log(2))
 
+    # Validate compression/layout combination
+    band_layout = BandLayout(args.band_layout)
+    compression = CompressionCodec(args.compression)
+
+    if compression in (CompressionCodec.JPEG, CompressionCodec.WEBP):
+        if band_layout != BandLayout.INTERLEAVED:
+            print(
+                f"Error: {compression} compression requires --band-layout=interleaved",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not HAS_PILLOW:
+            print(
+                f"Error: {compression} compression requires Pillow package (pip install pillow)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     main(
         args.input_filename,
         args.raquet_destination,
@@ -1710,4 +1932,7 @@ if __name__ == "__main__":
         ResamplingAlgorithm(args.resampling_algorithm),
         block_zoom,
         args.target_size,
+        band_layout=band_layout,
+        compression=compression,
+        compression_quality=args.compression_quality,
     )

@@ -188,6 +188,9 @@
         let minZoom = 0, maxZoom = 20;
         let dataBounds = null; // [minLon, minLat, maxLon, maxLat]
         let deckInstance = null;
+        // Interleaved format support
+        let bandLayout = 'sequential'; // 'sequential' or 'interleaved'
+        let compression = 'gzip'; // 'gzip', 'jpeg', 'webp', or null
 
         // Stats
         let tilesLoaded = 0;
@@ -528,6 +531,77 @@
             return data;
         }
 
+        // Decode interleaved tile data (JPEG/WebP or gzip-compressed interleaved bytes)
+        // Returns a canvas element ready for display
+        async function decodeInterleavedTile(pixelData, width, height, compressionType) {
+            if (!pixelData) return null;
+
+            let bytes;
+            if (pixelData instanceof Uint8Array) {
+                bytes = pixelData;
+            } else if (pixelData instanceof ArrayBuffer) {
+                bytes = new Uint8Array(pixelData);
+            } else if (ArrayBuffer.isView(pixelData)) {
+                bytes = new Uint8Array(pixelData.buffer, pixelData.byteOffset, pixelData.byteLength);
+            } else if (Array.isArray(pixelData)) {
+                bytes = new Uint8Array(pixelData);
+            } else {
+                console.warn('Unknown pixelData type:', typeof pixelData);
+                return null;
+            }
+
+            if (compressionType === 'jpeg' || compressionType === 'webp') {
+                // Use browser's native image decoding
+                const blob = new Blob([bytes], {
+                    type: compressionType === 'jpeg' ? 'image/jpeg' : 'image/webp'
+                });
+                const imageBitmap = await createImageBitmap(blob);
+
+                // Draw to canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(imageBitmap, 0, 0, width, height);
+                return canvas;
+            } else {
+                // gzip-compressed interleaved bytes or raw bytes
+                let data;
+                try {
+                    data = pako.inflate(bytes);
+                } catch (e) {
+                    data = bytes;
+                }
+
+                // Data is interleaved: R0,G0,B0,R1,G1,B1,...
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.createImageData(width, height);
+
+                const numPixels = width * height;
+                const numBands = data.length / numPixels;
+
+                for (let i = 0; i < numPixels; i++) {
+                    if (numBands >= 3) {
+                        imageData.data[i * 4] = data[i * numBands];       // R
+                        imageData.data[i * 4 + 1] = data[i * numBands + 1]; // G
+                        imageData.data[i * 4 + 2] = data[i * numBands + 2]; // B
+                        imageData.data[i * 4 + 3] = numBands >= 4 ? data[i * numBands + 3] : 255; // A
+                    } else if (numBands === 1) {
+                        // Grayscale
+                        imageData.data[i * 4] = data[i];
+                        imageData.data[i * 4 + 1] = data[i];
+                        imageData.data[i * 4 + 2] = data[i];
+                        imageData.data[i * 4 + 3] = 255;
+                    }
+                }
+                ctx.putImageData(imageData, 0, 0);
+                return canvas;
+            }
+        }
+
         // Create image from bands with auto-contrast normalization
         function createImage(bands, width, height) {
             const canvas = document.createElement('canvas');
@@ -594,9 +668,12 @@
                 }
             }
 
-            // Single-phase read: Read block + all bands together, filter client-side
-            // This reduces HTTP requests by reading all columns in one pass per row group
-            const columnsToRead = ['block', ...bandNames.slice(0, 3)];
+            // Determine columns to read based on band layout
+            // INTERLEAVED: single 'pixels' column (1 column read = fewer HTTP requests!)
+            // SEQUENTIAL: multiple band columns
+            const columnsToRead = bandLayout === 'interleaved'
+                ? ['block', 'pixels']
+                : ['block', ...bandNames.slice(0, 3)];
 
             for (const [rgId, { rg, blockIds: rgBlockIds }] of rowGroupRequests) {
                 try {
@@ -619,29 +696,69 @@
                         : (rowGroupData.block?.length || 0);
 
                     for (let i = 0; i < numRows; i++) {
-                        let blockId, bandData;
+                        let blockId;
 
                         if (Array.isArray(rowGroupData)) {
                             const row = rowGroupData[i];
                             blockId = row[0]?.toString();
-                            bandData = row.slice(1);
+
+                            if (!rgBlockIds.has(blockId)) continue;
+
+                            if (bandLayout === 'interleaved') {
+                                // Interleaved: single pixels column
+                                const pixelData = row[1];
+                                if (pixelData) {
+                                    const canvas = await decodeInterleavedTile(
+                                        pixelData, blockWidth, blockHeight, compression
+                                    );
+                                    if (canvas) {
+                                        results.set(blockId, { canvas });
+                                    }
+                                }
+                            } else {
+                                // Sequential: multiple band columns
+                                const bandData = row.slice(1);
+                                const bands = [];
+                                for (let j = 0; j < bandData.length; j++) {
+                                    if (bandData[j]) {
+                                        const decoded = decodeTile(bandData[j], blockWidth, blockHeight, bandType);
+                                        bands.push(decoded);
+                                    }
+                                }
+                                if (bands.length > 0) {
+                                    results.set(blockId, { bands });
+                                }
+                            }
                         } else {
                             blockId = rowGroupData.block?.[i]?.toString();
-                            bandData = bandNames.slice(0, 3).map(name => rowGroupData[name]?.[i]);
-                        }
 
-                        if (!rgBlockIds.has(blockId)) continue;
+                            if (!rgBlockIds.has(blockId)) continue;
 
-                        const bands = [];
-                        for (let j = 0; j < bandData.length; j++) {
-                            if (bandData[j]) {
-                                const decoded = decodeTile(bandData[j], blockWidth, blockHeight, bandType);
-                                bands.push(decoded);
+                            if (bandLayout === 'interleaved') {
+                                // Interleaved: single pixels column
+                                const pixelData = rowGroupData.pixels?.[i];
+                                if (pixelData) {
+                                    const canvas = await decodeInterleavedTile(
+                                        pixelData, blockWidth, blockHeight, compression
+                                    );
+                                    if (canvas) {
+                                        results.set(blockId, { canvas });
+                                    }
+                                }
+                            } else {
+                                // Sequential: multiple band columns
+                                const bandData = bandNames.slice(0, 3).map(name => rowGroupData[name]?.[i]);
+                                const bands = [];
+                                for (let j = 0; j < bandData.length; j++) {
+                                    if (bandData[j]) {
+                                        const decoded = decodeTile(bandData[j], blockWidth, blockHeight, bandType);
+                                        bands.push(decoded);
+                                    }
+                                }
+                                if (bands.length > 0) {
+                                    results.set(blockId, { bands });
+                                }
                             }
-                        }
-
-                        if (bands.length > 0) {
-                            results.set(blockId, { bands });
                         }
                     }
                 } catch (e) {
@@ -709,24 +826,39 @@
                         continue;
                     }
 
-                    // Debug: show band reads with slight delay for visual effect
-                    if (debugMode && result.bands) {
-                        result.bands.forEach((band, idx) => {
-                            if (band) {
-                                // Stagger the band rectangles slightly in time for visual effect
-                                setTimeout(() => {
-                                    addDebugRect(req.z, req.x, req.y, 'band', idx);
-                                }, idx * 50);
-                            }
-                        });
+                    let image;
+                    if (result.canvas) {
+                        // Interleaved format: canvas is already ready
+                        image = result.canvas;
+                        // Debug: show single pixels column read
+                        if (debugMode) {
+                            addDebugRect(req.z, req.x, req.y, 'band', 0);
+                        }
+                    } else if (result.bands) {
+                        // Sequential format: combine bands into image
+                        // Debug: show band reads with slight delay for visual effect
+                        if (debugMode) {
+                            result.bands.forEach((band, idx) => {
+                                if (band) {
+                                    setTimeout(() => {
+                                        addDebugRect(req.z, req.x, req.y, 'band', idx);
+                                    }, idx * 50);
+                                }
+                            });
+                        }
+                        image = createImage(result.bands, blockWidth, blockHeight);
                     }
 
-                    const image = createImage(result.bands, blockWidth, blockHeight);
-                    tileCache.set(cacheKey, image);
-                    tilesLoaded++;
-                    tilesRendered++;
-                    updateStats();
-                    req.resolve(image);
+                    if (image) {
+                        tileCache.set(cacheKey, image);
+                        tilesLoaded++;
+                        tilesRendered++;
+                        updateStats();
+                        req.resolve(image);
+                    } else {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                    }
                 }
             } catch (e) {
                 console.error('Batch fetch error:', e);
@@ -832,11 +964,15 @@
                 if (raquetMeta) {
                     bandNames = raquetMeta.bands?.map(b => b.name) || ['band_1', 'band_2', 'band_3'];
                     bandType = raquetMeta.bands?.[0]?.type || 'uint8';
-                    blockWidth = raquetMeta.block_width || 256;
-                    blockHeight = raquetMeta.block_height || 256;
-                    minZoom = raquetMeta.minresolution || 0;
-                    maxZoom = raquetMeta.maxresolution || 20;
+                    blockWidth = raquetMeta.tiling?.block_width || raquetMeta.block_width || 256;
+                    blockHeight = raquetMeta.tiling?.block_height || raquetMeta.block_height || 256;
+                    minZoom = raquetMeta.tiling?.min_zoom || raquetMeta.minresolution || 0;
+                    maxZoom = raquetMeta.tiling?.max_zoom || raquetMeta.maxresolution || 20;
                     dataBounds = raquetMeta.bounds || null;
+                    // Interleaved format support
+                    bandLayout = raquetMeta.band_layout || 'sequential';
+                    compression = raquetMeta.compression || 'gzip';
+                    console.log(`Format: band_layout=${bandLayout}, compression=${compression}`);
                 } else {
                     console.warn('No RaQuet metadata found, using defaults');
                     const schema = metadata.schema || [];
@@ -902,6 +1038,11 @@
                 activeBatches.clear();
                 pendingRequests.clear();
 
+                // Show format info in status
+                const formatInfo = bandLayout === 'interleaved'
+                    ? `Format: interleaved (${compression})`
+                    : `Format: sequential (${compression})`;
+
                 // Calculate initial view from dataBounds
                 let initialView = { longitude: 0, latitude: 0, zoom: 10 };
                 if (dataBounds) {
@@ -924,7 +1065,7 @@
                     };
                 }
 
-                setStatus(`Loaded: ${Number(metadata.num_rows).toLocaleString()} tiles\nZoom: ${minZoom}-${maxZoom}\nRow Groups: ${rowGroupIndex.length}\nBands: ${bandNames.join(', ')}`, 'success');
+                setStatus(`Loaded: ${Number(metadata.num_rows).toLocaleString()} tiles\nZoom: ${minZoom}-${maxZoom}\nRow Groups: ${rowGroupIndex.length}\nBands: ${bandNames.join(', ')}\n${formatInfo}`, 'success');
 
                 // Create deck.gl map
                 if (deckInstance) deckInstance.finalize();

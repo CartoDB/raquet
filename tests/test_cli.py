@@ -280,7 +280,7 @@ class TestMetadataValidation:
         assert "width" in metadata
         assert "height" in metadata
 
-        # v0.3.0 uses tiling object for block dimensions
+        # v0.3.0+ uses tiling object for block dimensions
         if "tiling" in metadata:
             assert "block_width" in metadata["tiling"]
             assert "block_height" in metadata["tiling"]
@@ -521,11 +521,11 @@ class TestValidateCommand:
         assert "--json" in result.output
 
 
-class TestV03Metadata:
-    """Tests for v0.3.0 metadata format."""
+class TestV04Metadata:
+    """Tests for v0.4.0 metadata format."""
 
-    def test_v03_metadata_structure(self, runner, temp_dir):
-        """Test that converted files use v0.3.0 metadata format."""
+    def test_v04_metadata_structure(self, runner, temp_dir):
+        """Test that converted files use v0.4.0 metadata format."""
         examples_dir = Path(__file__).parent.parent / "examples"
         tiff_files = list(examples_dir.glob("*.tif"))
         if not tiff_files:
@@ -540,25 +540,25 @@ class TestV03Metadata:
         )
         assert result.exit_code == 0
 
-        # Read and verify v0.3.0 metadata structure
+        # Read and verify v0.4.0 metadata structure
         table = pq.read_table(output)
         import pyarrow.compute as pc
 
         block_zero = table.filter(pc.equal(table.column("block"), 0))
         metadata = json.loads(block_zero.column("metadata")[0].as_py())
 
-        # v0.3.0 required fields
+        # v0.4.0 required fields
         assert metadata.get("file_format") == "raquet", "Should have file_format field"
-        assert metadata.get("version") == "0.3.0", "Should use v0.3.0 format"
-        assert "crs" in metadata, "v0.3.0 should have crs field"
-        assert "bounds_crs" in metadata, "v0.3.0 should have bounds_crs field"
-        assert "tiling" in metadata, "v0.3.0 should have tiling object"
+        assert metadata.get("version") == "0.4.0", "Should use v0.4.0 format"
+        assert "crs" in metadata, "v0.4.0 should have crs field"
+        assert "bounds_crs" in metadata, "v0.4.0 should have bounds_crs field"
+        assert "tiling" in metadata, "v0.4.0 should have tiling object"
 
         # Check Parquet-level metadata for file identification
         schema_metadata = table.schema.metadata
         assert schema_metadata is not None, "Should have Parquet-level metadata"
         assert b"raquet:version" in schema_metadata, "Should have raquet:version in Parquet metadata"
-        assert schema_metadata[b"raquet:version"] == b"0.3.0"
+        assert schema_metadata[b"raquet:version"] == b"0.4.0"
 
         # Check tiling object
         tiling = metadata["tiling"]

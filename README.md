@@ -8,7 +8,7 @@ RaQuet is a specification for storing and querying raster data using [Apache Par
 
 Each row in a RaQuet file represents a single rectangular block of data. Location and zoom are given by a [Web Mercator tile z/x/y tile identifier](https://docs.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) stored in the `block` column as a single 64-bit cell [Quadbin identifier](https://docs.carto.com/data-and-analysis/analytics-toolbox-for-redshift/key-concepts/spatial-indexes#quadbin). Empty tiles can be omitted to reduce file size.
 
-Raster data pixels are stored in row-major order binary packed blobs in per-band columns named `band_1`, `band_2`, etc. Valid pixel values include integers or floating point values. These blobs can be optionally compressed with `gzip` to further reduce file size.
+Raster data pixels are stored in row-major order binary packed blobs. By default, each band is stored in a separate column (`band_1`, `band_2`, etc.) with optional gzip compression. For RGB imagery, an **interleaved layout** stores all bands in a single `pixels` column, enabling **lossy compression** (JPEG/WebP) for 10-15x smaller files.
 
 Pixel bands can be decoded via simple binary unpacking in any programming environment and converted to wire image formats like PNG or displayed directly in web visualization libraries like [MapLibre](https://maplibre.org).
 
@@ -71,7 +71,24 @@ raquet-io convert geotiff input.tif output.parquet \
 | `--overviews` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
 | `--min-zoom` | Minimum zoom level for overviews (overrides auto calculation) |
 | `--streaming` | Memory-safe two-pass conversion for large files |
+| `--band-layout` | Band storage: `sequential` (default) or `interleaved` |
+| `--compression` | Compression: `gzip` (default), `jpeg`, `webp`, or `none` |
+| `--compression-quality` | Quality for lossy compression (1-100, default: 85) |
 | `-v, --verbose` | Enable verbose output |
+
+**Lossy compression for satellite imagery:**
+```bash
+# WebP compression (best quality/size ratio for RGB imagery)
+raquet-io convert geotiff satellite.tif output.parquet \
+  --band-layout interleaved \
+  --compression webp \
+  --compression-quality 85
+
+# JPEG compression (wider compatibility)
+raquet-io convert geotiff satellite.tif output.parquet \
+  --band-layout interleaved \
+  --compression jpeg
+```
 
 **Large file conversion:**
 ```bash

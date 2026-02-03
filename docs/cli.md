@@ -56,6 +56,9 @@ raquet-io convert raster INPUT_FILE OUTPUT_FILE [OPTIONS]
 | `--block-size` | `256` | Block size in pixels |
 | `--target-size` | — | Target size for auto zoom calculation |
 | `--row-group-size` | `200` | Rows per Parquet row group (smaller = better remote pruning) |
+| `--band-layout` | `sequential` | Band storage: `sequential` or `interleaved` |
+| `--compression` | `gzip` | Compression: `gzip`, `jpeg`, `webp`, or `none` |
+| `--compression-quality` | `85` | Quality for lossy compression (1-100) |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -75,6 +78,12 @@ raquet-io convert raster satellite.tif output.parquet --block-size 512
 
 # Verbose output to monitor progress
 raquet-io convert raster large.tif output.parquet -v
+
+# Lossy compression for RGB satellite imagery (10-15x smaller files)
+raquet-io convert raster satellite.tif output.parquet \
+  --band-layout interleaved \
+  --compression webp \
+  --compression-quality 85
 ```
 
 ### Supported Input Formats
@@ -159,7 +168,7 @@ raquet-io inspect landcover.parquet -v
 
 ```
 RaQuet File: spain_solar_ghi.parquet
-Version: 0.3.0
+Version: 0.4.0
 Size: 15.2 MB
 
 Dimensions: 9216 x 7936 pixels
@@ -221,7 +230,7 @@ raquet-io validate raster.parquet --json
 ```
 Validating: spain_solar_ghi.parquet
 ✓ Schema valid
-✓ Metadata valid (v0.3.0)
+✓ Metadata valid (v0.4.0)
 ✓ Pyramid complete (zoom 3-9)
 ✓ Band statistics valid
 ✓ Data integrity OK

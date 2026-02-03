@@ -185,6 +185,29 @@ GeoParquet brought vector data into the lakehouse. RaQuet does the same for rast
 
 ---
 
+## Changelog
+
+### v0.4.0 (Experimental)
+- **Interleaved Band Layout**: New `band_layout: "interleaved"` option stores all bands in a single `pixels` column using Band Interleaved by Pixel (BIP) format. This can reduce HTTP requests for RGB visualization by ~40%.
+- **Lossy Compression**: Support for JPEG and WebP compression for photographic imagery. Achieves 10-15x smaller files compared to gzip for satellite imagery.
+- **New metadata fields**: `band_layout`, `compression_quality` for controlling lossy compression.
+
+### v0.3.0
+- **Time dimension support**: Added `time_cf` and `time_ts` columns for NetCDF/CF convention time series data.
+- **CF calendar support**: Full support for standard, proleptic_gregorian, 360_day, 365_day, and other CF calendars.
+- **Enhanced metadata**: Added `time` section with `cf:units`, `cf:calendar`, `resolution`, `interpretation`, `count`, and `range` fields.
+- **Processing metadata**: Optional `processing` section to document source CRS, resampling, and creation info.
+- **Custom metadata extension**: Defined convention for custom fields under `custom` object or with namespace prefix.
+- **File identification**: Added `raquet:version` hint in Parquet file-level metadata for fast identification.
+
+### v0.2.0
+- **Initial public release**: Core specification for storing raster tiles in Parquet with QUADBIN spatial indexing.
+- **Band columns**: Sequential band storage with gzip compression.
+- **Overview pyramids**: Support for multi-resolution tile pyramids.
+- **Rich metadata**: Band statistics, histograms, nodata values, color interpretation.
+
+---
+
 ## Acknowledgments
 
 Special thanks to [Even Rouault](https://github.com/rouault) for his invaluable feedback on the RaQuet specification. His deep expertise in geospatial formats and GDAL has helped shape RaQuet into a more robust and well-documented standard.
