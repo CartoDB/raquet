@@ -982,6 +982,7 @@
                     bandLayout = raquetMeta.band_layout || 'sequential';
                     compression = raquetMeta.compression || 'gzip';
                     console.log(`Format: band_layout=${bandLayout}, compression=${compression}`);
+                    console.log(`Tile size: ${blockWidth}x${blockHeight}px, Zoom range: ${minZoom}-${maxZoom}`);
                 } else {
                     console.warn('No RaQuet metadata found, using defaults');
                     const schema = metadata.schema || [];
@@ -1048,9 +1049,10 @@
                 pendingRequests.clear();
 
                 // Show format info in status
+                const tileSizeInfo = blockWidth !== 256 ? ` ${blockWidth}px` : '';
                 const formatInfo = bandLayout === 'interleaved'
-                    ? `Format: interleaved (${compression})`
-                    : `Format: sequential (${compression})`;
+                    ? `Format: interleaved (${compression}${tileSizeInfo})`
+                    : `Format: sequential (${compression}${tileSizeInfo})`;
 
                 // Calculate initial view from dataBounds
                 let initialView = { longitude: 0, latitude: 0, zoom: 10 };
@@ -1119,6 +1121,10 @@
                             getTileData,
                             minZoom,
                             maxZoom,
+                            // Use the file's block size as tileSize
+                            // deck.gl will request tiles at zoom levels that match the file's zoom range
+                            // For 512px tiles, deck.gl requests at z-1 compared to 256px, which matches
+                            // how RaQuet 512px files are generated (at lower zoom levels with more pixels)
                             tileSize: blockWidth,
                             extent: dataBounds,
                             // Optimization: Don't load tiles at multiple zoom levels
