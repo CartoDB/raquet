@@ -205,19 +205,30 @@ python -m pytest -m "not integration"
 
 ## Querying with DuckDB
 
-Raquet files can be queried directly with DuckDB:
+Raquet files can be queried directly with DuckDB using the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet):
 
 ```sql
--- Load Raquet file
-SELECT * FROM read_parquet('raster.parquet') WHERE block != 0 LIMIT 10;
+INSTALL raquet FROM community;
+LOAD raquet;
+
+-- Load Raquet file (automatically excludes metadata row)
+SELECT * FROM read_raquet('raster.parquet') LIMIT 10;
 
 -- Get metadata
-SELECT metadata FROM read_parquet('raster.parquet') WHERE block = 0;
+SELECT metadata FROM read_raquet_metadata('raster.parquet');
 
 -- Query specific tiles using QUADBIN
 SELECT block, band_1
-FROM read_parquet('raster.parquet')
+FROM read_raquet('raster.parquet')
 WHERE block = quadbin_from_tile(x, y, z);
+```
+
+RaQuet files also work as standard Parquet without the extension:
+
+```sql
+-- Without extension (manual metadata filtering)
+SELECT * FROM read_parquet('raster.parquet') WHERE block != 0 LIMIT 10;
+SELECT metadata FROM read_parquet('raster.parquet') WHERE block = 0;
 ```
 
 ## Online Viewer
