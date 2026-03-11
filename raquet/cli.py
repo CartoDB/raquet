@@ -1032,6 +1032,244 @@ def split_zoom_command(
         sys.exit(1)
 
 
+@cli.command("partition")
+@click.argument("input_file", type=click.Path(exists=True, path_type=Path))
+@click.argument("output_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--partition-zoom",
+    type=str,
+    default="auto",
+    help="Partition zoom level: 'auto' (default) or an integer zoom level",
+)
+@click.option(
+    "--target-size-mb",
+    type=int,
+    default=128,
+    help="Target file size in MB for auto partition zoom (default: 128)",
+)
+@click.option(
+    "--row-group-size",
+    type=int,
+    default=200,
+    help="Rows per Parquet row group (default: 200)",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def partition_command(
+    input_file: Path,
+    output_dir: Path,
+    partition_zoom: str,
+    target_size_mb: int,
+    row_group_size: int,
+    verbose: bool,
+):
+    """Spatially partition a Raquet file for optimized cloud storage access.
+
+    Splits a single Raquet file into multiple files based on spatial location,
+    using a coarser QUADBIN zoom level as partition key. Each output file contains
+    all tiles that fall within one ancestor cell at the partition zoom level.
+
+    This is designed for analytics workloads where you always query native
+    resolution. Use --partition-zoom auto (default) to let raquet pick the zoom
+    level that produces ~128 MB files, or set a custom --target-size-mb.
+
+    INPUT_FILE is the path to a Raquet (.parquet) file.
+    OUTPUT_DIR is the directory for output files.
+
+    \b
+    Examples:
+        raquet partition slope.parquet ./partitioned/
+        raquet partition slope.parquet ./partitioned/ --target-size-mb 256
+        raquet partition slope.parquet ./partitioned/ --partition-zoom 12
+    """
+    import quadbin
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    from pyarrow.parquet import SortingColumn
+    from collections import defaultdict
+
+    setup_logging(verbose)
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Read input file
+        click.echo(f"Reading {input_file}...")
+        table = pq.read_table(input_file)
+
+        # Separate metadata and data rows
+        metadata_mask = pc.equal(table.column("block"), 0)
+        metadata_table = table.filter(metadata_mask)
+        data_table = table.filter(pc.invert(metadata_mask))
+
+        if len(metadata_table) == 0:
+            click.echo("Error: No metadata block found", err=True)
+            sys.exit(1)
+
+        metadata_json = json.loads(metadata_table.column("metadata")[0].as_py())
+
+        # Find native zoom (max zoom in the data)
+        blocks = data_table.column("block").to_pylist()
+        tile_zooms = {}
+        for i, block_id in enumerate(blocks):
+            tile = quadbin.cell_to_tile(block_id)
+            z = tile[2]
+            if z not in tile_zooms:
+                tile_zooms[z] = []
+            tile_zooms[z].append(i)
+
+        native_zoom = max(tile_zooms.keys())
+        native_count = len(tile_zooms[native_zoom])
+        non_native = sum(len(v) for z, v in tile_zooms.items() if z != native_zoom)
+
+        click.echo(f"Found {len(blocks)} tiles across zoom levels {sorted(tile_zooms.keys())}")
+        click.echo(f"Native zoom: {native_zoom} ({native_count} tiles)")
+
+        # Cast binary columns to large_binary to avoid 2GB offset overflow
+        new_fields = []
+        new_columns = []
+        for i, field in enumerate(data_table.schema):
+            col = data_table.column(i)
+            if field.type == pa.binary():
+                new_fields.append(pa.field(field.name, pa.large_binary()))
+                new_columns.append(col.cast(pa.large_binary()))
+            else:
+                new_fields.append(field)
+                new_columns.append(col)
+        data_table = pa.table(new_columns, schema=pa.schema(new_fields))
+
+        if non_native > 0:
+            click.echo(f"Warning: {non_native} overview tiles (zoom < {native_zoom}) will be dropped.")
+            click.echo("  Partitioning is for analytics on native resolution data.")
+            click.echo("  Use --overviews none during conversion to avoid generating overviews.")
+            # Filter to native zoom only
+            native_indices = tile_zooms[native_zoom]
+            data_table = data_table.take(native_indices)
+            blocks = [blocks[i] for i in native_indices]
+
+        # Compute file size of native tiles
+        total_size_bytes = input_file.stat().st_size
+        # Estimate native-only size proportionally
+        native_size_mb = (total_size_bytes * native_count / len(tile_zooms.get(native_zoom, blocks))) / (1024 * 1024)
+
+        # Determine partition zoom
+        if partition_zoom == "auto":
+            avg_tile_size_mb = native_size_mb / native_count
+            tiles_per_file = target_size_mb / avg_tile_size_mb
+            levels_up = math.log(max(1, tiles_per_file)) / math.log(4)
+            computed_zoom = native_zoom - levels_up
+            pz = max(0, min(native_zoom - 1, round(computed_zoom)))
+
+            # Check if partitioning is worth it (at least 2 files)
+            test_partitions = native_count / (4 ** (native_zoom - pz))
+            if test_partitions < 2:
+                click.echo(f"File is small enough ({native_size_mb:.0f} MB) — no partitioning needed.")
+                click.echo("Copying as single file with overviews stripped.")
+                pz = native_zoom  # use native zoom = 1 partition = whole file
+
+            click.echo(f"Auto partition zoom: {pz} (targeting ~{target_size_mb} MB per file)")
+        else:
+            pz = int(partition_zoom)
+            click.echo(f"Partition zoom: {pz}")
+
+        # Group tiles by ancestor at partition zoom
+        partition_groups = defaultdict(list)
+        for i, block_id in enumerate(blocks):
+            tile = quadbin.cell_to_tile(block_id)
+            x, y, z = tile
+            # Compute ancestor at partition zoom
+            shift = z - pz
+            if shift > 0:
+                ancestor_x = x >> shift
+                ancestor_y = y >> shift
+            else:
+                ancestor_x, ancestor_y = x, y
+            ancestor_cell = quadbin.tile_to_cell((ancestor_x, ancestor_y, pz))
+            partition_groups[ancestor_cell].append(i)
+
+        click.echo(f"Partitions: {len(partition_groups)} files")
+
+        # Write each partition
+        files_written = []
+        for part_cell in sorted(partition_groups.keys()):
+            indices = partition_groups[part_cell]
+            part_table = data_table.take(indices)
+
+            # Sort by block ID within partition
+            sort_indices = pc.sort_indices(part_table.column("block"))
+            part_table = part_table.take(sort_indices)
+
+            # Update metadata for this partition
+            part_metadata = metadata_json.copy()
+            tiling = part_metadata.get("tiling", {})
+            tiling["min_zoom"] = native_zoom
+            tiling["max_zoom"] = native_zoom
+            tiling["num_blocks"] = len(indices)
+            part_metadata["tiling"] = tiling
+            # Also update legacy keys if present
+            if "minresolution" in part_metadata:
+                part_metadata["minresolution"] = native_zoom
+            if "maxresolution" in part_metadata:
+                part_metadata["maxresolution"] = native_zoom
+            if "num_blocks" in part_metadata:
+                part_metadata["num_blocks"] = len(indices)
+
+            # Create metadata row with matching schema
+            metadata_dict = {"block": [0], "metadata": [json.dumps(part_metadata)]}
+            for col in part_table.schema.names:
+                if col not in metadata_dict:
+                    metadata_dict[col] = [None]
+            metadata_row = pa.table(metadata_dict, schema=part_table.schema)
+
+            final_table = pa.concat_tables([metadata_row, part_table])
+
+            # Cast large_binary back to binary for output (raquet spec uses binary)
+            out_fields = []
+            out_columns = []
+            for i, field in enumerate(final_table.schema):
+                col = final_table.column(i)
+                if field.type == pa.large_binary():
+                    out_fields.append(pa.field(field.name, pa.binary()))
+                    out_columns.append(col.cast(pa.binary()))
+                else:
+                    out_fields.append(field)
+                    out_columns.append(col)
+            final_table = pa.table(out_columns, schema=pa.schema(out_fields))
+
+            # Name file by partition cell
+            part_tile = quadbin.cell_to_tile(part_cell)
+            output_path = output_dir / f"z{pz}_{part_tile[0]}_{part_tile[1]}.parquet"
+            pq.write_table(
+                final_table,
+                output_path,
+                compression="zstd",
+                row_group_size=row_group_size,
+                write_page_index=True,
+                write_statistics=True,
+                sorting_columns=[SortingColumn(0)],
+            )
+
+            size_mb = output_path.stat().st_size / (1024 * 1024)
+            click.echo(f"  {output_path.name}: {len(indices)} tiles, {size_mb:.1f} MB")
+            files_written.append(output_path)
+
+        # Summary
+        total_size = sum(f.stat().st_size for f in files_written) / (1024 * 1024)
+        orig_size = input_file.stat().st_size / (1024 * 1024)
+        click.echo(f"\nPartition complete:")
+        click.echo(f"  Original: {orig_size:.1f} MB ({len(blocks)} native tiles)")
+        click.echo(f"  Partitioned: {total_size:.1f} MB across {len(files_written)} files")
+        if files_written:
+            sizes = [f.stat().st_size / (1024 * 1024) for f in files_written]
+            click.echo(f"  File sizes: {min(sizes):.1f} - {max(sizes):.1f} MB (avg {total_size/len(files_written):.1f} MB)")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
 @cli.command("validate")
 @click.argument("file", type=click.Path(exists=True, path_type=Path))
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed validation output")

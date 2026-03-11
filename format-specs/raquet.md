@@ -116,6 +116,25 @@ The optimal Parquet row group size involves trade-offs that depend on the primar
 
 Producers should consider their primary access pattern when choosing row group size. Further research is needed to establish optimal values for different use cases. The reference implementation currently uses 200 rows as a default.
 
+### Partitioned Datasets
+
+For large datasets, a single RaQuet file may be split into multiple files organized by spatial location. This is called **spatial partitioning** and is OPTIONAL.
+
+When partitioning:
+
+1. **Each partition file MUST be a valid standalone RaQuet file**, containing its own metadata row (`block = 0`) and data rows sorted by QUADBIN cell ID.
+2. **All partition files MUST share identical metadata** except for the `tiling.num_blocks` field, which reflects the tile count in that partition.
+3. **Partitioning SHOULD use QUADBIN ancestor cells** as the partition key. Each native-resolution tile is assigned to a partition based on its ancestor cell at a coarser zoom level (the "partition zoom"). For example, at partition zoom 11, all zoom-17 tiles whose zoom-11 ancestor is cell X go into the same file.
+4. **Partition files SHOULD be named** to reflect their spatial extent, e.g., `z11_581_783.parquet` for a partition covering zoom-11 tile (581, 783).
+5. **Consumers MUST handle multiple metadata rows** when reading partitioned files into a single table. Since each partition file contributes a `block = 0` row, queries should use `LIMIT 1` or equivalent (e.g., `ANY_VALUE`) when fetching metadata.
+6. **Overview tiles SHOULD be omitted** from partitioned datasets intended for analytics workloads. Partitioning is most useful when all tiles are at native resolution (single zoom level).
+
+The recommended partition file size is **100–250 MB**, which balances cloud storage read efficiency with data warehouse parallelism. An automatic partition zoom can be computed as:
+
+```
+partition_zoom = native_zoom - round(log₄(target_file_size / avg_tile_size))
+```
+
 The tiling scheme is defined by the following parameters:
 - Each tile is identified by a QUADBIN cell ID (uint64)
 - The resolution level is encoded in the QUADBIN cell ID

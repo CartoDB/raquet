@@ -1776,16 +1776,39 @@ def convert_to_raquet_files(
                 logging.info("Sorting %d rows by block ID...", len(temp_table))
                 sort_keys = [("block", "ascending")]
 
+            # Cast binary columns to large_binary to avoid 2GB offset overflow
+            # during sort/take operations on large datasets
+            orig_schema = temp_table.schema
+            cast_needed = any(f.type == pyarrow.binary() for f in orig_schema)
+            if cast_needed:
+                logging.info("Casting binary columns to large_binary for large dataset handling...")
+                new_fields = []
+                new_columns = []
+                for i, field in enumerate(orig_schema):
+                    col = temp_table.column(i)
+                    if field.type == pyarrow.binary():
+                        new_fields.append(pyarrow.field(field.name, pyarrow.large_binary()))
+                        new_columns.append(col.cast(pyarrow.large_binary()))
+                    else:
+                        new_fields.append(field)
+                        new_columns.append(col)
+                temp_table = pyarrow.table(new_columns, schema=pyarrow.schema(new_fields))
+
             sorted_indices = pyarrow.compute.sort_indices(temp_table, sort_keys=sort_keys)
-            sorted_table = temp_table.take(sorted_indices)
+
+            # Take rows in chunks and convert to pylist for the row-based writer
+            chunk_size = row_group_size
+            all_rows = []
+            for start in range(0, len(sorted_indices), chunk_size):
+                chunk_indices = sorted_indices[start:start + chunk_size]
+                chunk_table = temp_table.take(chunk_indices)
+                all_rows.extend(chunk_table.to_pylist())
+                del chunk_table
 
             # Clean up temp file
+            del temp_table
             os.unlink(temp_path)
             temp_path = None
-
-            # Convert sorted table back to row iterator for writing
-            all_rows = sorted_table.to_pylist()
-            del sorted_table, temp_table  # Free memory
         else:
             # Non-streaming: sort in-memory rows
             if raster_geometry.cf_time is not None:
