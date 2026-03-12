@@ -324,13 +324,39 @@ See [CARTO Analytics Toolbox documentation](https://docs.carto.com/data-and-anal
 
 ---
 
+## UDF-Free Analytics with Tile Statistics
+
+RaQuet v0.5.0 files converted with `--tile-stats` include pre-computed per-tile statistics as plain Parquet columns. This means **any SQL engine** can perform raster analytics without UDFs, extensions, or decompression:
+
+```sql
+-- Works on ANY Parquet-compatible engine — no extensions needed
+-- Find average slope and steepest point across all tiles
+SELECT
+    AVG(band_1_mean) AS avg_slope,
+    MAX(band_1_max) AS steepest_slope,
+    SUM(band_1_count) AS total_pixels
+FROM 'slope.parquet'
+WHERE block != 0;
+
+-- Filter tiles by statistics (e.g., find flat areas for data centers)
+SELECT block, band_1_mean, band_1_max
+FROM 'slope.parquet'
+WHERE block != 0 AND band_1_max < 5.0;
+```
+
+Available columns per band: `{band}_count` (int64), `{band}_min`, `{band}_max`, `{band}_sum`, `{band}_mean`, `{band}_stddev` (all float64).
+
+---
+
 ## Performance Tips
 
-1. **Use spatial filtering** — Always include `ST_RasterIntersects` or equivalent to enable row group pruning
+1. **Use tile statistics for aggregates** — When you only need summary stats (mean, min, max), query the `{band}_mean` etc. columns directly instead of decompressing tile data
 
-2. **Query remote files directly** — Parquet's columnar format enables efficient range requests; no need to download first
+2. **Use spatial filtering** — Always include `ST_RasterIntersects` or equivalent to enable row group pruning
 
-3. **Split by zoom for large files** — Use `raquet-io split-zoom` to create per-zoom files for optimal remote queries
+3. **Query remote files directly** — Parquet's columnar format enables efficient range requests; no need to download first
 
-4. **Small row groups for remote access** — Use `--row-group-size 100-200` when converting files that will be queried remotely
+4. **Partition large files** — Use `raquet-io partition` to spatially split files for optimal cloud storage parallelism
+
+5. **Small row groups for remote access** — Use `--row-group-size 100-200` when converting files that will be queried remotely
 

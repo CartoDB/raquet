@@ -28,6 +28,7 @@ uv add raquet-io
 | `inspect` | Display metadata and statistics |
 | `validate` | Validate file structure and data integrity |
 | `export geotiff` | Export RaQuet back to GeoTIFF |
+| `partition` | Spatially partition a file for cloud storage |
 | `split-zoom` | Split by zoom level for optimized remote access |
 
 ---
@@ -56,6 +57,11 @@ raquet-io convert raster INPUT_FILE OUTPUT_FILE [OPTIONS]
 | `--block-size` | `256` | Block size in pixels: `256`, `512`, or `1024` (see [Block Size](#block-size)) |
 | `--target-size` | — | Target size for auto zoom calculation |
 | `--row-group-size` | `200` | Rows per Parquet row group (smaller = better remote pruning) |
+| `--overviews` | `auto` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
+| `--min-zoom` | — | Minimum zoom level for overviews (overrides auto calculation) |
+| `--streaming` | — | Two-pass streaming mode for memory-safe conversion of large files |
+| `--workers` | `1` | Parallel worker processes (requires `--overviews none`) |
+| `--tile-stats` | — | Include per-tile statistics columns (count, min, max, sum, mean, stddev) |
 | `--band-layout` | `sequential` | Band storage: `sequential` or `interleaved` |
 | `--compression` | `gzip` | Compression: `gzip`, `jpeg`, `webp`, or `none` |
 | `--compression-quality` | `85` | Quality for lossy compression (1-100) |
@@ -76,8 +82,17 @@ raquet-io convert raster dem.tif dem.parquet --resampling bilinear
 # Larger blocks for dense data
 raquet-io convert raster satellite.tif output.parquet --block-size 512
 
-# Verbose output to monitor progress
-raquet-io convert raster large.tif output.parquet -v
+# Native resolution only (no overview pyramid), faster conversion
+raquet-io convert raster large.tif output.parquet --overviews none -v
+
+# Streaming mode for very large files (lower memory usage)
+raquet-io convert raster huge.tif output.parquet --streaming -v
+
+# Parallel conversion (4 workers, requires --overviews none)
+raquet-io convert raster huge.tif output.parquet --streaming --workers 4 --overviews none -v
+
+# Include per-tile statistics columns for UDF-free analytics
+raquet-io convert raster slope.tif slope.parquet --tile-stats --overviews none -v
 
 # Lossy compression for RGB satellite imagery (10-15x smaller files)
 raquet-io convert raster satellite.tif output.parquet \
@@ -85,6 +100,21 @@ raquet-io convert raster satellite.tif output.parquet \
   --compression webp \
   --compression-quality 85
 ```
+
+### Tile Statistics
+
+The `--tile-stats` flag adds pre-computed per-tile statistics as plain Parquet columns alongside each band. For each band, six columns are added: `{band}_count`, `{band}_min`, `{band}_max`, `{band}_sum`, `{band}_mean`, `{band}_stddev`.
+
+This enables **UDF-free analytics** on any SQL engine — no decompression needed:
+
+```sql
+-- Works on DuckDB, Snowflake, BigQuery, Databricks — no extensions required
+SELECT AVG(band_1_mean) AS avg_slope, MAX(band_1_max) AS steepest
+FROM 'slope.parquet'
+WHERE block != 0;
+```
+
+The overhead is negligible (typically <1% file size increase). See the [specification](https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md) for details.
 
 ### Block Size
 
@@ -197,7 +227,7 @@ raquet-io inspect landcover.parquet -v
 
 ```
 RaQuet File: spain_solar_ghi.parquet
-Version: 0.4.0
+Version: 0.5.0
 Size: 15.2 MB
 
 Dimensions: 9216 x 7936 pixels
@@ -259,7 +289,7 @@ raquet-io validate raster.parquet --json
 ```
 Validating: spain_solar_ghi.parquet
 ✓ Schema valid
-✓ Metadata valid (v0.4.0)
+✓ Metadata valid (v0.5.0)
 ✓ Pyramid complete (zoom 3-9)
 ✓ Band statistics valid
 ✓ Data integrity OK
@@ -296,6 +326,47 @@ raquet-io export geotiff INPUT_FILE OUTPUT_FILE [OPTIONS]
 raquet-io export geotiff landcover.parquet landcover.tif
 raquet-io export geotiff raster.parquet output.tif -v
 ```
+
+---
+
+## partition
+
+Spatially partition a RaQuet file into multiple files for optimized cloud storage access.
+
+```bash
+raquet-io partition INPUT_FILE OUTPUT_DIR [OPTIONS]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `INPUT_FILE` | Path to source RaQuet file |
+| `OUTPUT_DIR` | Directory for output partition files |
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--partition-zoom` | `auto` | QUADBIN zoom level for partitioning, or `auto` |
+| `--target-size-mb` | `128` | Target partition file size in MB (used with `auto`) |
+| `--row-group-size` | `200` | Rows per Parquet row group |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+# Auto partition (targets ~128 MB files)
+raquet-io partition slope.parquet ./partitioned/
+
+# Custom target size
+raquet-io partition slope.parquet ./partitioned/ --target-size-mb 256
+
+# Explicit partition zoom
+raquet-io partition slope.parquet ./partitioned/ --partition-zoom 12
+```
+
+Partitioning is recommended for large datasets (>1 GB) that will be queried from cloud storage. Each partition file is a valid standalone RaQuet file with its own metadata. Tile statistics columns are preserved automatically.
 
 ---
 

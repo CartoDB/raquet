@@ -112,12 +112,12 @@ Several options:
 
 ## What's the metadata format?
 
-RaQuet v0.4.0 stores metadata as JSON in the `block=0` row:
+RaQuet v0.5.0 stores metadata as JSON in the `block=0` row:
 
 ```json
 {
   "file_format": "raquet",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "width": 32768,
   "height": 14848,
   "crs": "EPSG:3857",
@@ -186,7 +186,7 @@ RaQuet is ideal when you need to query rasters outside PostgreSQL, join with dat
 
 Yes. RaQuet is used in production at CARTO and is supported by the [Analytics Toolbox](https://carto.com/analytics-toolbox) across BigQuery, Snowflake, Databricks, and PostgreSQL.
 
-The format specification is at v0.4.0. Version 0.3.0 is stable for production use; v0.4.0 adds experimental interleaved band layout and lossy compression support.
+The format specification is at v0.5.0. The format is stable for production use. v0.4.0 added interleaved band layout and lossy compression; v0.5.0 adds optional per-tile statistics columns for UDF-free analytics on data warehouses.
 
 ---
 

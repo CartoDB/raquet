@@ -187,7 +187,13 @@ GeoParquet brought vector data into the lakehouse. RaQuet does the same for rast
 
 ## Changelog
 
-### v0.4.0 (Experimental)
+### v0.5.0
+- **Per-Tile Statistics Columns**: Optional pre-computed statistics (`count`, `min`, `max`, `sum`, `mean`, `stddev`) as plain Parquet columns alongside each band. Enables UDF-free analytics on any SQL engine — no decompression needed.
+- **New CLI options**: `--tile-stats` flag for conversion, `--overviews none`, `--streaming`, `--workers` for parallel conversion, and `partition` command for spatial partitioning.
+- **Metadata signal**: `tile_statistics` and `tile_statistics_columns` fields in metadata JSON when tile stats are present.
+- **Negligible overhead**: Typically <1% file size increase for the statistics columns.
+
+### v0.4.0
 - **Interleaved Band Layout**: New `band_layout: "interleaved"` option stores all bands in a single `pixels` column using Band Interleaved by Pixel (BIP) format. This can reduce HTTP requests for RGB visualization by ~40%.
 - **Lossy Compression**: Support for JPEG and WebP compression for photographic imagery. Achieves 10-15x smaller files compared to gzip for satellite imagery.
 - **New metadata fields**: `band_layout`, `compression_quality` for controlling lossy compression.

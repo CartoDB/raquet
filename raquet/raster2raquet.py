@@ -880,6 +880,7 @@ def read_raster(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    tile_stats: bool = False,
 ):
     """Worker process that accesses a raster file through pipes.
 
@@ -896,6 +897,7 @@ def read_raster(
         band_layout: Band data organization (sequential or interleaved)
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
+        tile_stats: Always compute per-tile statistics for all tiles
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -1080,7 +1082,8 @@ def read_raster(
             frame = frames.pop()
             tile_ds: osgeo.gdal.Dataset | None = None
             create_args = gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom, numpy_mod
-            do_stats = frame.tile.z == stats_zoom
+            # When tile_stats is enabled, compute stats for every tile
+            do_stats = tile_stats or frame.tile.z == stats_zoom
 
             if frame.tile.z > raster_geometry.zoom:
                 raise NotImplementedError("Zoom higher than expected by find_minzoom()")
@@ -1199,6 +1202,7 @@ def _read_raster_worker(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    tile_stats: bool = False,
 ):
     """Worker process that processes a subset of tiles at native zoom.
 
@@ -1268,7 +1272,8 @@ def _read_raster_worker(
 
         for tile in tiles:
             create_args = gtiff_driver, web_mercator, src_ds, tile, block_zoom, numpy_mod
-            do_stats = tile.z == stats_zoom
+            # When tile_stats is enabled, compute stats for every tile
+            do_stats = tile_stats or tile.z == stats_zoom
 
             tile_ds = create_tile_ds(*create_args)
             osgeo.gdal.Warp(
@@ -1420,6 +1425,7 @@ def open_raster_parallel(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    tile_stats: bool = False,
 ) -> tuple[RasterGeometry, multiprocessing.Queue, list[multiprocessing.Process]]:
     """Open raster with multiple parallel worker processes.
 
@@ -1471,6 +1477,7 @@ def open_raster_parallel(
                 band_layout,
                 compression,
                 compression_quality,
+                tile_stats,
             ),
         )
         p.start()
@@ -1491,6 +1498,7 @@ def open_raster_in_process(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    tile_stats: bool = False,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a raster reader in another process.
 
@@ -1504,6 +1512,7 @@ def open_raster_in_process(
         band_layout: Band data organization (sequential or interleaved)
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
+        tile_stats: Always compute per-tile statistics for all tiles
 
     Returns:
         Tuple of (raster_geometry, receive_pipe) for communication
@@ -1523,6 +1532,7 @@ def open_raster_in_process(
         band_layout,
         compression,
         compression_quality,
+        tile_stats,
     )
     process = multiprocessing.Process(target=read_raster, args=args)
     process.start()
@@ -1577,9 +1587,36 @@ def get_raquet_dimensions(
     }
 
 
+TILE_STATS_NAMES = ["count", "min", "max", "sum", "mean", "stddev"]
+
+
+def _tile_stats_row(band_name: str, stats: "RasterStats | None") -> dict:
+    """Build a dict of per-tile statistics columns for a single band."""
+    if stats is None:
+        return {f"{band_name}_{s}": None for s in TILE_STATS_NAMES}
+    return {
+        f"{band_name}_count": stats.count,
+        f"{band_name}_min": float(stats.min),
+        f"{band_name}_max": float(stats.max),
+        f"{band_name}_sum": float(stats.sum),
+        f"{band_name}_mean": float(stats.mean),
+        f"{band_name}_stddev": float(stats.stddev),
+    }
+
+
+def _null_tile_stats_row(stats_band_names: list[str]) -> dict:
+    """Build NULL stats columns for the metadata row."""
+    result = {}
+    for bname in stats_band_names:
+        for s in TILE_STATS_NAMES:
+            result[f"{bname}_{s}"] = None
+    return result
+
+
 def create_schema(
     rg: RasterGeometry,
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    tile_stats: bool = False,
 ) -> tuple[pyarrow.lib.Schema, list[str]]:
     """Create table schema and band column names for RasterGeometry instance
 
@@ -1610,10 +1647,22 @@ def create_schema(
     # Add band columns
     columns.extend((bname, pyarrow.binary()) for bname in band_names)
 
+    # Add per-tile statistics columns when requested
+    # For interleaved layout, stats use original band names (band_1, band_2, ...)
+    if tile_stats:
+        if band_layout == BandLayout.INTERLEAVED:
+            stats_band_names = [f"band_{n}" for n in range(1, 1 + len(rg.bandtypes))]
+        else:
+            stats_band_names = band_names
+        for bname in stats_band_names:
+            columns.append((f"{bname}_count", pyarrow.int64()))
+            for stat in TILE_STATS_NAMES[1:]:  # min, max, sum, mean, stddev
+                columns.append((f"{bname}_{stat}", pyarrow.float64()))
+
     # Create schema with Parquet-level metadata for file identification
     # This allows readers (e.g., GDAL drivers) to identify RaQuet files
     # by reading only the Parquet footer
-    schema = pyarrow.schema(columns, metadata={"raquet:version": "0.4.0"})
+    schema = pyarrow.schema(columns, metadata={"raquet:version": "0.5.0"})
 
     return schema, band_names
 
@@ -1717,6 +1766,7 @@ def create_metadata(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    tile_stats: bool = False,
 ) -> dict:
     """Create a dictionary of RaQuet v0.3.0 metadata
 
@@ -1778,7 +1828,7 @@ def create_metadata(
 
     metadata_json = {
         "file_format": "raquet",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "width": dimensions["width"],
         "height": dimensions["height"],
         "crs": "EPSG:3857",
@@ -1796,6 +1846,11 @@ def create_metadata(
     # Add compression_quality for lossy codecs
     if compression in (CompressionCodec.JPEG, CompressionCodec.WEBP):
         metadata_json["compression_quality"] = compression_quality
+
+    # Add tile statistics metadata
+    if tile_stats:
+        metadata_json["tile_statistics"] = True
+        metadata_json["tile_statistics_columns"] = list(TILE_STATS_NAMES)
 
     # Add time metadata if CF time dimension is present
     if rg.cf_time is not None:
@@ -1851,6 +1906,7 @@ def main(
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
     num_workers: int = 1,
+    tile_stats: bool = False,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1867,6 +1923,7 @@ def main(
         band_layout: Band data organization (sequential or interleaved)
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
+        tile_stats: Include per-tile statistics columns in output
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -1894,6 +1951,7 @@ def main(
         compression,
         compression_quality,
         num_workers,
+        tile_stats,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1912,6 +1970,7 @@ def convert_to_raquet_files(
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
     num_workers: int = 1,
+    tile_stats: bool = False,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1958,6 +2017,7 @@ def convert_to_raquet_files(
             band_layout,
             compression,
             compression_quality,
+            tile_stats,
         )
         pipe = None
     else:
@@ -1975,12 +2035,13 @@ def convert_to_raquet_files(
             band_layout,
             compression,
             compression_quality,
+            tile_stats,
         )
         queue = None
         worker_processes = None
 
     try:
-        schema, band_names = create_schema(raster_geometry, band_layout)
+        schema, band_names = create_schema(raster_geometry, band_layout, tile_stats)
 
         # Initialize stats tracking (small, always in memory)
         # Note: Always track stats for each original band, even in interleaved mode
@@ -2025,7 +2086,7 @@ def convert_to_raquet_files(
                     break
 
             # Expand message to block to retrieve
-            tile, block_data, tile_stats = received
+            tile, block_data, tile_stats_list = received
             minresolution = min(minresolution, tile.z)
 
             logging.info(
@@ -2051,20 +2112,34 @@ def convert_to_raquet_files(
                     if cf_value is None:
                         continue
                     ts_value = cf_to_timestamp(cf_value, cf)
-                    rows_to_add.append({
+                    row = {
                         "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
                         "metadata": None,
                         "time_cf": cf_value,
                         "time_ts": ts_value,
                         "band_1": data,
-                    })
+                    }
+                    if tile_stats:
+                        stats = tile_stats_list[band_idx] if band_idx < len(tile_stats_list) else None
+                        row.update(_tile_stats_row("band_1", stats))
+                    rows_to_add.append(row)
             else:
                 # Standard mode: all bands in single row
-                rows_to_add.append({
+                row = {
                     "block": quadbin.tile_to_cell((tile.x, tile.y, tile.z)),
                     "metadata": None,
                     **{bname: block_data[i] for i, bname in enumerate(band_names)},
-                })
+                }
+                if tile_stats:
+                    # For interleaved, stats use original band names
+                    if band_layout == BandLayout.INTERLEAVED:
+                        stats_bnames = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
+                    else:
+                        stats_bnames = band_names
+                    for i, sbname in enumerate(stats_bnames):
+                        stats = tile_stats_list[i] if i < len(tile_stats_list) else None
+                        row.update(_tile_stats_row(sbname, stats))
+                rows_to_add.append(row)
 
             # Add rows to appropriate destination
             if streaming:
@@ -2085,9 +2160,9 @@ def convert_to_raquet_files(
                 xmax, ymax = max(xmax, tile.x), max(ymax, tile.y)
                 block_count += 1
 
-            if any(tile_stats):
+            if any(tile_stats_list):
                 # Accumulate band statistics and real bounds based on included tiles
-                band_stats = [combine_stats(*bs) for bs in zip(band_stats, tile_stats)]
+                band_stats = [combine_stats(*bs) for bs in zip(band_stats, tile_stats_list)]
 
         for i, stats in enumerate(band_stats):
             logging.info("Band %s %s", i + 1, stats)
@@ -2168,6 +2243,7 @@ def convert_to_raquet_files(
             band_layout,
             compression,
             compression_quality,
+            tile_stats,
         )
         metadata_row = {
             "block": 0,
@@ -2178,6 +2254,13 @@ def convert_to_raquet_files(
         if raster_geometry.cf_time is not None:
             metadata_row["time_cf"] = None
             metadata_row["time_ts"] = None
+        # Add null tile statistics columns to metadata row
+        if tile_stats:
+            if band_layout == BandLayout.INTERLEAVED:
+                stats_bnames = [f"band_{n}" for n in range(1, 1 + len(raster_geometry.bandtypes))]
+            else:
+                stats_bnames = band_names
+            metadata_row.update(_null_tile_stats_row(stats_bnames))
 
         # Now write sorted rows, splitting into multiple files if target_sizeof is set
         # Use page index for finer-grained filtering and sorting metadata

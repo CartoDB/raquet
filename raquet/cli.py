@@ -304,6 +304,7 @@ def _convert_raster_impl(
     min_zoom: int | None,
     streaming: bool,
     num_workers: int = 1,
+    tile_stats: bool = False,
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
@@ -326,6 +327,8 @@ def _convert_raster_impl(
             click.echo("  Streaming mode: enabled (memory-safe two-pass conversion)")
         if num_workers > 1:
             click.echo(f"  Parallel mode: {num_workers} workers")
+        if tile_stats:
+            click.echo("  Tile statistics: enabled (per-tile stats columns)")
 
         raster2raquet.main(
             str(input_file),
@@ -339,6 +342,7 @@ def _convert_raster_impl(
             min_zoom,
             streaming,
             num_workers=num_workers,
+            tile_stats=tile_stats,
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -407,6 +411,11 @@ def _convert_raster_impl(
     default=1,
     help="Number of parallel worker processes (default: 1, requires --overviews none)",
 )
+@click.option(
+    "--tile-stats",
+    is_flag=True,
+    help="Include per-tile statistics columns (count, min, max, sum, mean, stddev) for each band",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_raster(
     input_file: Path,
@@ -420,6 +429,7 @@ def convert_raster(
     min_zoom: int | None,
     streaming: bool,
     workers: int,
+    tile_stats: bool,
     verbose: bool,
 ):
     """Convert a raster file to Raquet format.
@@ -449,8 +459,9 @@ def convert_raster(
         raquet convert raster large.tif output.parquet --min-zoom 5 -v
         raquet convert raster huge.tif output.parquet --streaming -v
         raquet convert raster huge.tif output.parquet --streaming --workers 4 --overviews none -v
+        raquet convert raster slope.tif slope.parquet --tile-stats --overviews none -v
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, workers)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, workers, tile_stats)
 
 
 @convert_group.command("geotiff")

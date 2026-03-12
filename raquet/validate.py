@@ -82,8 +82,14 @@ def validate_schema(table: pyarrow.Table) -> tuple[list[str], list[str]]:
     elif str(table.schema.field("metadata").type) != "string":
         errors.append(f"Column 'metadata' should be string, got {table.schema.field('metadata').type}")
 
+    # Identify tile statistics column suffixes to exclude from band detection
+    _tile_stat_suffixes = ("_count", "_min", "_max", "_sum", "_mean", "_stddev")
+
     # Check for band columns or interleaved pixels column
-    band_columns = [c for c in column_names if c.startswith("band_")]
+    band_columns = [
+        c for c in column_names
+        if c.startswith("band_") and not any(c.endswith(s) for s in _tile_stat_suffixes)
+    ]
     has_pixels = "pixels" in column_names
     if not band_columns and not has_pixels:
         errors.append("No band columns found (expected columns starting with 'band_' or 'pixels')")
@@ -130,11 +136,11 @@ def validate_metadata(table: pyarrow.Table) -> tuple[list[str], list[str], dict 
     version = metadata.get("version")
     if version is None:
         errors.append("Missing 'version' in metadata")
-    elif version not in ("0.2.0", "0.3.0", "0.4.0"):
-        warnings.append(f"Unknown version '{version}', expected 0.2.0, 0.3.0, or 0.4.0")
+    elif version not in ("0.2.0", "0.3.0", "0.4.0", "0.5.0"):
+        warnings.append(f"Unknown version '{version}', expected 0.2.0, 0.3.0, 0.4.0, or 0.5.0")
 
     # Validate required fields for v0.3.0+
-    if version in ("0.3.0", "0.4.0"):
+    if version in ("0.3.0", "0.4.0", "0.5.0"):
         required_fields = ["width", "height", "crs", "bounds", "bounds_crs", "tiling", "compression", "bands"]
         for field in required_fields:
             if field not in metadata:
@@ -295,8 +301,12 @@ def validate_band_data(table: pyarrow.Table, metadata: dict) -> tuple[list[str],
     bands = metadata.get("bands", [])
     compression = metadata.get("compression")
 
-    # Get band columns
-    band_columns = [c for c in table.column_names if c.startswith("band_")]
+    # Get band columns (exclude tile statistics columns)
+    _tile_stat_suffixes = ("_count", "_min", "_max", "_sum", "_mean", "_stddev")
+    band_columns = [
+        c for c in table.column_names
+        if c.startswith("band_") and not any(c.endswith(s) for s in _tile_stat_suffixes)
+    ]
 
     # Check that band columns match metadata
     meta_band_names = [b.get("name") for b in bands]

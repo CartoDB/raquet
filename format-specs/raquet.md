@@ -1,4 +1,4 @@
-# RaQuet Specification v0.4.0
+# RaQuet Specification v0.5.0
 
 ## Overview
 
@@ -86,6 +86,45 @@ When `band_layout` is `"interleaved"`:
 **Primary Key with Time Dimension:**
 When `time_cf` is present, the combination of (`block`, `time_cf`) forms the unique key for each row. Multiple rows may have the same `block` value but different timestamps. Without time columns, `block` alone is unique (excluding the metadata row at `block = 0`).
 
+#### Tile Statistics Columns (Per-Tile Statistics)
+
+Optional pre-computed per-tile statistics for each band. These columns enable analytical queries without decompressing tile pixel data, which is especially valuable for cloud data warehouses (Snowflake, BigQuery, Databricks) where UDF-based decompression is expensive.
+
+**Column naming convention**: `{band_name}_{stat}` where `{band_name}` matches the band column name and `{stat}` is one of the supported statistics.
+
+**Supported statistics**:
+
+| Stat | Type | Description |
+|------|------|-------------|
+| `count` | int64 | Number of valid (non-nodata) pixels in the tile |
+| `min` | float64 | Minimum pixel value (excluding nodata) |
+| `max` | float64 | Maximum pixel value (excluding nodata) |
+| `sum` | float64 | Sum of all valid pixel values |
+| `mean` | float64 | Mean of valid pixel values |
+| `stddev` | float64 | Population standard deviation of valid pixel values |
+
+**Example columns** for a file with `band_1`:
+- `band_1_count` (int64)
+- `band_1_min` (float64)
+- `band_1_max` (float64)
+- `band_1_sum` (float64)
+- `band_1_mean` (float64)
+- `band_1_stddev` (float64)
+
+**Rules**:
+- The metadata row (`block = 0`) MUST have NULL values for all tile statistics columns.
+- Statistics are computed from raw (pre-compression) pixel data. For lossy compression (JPEG/WebP), statistics reflect source values, not post-decode values.
+- Empty tiles (all nodata) are excluded during conversion and have no statistics rows.
+- For time-series data with `time_cf`, statistics are per-tile-per-timestep (one set of stats per row).
+- Overview tiles have their own statistics computed from their (coarser resolution) pixel data.
+- For interleaved band layout, statistics columns use the original band names from metadata (e.g., `band_1_mean`, `band_2_mean`), not the `pixels` column name.
+
+**Metadata signal**: When tile statistics columns are present, the metadata JSON includes:
+- `"tile_statistics": true` — indicates that per-tile statistics columns are present.
+- `"tile_statistics_columns": ["count", "min", "max", "sum", "mean", "stddev"]` — lists which statistics are included.
+
+**Compatibility**: Tile statistics columns are plain Parquet columns. Any Parquet reader (pandas, DuckDB, Snowflake, BigQuery, Spark, Polars) can query them directly without UDFs or custom extensions. Files without tile statistics columns remain valid RaQuet.
+
 ## Tiling Scheme
 
 RaQuet uses the **QUADBIN** tiling scheme for spatial indexing. QUADBIN is a hierarchical geospatial index that encodes Web Mercator tile coordinates `(x, y, z)` into a single 64-bit integer. This encoding enables efficient spatial queries and Parquet row group pruning.
@@ -158,7 +197,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 9216,
     "height": 7936,
     "crs": "EPSG:3857",
@@ -213,7 +252,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 - **Format Identification**
   - `file_format`: String identifying this as a RaQuet file. MUST be `"raquet"`.
-  - `version`: String indicating the RaQuet specification version. Current version is "0.4.0".
+  - `version`: String indicating the RaQuet specification version. Current version is "0.5.0".
 
 - **Raster Dimensions**
   - `width`, `height`: Integers specifying full resolution raster dimensions in pixels.
@@ -338,7 +377,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 9216,
     "height": 7936,
     "crs": "EPSG:3857",
@@ -380,7 +419,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 1024,
     "height": 1024,
     "crs": "EPSG:3857",
@@ -435,7 +474,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 10980,
     "height": 10980,
     "crs": "EPSG:3857",
@@ -485,7 +524,7 @@ This example shows a Sentinel-2 TCI (True Color Image) stored with interleaved b
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 32768,
     "height": 14848,
     "crs": "EPSG:3857",
@@ -521,7 +560,7 @@ This example shows a Sentinel-2 TCI (True Color Image) stored with interleaved b
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 1440,
     "height": 721,
     "crs": "EPSG:3857",
@@ -571,7 +610,7 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "width": 400752,
     "height": 131072,
     "crs": "EPSG:3857",
@@ -686,7 +725,7 @@ Producers MAY extend the metadata with custom fields. To avoid conflicts with fu
    ```json
    {
        "file_format": "raquet",
-       "version": "0.4.0",
+       "version": "0.5.0",
        "custom": {
            "organization": "ACME Corp",
            "project_id": "climate-2024",
