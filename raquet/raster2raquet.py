@@ -1188,6 +1188,299 @@ def read_raster(
         pipe.close()
 
 
+def _read_raster_worker(
+    input_filename: str,
+    tiles: list[mercantile.Tile],
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
+    queue: multiprocessing.Queue,
+    worker_id: int,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
+):
+    """Worker process that processes a subset of tiles at native zoom.
+
+    Each worker opens the same GeoTIFF independently and processes its
+    assigned tiles, sending results through a shared queue.
+
+    Only used when overview_mode == NONE (no tile dependencies).
+    """
+    import osgeo.gdal
+    import osgeo.osr
+
+    osgeo.gdal.UseExceptions()
+    os.environ["PROJ_DEBUG"] = "0"
+
+    web_mercator = osgeo.osr.SpatialReference()
+    web_mercator.ImportFromEPSG(3857)
+
+    gdaltype_bandtypes: dict[int, BandType] = {
+        osgeo.gdal.GDT_Byte: BandType("B", 1, int, "uint8"),
+        osgeo.gdal.GDT_CFloat32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_CFloat64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_CInt16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_CInt32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Float32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_Float64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_Int16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_Int32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Int64: BandType("q", 8, int, "int64"),
+        osgeo.gdal.GDT_Int8: BandType("b", 1, int, "int8"),
+        osgeo.gdal.GDT_UInt16: BandType("H", 2, int, "uint16"),
+        osgeo.gdal.GDT_UInt32: BandType("I", 4, int, "uint32"),
+        osgeo.gdal.GDT_UInt64: BandType("Q", 8, int, "uint64"),
+    }
+
+    resampling_algorithms: dict[str, int] = {
+        ResamplingAlgorithm.Average: osgeo.gdal.GRA_Average,
+        ResamplingAlgorithm.Bilinear: osgeo.gdal.GRA_Bilinear,
+        ResamplingAlgorithm.Cubic: osgeo.gdal.GRA_Cubic,
+        ResamplingAlgorithm.CubicSpline: osgeo.gdal.GRA_CubicSpline,
+        ResamplingAlgorithm.Lanczos: osgeo.gdal.GRA_Lanczos,
+        ResamplingAlgorithm.Max: osgeo.gdal.GRA_Max,
+        ResamplingAlgorithm.Med: osgeo.gdal.GRA_Med,
+        ResamplingAlgorithm.Min: osgeo.gdal.GRA_Min,
+        ResamplingAlgorithm.Mode: osgeo.gdal.GRA_Mode,
+        ResamplingAlgorithm.NearestNeighbour: osgeo.gdal.GRA_NearestNeighbour,
+        ResamplingAlgorithm.Q1: osgeo.gdal.GRA_Q1,
+        ResamplingAlgorithm.Q3: osgeo.gdal.GRA_Q3,
+        ResamplingAlgorithm.RMS: osgeo.gdal.GRA_RMS,
+        ResamplingAlgorithm.Sum: osgeo.gdal.GRA_Sum,
+    }
+
+    numpy_mod = numpy if HAS_NUMPY else None
+
+    try:
+        src_ds = osgeo.gdal.Open(input_filename)
+        nodata_value = src_ds.GetRasterBand(1).GetNoDataValue()
+
+        gtiff_driver = osgeo.gdal.GetDriverByName("GTiff")
+        opts_source = osgeo.gdal.WarpOptions(
+            resampleAlg=resampling_algorithms[resampling_algorithm],
+            srcNodata=nodata_value,
+            dstNodata=nodata_value,
+        )
+
+        # Stats zoom for this worker (native zoom, no overviews)
+        stats_zoom = max(tiles[0].z + STATS_ZOOM_OFFSET, tiles[0].z)
+
+        for tile in tiles:
+            create_args = gtiff_driver, web_mercator, src_ds, tile, block_zoom, numpy_mod
+            do_stats = tile.z == stats_zoom
+
+            tile_ds = create_tile_ds(*create_args)
+            osgeo.gdal.Warp(
+                destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts_source
+            )
+            d, s = read_raster_data_stats(
+                tile_ds, gdaltype_bandtypes, do_stats,
+                band_layout, compression, compression_quality
+            )
+            queue.put((tile, d, s))
+            tile_ds = None
+
+        src_ds = None
+    except Exception as e:
+        logging.error("Worker %d failed: %s", worker_id, e)
+    finally:
+        # Signal this worker is done
+        queue.put(None)
+
+
+def _get_raster_geometry(
+    input_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
+) -> RasterGeometry:
+    """Open raster and compute geometry metadata without processing tiles.
+
+    This runs in a subprocess to safely import GDAL.
+    """
+    import osgeo.gdal
+    import osgeo.osr
+
+    osgeo.gdal.UseExceptions()
+    os.environ["PROJ_DEBUG"] = "0"
+
+    wgs84 = osgeo.osr.SpatialReference()
+    wgs84.ImportFromEPSG(4326)
+    wgs84.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+
+    web_mercator = osgeo.osr.SpatialReference()
+    web_mercator.ImportFromEPSG(3857)
+
+    gdaltype_bandtypes: dict[int, BandType] = {
+        osgeo.gdal.GDT_Byte: BandType("B", 1, int, "uint8"),
+        osgeo.gdal.GDT_CFloat32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_CFloat64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_CInt16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_CInt32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Float32: BandType("f", 4, float, "float32"),
+        osgeo.gdal.GDT_Float64: BandType("d", 8, float, "float64"),
+        osgeo.gdal.GDT_Int16: BandType("h", 2, int, "int16"),
+        osgeo.gdal.GDT_Int32: BandType("i", 4, int, "int32"),
+        osgeo.gdal.GDT_Int64: BandType("q", 8, int, "int64"),
+        osgeo.gdal.GDT_Int8: BandType("b", 1, int, "int8"),
+        osgeo.gdal.GDT_UInt16: BandType("H", 2, int, "uint16"),
+        osgeo.gdal.GDT_UInt32: BandType("I", 4, int, "uint32"),
+        osgeo.gdal.GDT_UInt64: BandType("Q", 8, int, "uint64"),
+    }
+
+    src_ds = osgeo.gdal.Open(input_filename)
+    src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
+    src_sref = src_ds.GetSpatialRef()
+
+    if src_sref is None:
+        src_ds = osgeo.gdal.OpenEx(
+            input_filename, open_options=["ASSUME_LONGLAT=YES"]
+        )
+        src_bands = [src_ds.GetRasterBand(n) for n in range(1, 1 + src_ds.RasterCount)]
+        src_sref = src_ds.GetSpatialRef()
+
+    tx3857 = osgeo.osr.CoordinateTransformation(src_sref, web_mercator)
+    pixel_window = find_pixel_window(src_ds, tx3857)
+    resolution = find_resolution(src_ds, tx3857, pixel_window)
+    zoom = find_zoom(resolution, zoom_strategy, block_zoom)
+
+    tx4326 = osgeo.osr.CoordinateTransformation(src_sref, wgs84)
+    minlon, minlat, maxlon, maxlat = find_bounds(src_ds, tx4326, pixel_window)
+
+    cf_time = extract_cf_time_from_gdal(src_ds)
+    band_time_values = None
+    if cf_time is not None:
+        band_time_values = [get_band_time_value(band) for band in src_bands]
+
+    return RasterGeometry(
+        [gdaltype_bandtypes[band.DataType].name for band in src_bands],
+        [
+            osgeo.gdal.GetColorInterpretationName(
+                band.GetColorInterpretation()
+            ).lower()
+            for band in src_bands
+        ],
+        [
+            get_colortable_dict(b.GetColorTable()) if b.GetColorTable() else None
+            for b in src_bands
+        ],
+        src_ds.GetRasterBand(1).GetNoDataValue(),
+        zoom,
+        minlat,
+        minlon,
+        maxlat,
+        maxlon,
+        cf_time=cf_time,
+        band_time_values=band_time_values,
+        band_scales=[band.GetScale() for band in src_bands],
+        band_offsets=[band.GetOffset() for band in src_bands],
+        band_units=[band.GetUnitType() or "" for band in src_bands],
+        band_descriptions=[band.GetDescription() or "" for band in src_bands],
+        band_nodatas=[band.GetNoDataValue() for band in src_bands],
+    )
+
+
+def _geometry_worker(input_filename, zoom_strategy, resampling_algorithm, block_zoom, pipe):
+    """Subprocess target for getting raster geometry."""
+    try:
+        rg = _get_raster_geometry(input_filename, zoom_strategy, resampling_algorithm, block_zoom)
+        pipe.send(rg)
+    finally:
+        pipe.close()
+
+
+def _get_geometry_in_process(
+    input_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
+) -> RasterGeometry:
+    """Get raster geometry by running _get_raster_geometry in a subprocess."""
+    parent_recv, child_send = multiprocessing.Pipe(duplex=False)
+
+    process = multiprocessing.Process(
+        target=_geometry_worker,
+        args=(input_filename, zoom_strategy, resampling_algorithm, block_zoom, child_send),
+    )
+    process.start()
+    child_send.close()
+    raster_geometry = parent_recv.recv()
+    process.join()
+    assert isinstance(raster_geometry, RasterGeometry)
+    return raster_geometry
+
+
+def open_raster_parallel(
+    input_filename: str,
+    zoom_strategy: ZoomStrategy,
+    resampling_algorithm: ResamplingAlgorithm,
+    block_zoom: int,
+    num_workers: int,
+    band_layout: BandLayout = BandLayout.SEQUENTIAL,
+    compression: CompressionCodec = CompressionCodec.GZIP,
+    compression_quality: int = 85,
+) -> tuple[RasterGeometry, multiprocessing.Queue, list[multiprocessing.Process]]:
+    """Open raster with multiple parallel worker processes.
+
+    Only supports overview_mode=NONE (native resolution only, no tile dependencies).
+    Pre-computes the tile list and distributes across workers.
+
+    Returns:
+        Tuple of (raster_geometry, result_queue, worker_processes)
+    """
+    # Get geometry in subprocess (GDAL import safety)
+    raster_geometry = _get_geometry_in_process(
+        input_filename, zoom_strategy, resampling_algorithm, block_zoom
+    )
+
+    # Pre-compute all tiles at native zoom
+    all_tiles = list(mercantile.tiles(
+        raster_geometry.minlon,
+        raster_geometry.minlat,
+        raster_geometry.maxlon,
+        raster_geometry.maxlat,
+        raster_geometry.zoom,
+    ))
+    logging.info(
+        "Parallel mode: %d tiles at zoom %d, distributing across %d workers",
+        len(all_tiles), raster_geometry.zoom, num_workers
+    )
+
+    # Distribute tiles across workers (simple round-robin for balanced load)
+    worker_tiles = [[] for _ in range(num_workers)]
+    for i, tile in enumerate(all_tiles):
+        worker_tiles[i % num_workers].append(tile)
+
+    # Create shared queue and start workers
+    queue = multiprocessing.Queue(maxsize=num_workers * 100)
+    processes = []
+    for worker_id in range(num_workers):
+        if not worker_tiles[worker_id]:
+            continue
+        p = multiprocessing.Process(
+            target=_read_raster_worker,
+            args=(
+                input_filename,
+                worker_tiles[worker_id],
+                zoom_strategy,
+                resampling_algorithm,
+                block_zoom,
+                queue,
+                worker_id,
+                band_layout,
+                compression,
+                compression_quality,
+            ),
+        )
+        p.start()
+        processes.append(p)
+
+    logging.info("Started %d worker processes", len(processes))
+
+    return raster_geometry, queue, processes
+
+
 def open_raster_in_process(
     input_filename: str,
     zoom_strategy: ZoomStrategy,
@@ -1557,6 +1850,7 @@ def main(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    num_workers: int = 1,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1599,6 +1893,7 @@ def main(
         band_layout,
         compression,
         compression_quality,
+        num_workers,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1616,6 +1911,7 @@ def convert_to_raquet_files(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    num_workers: int = 1,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1632,6 +1928,7 @@ def convert_to_raquet_files(
         band_layout: Band data organization (sequential or interleaved)
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
+        num_workers: Number of parallel worker processes (default 1, only used with overview_mode=NONE)
 
     Yields output filenames as they are written.
 
@@ -1644,17 +1941,43 @@ def convert_to_raquet_files(
     sorted and written to the final output. This uses O(row_group_size) memory
     instead of O(all_tiles), making it suitable for large rasters.
     """
-    raster_geometry, pipe = open_raster_in_process(
-        input_filename,
-        zoom_strategy,
-        resampling_algorithm,
-        block_zoom,
-        overview_mode,
-        min_zoom_override,
-        band_layout,
-        compression,
-        compression_quality,
+    # Decide between parallel and single-process modes
+    use_parallel = (
+        num_workers > 1
+        and overview_mode == OverviewMode.NONE
     )
+
+    if use_parallel:
+        logging.info("Parallel mode: %d workers, overview_mode=NONE", num_workers)
+        raster_geometry, queue, worker_processes = open_raster_parallel(
+            input_filename,
+            zoom_strategy,
+            resampling_algorithm,
+            block_zoom,
+            num_workers,
+            band_layout,
+            compression,
+            compression_quality,
+        )
+        pipe = None
+    else:
+        if num_workers > 1 and overview_mode != OverviewMode.NONE:
+            logging.warning(
+                "Parallel mode requires --overviews none. Falling back to single process."
+            )
+        raster_geometry, pipe = open_raster_in_process(
+            input_filename,
+            zoom_strategy,
+            resampling_algorithm,
+            block_zoom,
+            overview_mode,
+            min_zoom_override,
+            band_layout,
+            compression,
+            compression_quality,
+        )
+        queue = None
+        worker_processes = None
 
     try:
         schema, band_names = create_schema(raster_geometry, band_layout)
@@ -1683,11 +2006,23 @@ def convert_to_raquet_files(
             temp_writer = None
             temp_rows = None
 
+        # Track how many workers have finished (for parallel mode)
+        workers_done = 0
+        num_active_workers = len(worker_processes) if worker_processes else 0
+
         while True:
-            received = pipe.recv()
-            if received is None:
-                # Use a signal value to stop expecting further tiles
-                break
+            # Receive next tile from either pipe (single) or queue (parallel)
+            if use_parallel:
+                received = queue.get()
+                if received is None:
+                    workers_done += 1
+                    if workers_done >= num_active_workers:
+                        break
+                    continue
+            else:
+                received = pipe.recv()
+                if received is None:
+                    break
 
             # Expand message to block to retrieve
             tile, block_data, tile_stats = received
@@ -1896,7 +2231,11 @@ def convert_to_raquet_files(
         yield rfname
 
     finally:
-        pipe.close()
+        if pipe is not None:
+            pipe.close()
+        if worker_processes:
+            for p in worker_processes:
+                p.join(timeout=5)
 
 
 parser = argparse.ArgumentParser()

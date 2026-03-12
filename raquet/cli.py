@@ -303,6 +303,7 @@ def _convert_raster_impl(
     overviews: str,
     min_zoom: int | None,
     streaming: bool,
+    num_workers: int = 1,
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
@@ -323,6 +324,8 @@ def _convert_raster_impl(
             click.echo(f"  Min zoom override: {min_zoom}")
         if streaming:
             click.echo("  Streaming mode: enabled (memory-safe two-pass conversion)")
+        if num_workers > 1:
+            click.echo(f"  Parallel mode: {num_workers} workers")
 
         raster2raquet.main(
             str(input_file),
@@ -335,6 +338,7 @@ def _convert_raster_impl(
             overview_mode,
             min_zoom,
             streaming,
+            num_workers=num_workers,
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -397,6 +401,12 @@ def _convert_raster_impl(
     is_flag=True,
     help="Use two-pass streaming mode for memory-safe conversion of large files",
 )
+@click.option(
+    "--workers",
+    type=int,
+    default=1,
+    help="Number of parallel worker processes (default: 1, requires --overviews none)",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_raster(
     input_file: Path,
@@ -409,6 +419,7 @@ def convert_raster(
     overviews: str,
     min_zoom: int | None,
     streaming: bool,
+    workers: int,
     verbose: bool,
 ):
     """Convert a raster file to Raquet format.
@@ -437,8 +448,9 @@ def convert_raster(
         raquet convert raster large.tif output.parquet --overviews none -v
         raquet convert raster large.tif output.parquet --min-zoom 5 -v
         raquet convert raster huge.tif output.parquet --streaming -v
+        raquet convert raster huge.tif output.parquet --streaming --workers 4 --overviews none -v
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, workers)
 
 
 @convert_group.command("geotiff")
@@ -517,7 +529,7 @@ def convert_geotiff(
         raquet convert geotiff large.tif output.parquet --overviews none
         raquet convert geotiff huge.tif output.parquet --streaming
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, 1)
 
 
 @convert_group.command("imageserver")
