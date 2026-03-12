@@ -17,47 +17,88 @@ import subprocess
 import time
 from pathlib import Path
 
-# Polygons within the full dataset bounds
-# Full bounds: lon [-77.904, -77.187], lat [38.812, 39.370]
-# Covers Loudoun County and surrounding area in Northern Virginia
+# Two sets of polygons: one for Loudoun County (4GB), one for full MD/DE (15GB)
+# Select with --polygons loudoun|maryland
 
-TEST_CASES_A = {
-    "small_site": {
-        "description": "Small candidate site (~0.5 km²)",
-        "wkt": "POLYGON((-77.83 38.86, -77.82 38.86, -77.82 38.865, -77.83 38.865, -77.83 38.86))",
+POLYGONS_LOUDOUN = {
+    "A": {
+        "small_site": {
+            "description": "Small candidate site (~0.5 km²)",
+            "wkt": "POLYGON((-77.83 38.86, -77.82 38.86, -77.82 38.865, -77.83 38.865, -77.83 38.86))",
+        },
+        "medium_site": {
+            "description": "Medium candidate site (~4 km²)",
+            "wkt": "POLYGON((-77.85 38.85, -77.83 38.85, -77.83 38.87, -77.85 38.87, -77.85 38.85))",
+        },
+        "large_site": {
+            "description": "Large candidate area (~50 km²)",
+            "wkt": "POLYGON((-77.88 38.82, -77.78 38.82, -77.78 38.90, -77.88 38.90, -77.88 38.82))",
+        },
     },
-    "medium_site": {
-        "description": "Medium candidate site (~4 km²)",
-        "wkt": "POLYGON((-77.85 38.85, -77.83 38.85, -77.83 38.87, -77.85 38.87, -77.85 38.85))",
-    },
-    "large_site": {
-        "description": "Large candidate area (~50 km²)",
-        "wkt": "POLYGON((-77.88 38.82, -77.78 38.82, -77.78 38.90, -77.88 38.90, -77.88 38.82))",
+    "B": {
+        "search_flat_3deg": {
+            "description": "Find cells with mean slope < 3° in full area",
+            "search_area": "POLYGON((-77.90 38.82, -77.19 38.82, -77.19 39.37, -77.90 39.37, -77.90 38.82))",
+            "max_slope_degrees": 3.0,
+        },
+        "search_flat_5deg": {
+            "description": "Find cells with mean slope < 5° in full area",
+            "search_area": "POLYGON((-77.90 38.82, -77.19 38.82, -77.19 39.37, -77.90 39.37, -77.90 38.82))",
+            "max_slope_degrees": 5.0,
+        },
     },
 }
 
-TEST_CASES_B = {
-    "search_flat_3deg": {
-        "description": "Find cells with mean slope < 3° in full area",
-        "search_area": "POLYGON((-77.90 38.82, -77.19 38.82, -77.19 39.37, -77.90 39.37, -77.90 38.82))",
-        "max_slope_degrees": 3.0,
+# 15GB dataset: DC metro + MD/DE, -77.54 to -75.76, 38.16 to 39.72
+# Dense data around -76.0, 39.2 (central MD)
+POLYGONS_MARYLAND = {
+    "A": {
+        "small_site": {
+            "description": "Small candidate site (~0.5 km²)",
+            "wkt": "POLYGON((-76.00 39.20, -75.99 39.20, -75.99 39.205, -76.00 39.205, -76.00 39.20))",
+        },
+        "medium_site": {
+            "description": "Medium candidate site (~25 km²)",
+            "wkt": "POLYGON((-76.05 39.15, -75.95 39.15, -75.95 39.25, -76.05 39.25, -76.05 39.15))",
+        },
+        "large_site": {
+            "description": "Large candidate area (~3000 km²)",
+            "wkt": "POLYGON((-76.50 38.80, -76.00 38.80, -76.00 39.50, -76.50 39.50, -76.50 38.80))",
+        },
     },
-    "search_flat_5deg": {
-        "description": "Find cells with mean slope < 5° in full area",
-        "search_area": "POLYGON((-77.90 38.82, -77.19 38.82, -77.19 39.37, -77.90 39.37, -77.90 38.82))",
-        "max_slope_degrees": 5.0,
+    "B": {
+        "search_flat_3deg": {
+            "description": "Find cells with mean slope < 3° in full area",
+            "search_area": "POLYGON((-77.54 38.16, -75.76 38.16, -75.76 39.72, -77.54 39.72, -77.54 38.16))",
+            "max_slope_degrees": 3.0,
+        },
+        "search_flat_5deg": {
+            "description": "Find cells with mean slope < 5° in full area",
+            "search_area": "POLYGON((-77.54 38.16, -75.76 38.16, -75.76 39.72, -77.54 39.72, -77.54 38.16))",
+            "max_slope_degrees": 5.0,
+        },
     },
 }
+
+# Default polygon sets (selected by --polygons flag)
+POLYGON_SETS = {
+    "loudoun": POLYGONS_LOUDOUN,
+    "maryland": POLYGONS_MARYLAND,
+}
+
+# Active test cases (set in main())
+TEST_CASES_A = POLYGONS_LOUDOUN["A"]
+TEST_CASES_B = POLYGONS_LOUDOUN["B"]
 
 RUNS_PER_QUERY = 3
-DUCKDB_CMD = "duckdb"
+DUCKDB_CMD = "/Users/jatorre/workspace/duckdb-raquet/build/release/duckdb"
 RAQUET_EXT = "/Users/jatorre/workspace/duckdb-raquet/build/release/extension/raquet/raquet.duckdb_extension"
 MAX_ZOOM = 17  # Native resolution zoom level
 
 
 def run_duckdb(sql: str, timeout: int = 120) -> tuple[str, float]:
     """Run a DuckDB query and return (output, elapsed_seconds)."""
-    full_sql = f"INSTALL '{RAQUET_EXT}'; LOAD raquet;\n{sql}"
+    full_sql = f"LOAD '{RAQUET_EXT}';\n{sql}"
     start = time.perf_counter()
     result = subprocess.run(
         [DUCKDB_CMD, "-unsigned", "-json"],
@@ -238,13 +279,19 @@ def main():
                         help="Output JSON file for results")
     parser.add_argument("--runs", type=int, default=3,
                         help="Number of runs per query (default: 3)")
+    parser.add_argument("--polygons", type=str, default="loudoun",
+                        choices=["loudoun", "maryland"],
+                        help="Polygon set: loudoun (4GB) or maryland (15GB)")
     args = parser.parse_args()
 
-    global RUNS_PER_QUERY
+    global RUNS_PER_QUERY, TEST_CASES_A, TEST_CASES_B
     RUNS_PER_QUERY = args.runs
+    TEST_CASES_A = POLYGON_SETS[args.polygons]["A"]
+    TEST_CASES_B = POLYGON_SETS[args.polygons]["B"]
 
+    import glob as globmod
     slope_path = Path(args.slope_file)
-    if not slope_path.exists():
+    if not slope_path.exists() and not globmod.glob(args.slope_file):
         print(f"ERROR: {args.slope_file} not found")
         return
 

@@ -28,7 +28,7 @@ RaQuet achieves significant compression compared to source formats, especially f
 
 ---
 
-## DuckDB vs BigQuery
+## DuckDB vs BigQuery (Small Dataset)
 
 We benchmarked both RaQuet implementations using [TCI.parquet](https://storage.googleapis.com/raquet_demo_data/TCI.parquet) (Sentinel-2 True Color imagery, 261 MB, 3,225 tiles across zoom levels 7-14).
 
@@ -69,6 +69,74 @@ RaQuet files contain tiles at multiple zoom levels (overviews). When querying re
 
 - **DuckDB:** `quadbin_intersects(block, geometry)` automatically finds tiles at all resolutions
 - **BigQuery:** Use `__RAQUET_REGION_BLOCKS(geom, min_zoom, max_zoom)` to query across pyramid levels. Standard `QUADBIN_POLYFILL_MODE` only returns tiles at a single zoom level.
+
+---
+
+## Large-Scale Benchmark: 15GB Slope Raster (563K tiles)
+
+We benchmarked a real-world use case: **data center site suitability analysis** on a 15GB slope raster covering the DC metro area and Maryland (1-meter resolution LiDAR-derived slope). The dataset was partitioned into 156 files using `raquet-io partition` and loaded into both DuckDB (local SSD) and Snowflake (Small warehouse).
+
+### Dataset
+
+| Asset | Size | Details |
+|-------|------|---------|
+| Source DEM tiles | ~15 GB | USGS 3DEP 1m resolution |
+| Slope as RaQuet | 14.1 GB | 563,517 tiles, zoom 17, 156 partition files |
+
+### Query A: Score a Candidate Site
+
+*Given a polygon, compute slope statistics for all tiles that intersect it.*
+
+| Site Size | DuckDB (local SSD) | Snowflake (Small WH) | Tiles |
+|-----------|--------------------|-----------------------|-------|
+| ~0.5 km² | **1.9s** | 10.8s | 16 |
+| ~25 km² | **1.7s** | 13.3s | 1,776 |
+| ~3,000 km² | **4.3s** | 31.2s | 60,390 |
+
+### Query B: Full Area Suitability Scan
+
+*Scan all tiles, compute per-tile statistics, filter by slope threshold.*
+
+| Query | DuckDB (local SSD) | Tiles |
+|-------|--------------------|----|
+| Cells with mean slope < 3° | **16.9s** | 475,068 data tiles |
+| Cells with mean slope < 5° | **16.6s** | 475,068 data tiles |
+| Top 20 flattest cells | **28.3s** | Full scan + sort |
+
+*Snowflake Query B (full table scan of 563K tiles through JavaScript UDFs) was impractically slow on a Small warehouse.*
+
+### Key Findings
+
+**DuckDB is 6-8x faster for spatial queries** due to the native C++ extension versus Snowflake's JavaScript UDFs. The gap is mostly warehouse startup + UDF serialization overhead — notice how Snowflake's small query (16 tiles, 10.8s) isn't much faster than its medium query (1,776 tiles, 13.3s).
+
+**Full-table scans are DuckDB's sweet spot.** Processing 475K tiles in 17 seconds on local SSD is fast. Snowflake's per-row JavaScript UDF overhead makes full scans impractical on small warehouses — a larger warehouse size would help but won't close the gap.
+
+**Spatial indexing is critical.** On the 15GB dataset, a small-polygon query reads only 16 tiles out of 563K — that's 99.997% data skipped via QUADBIN row group pruning.
+
+**Snowflake's value is integration, not speed.** The same slope data in Snowflake can be joined with land cost, power grid, fiber connectivity, and zoning datasets — all in SQL. That workflow is hard to replicate with DuckDB alone.
+
+### Polyfill Modes
+
+The `__RAQUET_REGION_BLOCKS` function supports multiple spatial matching modes:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `intersects` (default) | All tiles touching the polygon | Complete coverage, matches DuckDB |
+| `center` | Tiles whose center is inside | Faster, may miss edge tiles |
+| `contains` | Tiles fully inside the polygon | Conservative, fewer tiles |
+
+```sql
+-- Snowflake: intersects mode (matches DuckDB read_raquet behavior)
+SELECT f.VALUE::NUMBER AS block
+FROM TABLE(FLATTEN(__RAQUET_REGION_BLOCKS(
+    ST_GEOGRAPHYFROMWKT('POLYGON((...))'), 17, 17, 'intersects'
+))) f;
+
+-- BigQuery: same API
+SELECT block FROM `project.dataset.__RAQUET_REGION_BLOCKS`(
+    ST_GEOGFROMTEXT('POLYGON((...))'), 17, 17, 'intersects'
+);
+```
 
 ---
 
