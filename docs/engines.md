@@ -11,7 +11,7 @@ RaQuet files are standard Apache Parquet — they work with **any Parquet-compat
 
 | Engine | Basic Parquet | Raster Functions | Notes |
 |--------|--------------|------------------|-------|
-| **DuckDB** | ✓ | ✓ (via extension) | Best for local analytics |
+| **DuckDB** | ✓ | ✓ (via extension) | Best for local analytics (1.5+) |
 | **BigQuery** | ✓ | ✓ (Analytics Toolbox) | Fully managed, scalable |
 | **Snowflake** | ✓ | ✓ (Analytics Toolbox) | Fully managed, scalable |
 | **Databricks** | ✓ | ✓ (Analytics Toolbox) | Spark-based |
@@ -24,7 +24,7 @@ RaQuet files are standard Apache Parquet — they work with **any Parquet-compat
 
 ## DuckDB
 
-DuckDB provides the best local experience with the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet).
+DuckDB provides the best local experience with the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet). Requires **DuckDB 1.5+** which includes native GEOMETRY type support — no separate spatial extension needed.
 
 ### Installation
 
@@ -37,10 +37,17 @@ LOAD raquet;
 
 | Function | Description |
 |----------|-------------|
-| `read_raquet(file)` | Table function that propagates metadata |
-| `ST_RasterValue(block, band, geom, metadata)` | Get pixel value at a point |
-| `ST_RasterIntersects(block, geom)` | Spatial filter (EPSG:4326) |
-| `ST_RasterSummaryStat(block, band, stat, metadata)` | Zonal statistics |
+| `read_raquet(file)` | Read all data rows (metadata propagated) |
+| `read_raquet(file, geometry)` | Spatial filter with auto resolution |
+| `read_raquet_at(file, lon, lat)` | Point query (reads only the needed tile) |
+| `read_raquet_metadata(file)` | Read metadata row only |
+| `ST_RasterValue(block, band, point, metadata)` | Get pixel value at a point |
+| `ST_RasterSummaryStats(band, metadata)` | Per-tile statistics (count, sum, mean, min, max, stddev) |
+| `ST_RegionStats(band, block, geometry, metadata)` | Aggregate statistics within a polygon |
+| `ST_Intersects(block, geometry)` | Spatial filter (EPSG:4326) |
+| `ST_Clip(band, block, geometry, metadata)` | Extract pixels within a geometry |
+| `ST_NormalizedDifference(band1, band2, metadata)` | Band math (e.g., NDVI) |
+| `ST_Point(lon, lat)` | Create POINT geometry |
 
 ### Examples
 
@@ -49,29 +56,25 @@ LOAD raquet;
 ```sql
 LOAD raquet;
 
-WITH point AS (
-    SELECT 'POINT(-3.7038 40.4168)'::GEOMETRY AS geom
-)
 SELECT
-    ST_RasterValue(block, band_1, point.geom, metadata) AS elevation_meters
-FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet')
-CROSS JOIN point
-WHERE ST_RasterIntersects(block, point.geom);
+    ST_RasterValue(block, band_1, ST_Point(-3.7038, 40.4168), metadata) AS elevation_meters
+FROM read_raquet_at('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet', -3.7038, 40.4168);
 ```
 
-**Zonal Statistics — Solar potential in a region:**
+**Region Statistics — Solar potential in a region:**
 
 ```sql
 LOAD raquet;
 
-WITH area AS (
-    SELECT ST_GeomFromText('POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))') AS geom
-)
-SELECT
-    SUM(ST_RasterSummaryStat(block, band_1, 'sum', metadata)) AS total_pvout
-FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet')
-CROSS JOIN area
-WHERE ST_RasterIntersects(block, area.geom);
+SELECT (ST_RegionStats(
+    band_1, block,
+    'POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))'::GEOMETRY,
+    metadata
+)).*
+FROM read_raquet(
+    'https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet',
+    'POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))'::GEOMETRY
+);
 ```
 
 **Time Series Analysis:**
@@ -81,10 +84,22 @@ LOAD raquet;
 
 SELECT
     YEAR(time_ts) AS year,
-    AVG(ST_RasterSummaryStat(block, band_1, 'mean', metadata)) AS avg_sst
+    AVG((ST_RasterSummaryStats(band_1, metadata)).mean) AS avg_sst
 FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet')
 GROUP BY YEAR(time_ts)
 ORDER BY year;
+```
+
+**Band Math — NDVI:**
+
+```sql
+LOAD raquet;
+
+SELECT
+    block,
+    (ST_NormalizedDifferenceStats(band_4, band_3, metadata)).*
+FROM read_raquet('satellite.parquet')
+LIMIT 5;
 ```
 
 ### Without Extension
@@ -104,7 +119,7 @@ FROM read_parquet('file.parquet')
 WHERE block = 0;
 ```
 
-With the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet), this becomes simpler:
+With the [DuckDB Raquet Extension](https://github.com/jatorre/duckdb-raquet) (DuckDB 1.5+), this becomes simpler:
 
 ```sql
 INSTALL raquet FROM community;
@@ -112,6 +127,12 @@ LOAD raquet;
 
 -- Cleaner API (metadata row excluded automatically)
 SELECT * FROM read_raquet('file.parquet') LIMIT 10;
+
+-- Spatial filter (only reads tiles that intersect)
+SELECT * FROM read_raquet('file.parquet', 'POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))'::GEOMETRY);
+
+-- Point query (reads only the needed tile, ~2KB from cloud)
+SELECT * FROM read_raquet_at('file.parquet', -3.7038, 40.4168);
 
 -- Read metadata
 SELECT metadata FROM read_raquet_metadata('file.parquet');

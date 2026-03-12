@@ -37,10 +37,9 @@ if [ "$SKIP_DOWNLOAD" = "1" ]; then
     du -sh "$TILES_DIR" 2>/dev/null || echo "    WARNING: No tiles found!"
 else
     echo ""
-    echo ">>> Step 1: Downloading 1m DEM tiles (~${MAX_GB} GB)..."
+    echo ">>> Step 1: Downloading 1m DEM tiles (~${MAX_GB} GB) from S3..."
     echo "    This will take a while..."
-    $VENV/python scripts/download_dem.py \
-        --bbox "$BBOX" \
+    $VENV/python scripts/download_dem_s3.py \
         --max-gb "$MAX_GB" \
         --output-dir "$TILES_DIR"
 

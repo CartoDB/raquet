@@ -89,14 +89,9 @@ Data sources: [Global Solar Atlas](https://globalsolaratlas.info/), [Copernicus 
 ```sql
 LOAD raquet;
 
-WITH point AS (
-    SELECT 'POINT(-3.7038 40.4168)'::GEOMETRY AS geom
-)
 SELECT
-    ST_RasterValue(block, band_1, point.geom, metadata) AS elevation_meters
-FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet')
-CROSS JOIN point
-WHERE ST_RasterIntersects(block, point.geom);
+    ST_RasterValue(block, band_1, ST_Point(-3.7038, 40.4168), metadata) AS elevation_meters
+FROM read_raquet_at('https://storage.googleapis.com/raquet_demo_data/world_elevation.parquet', -3.7038, 40.4168);
 ```
 
 ### Sum Solar Potential in a Region
@@ -104,14 +99,15 @@ WHERE ST_RasterIntersects(block, point.geom);
 ```sql
 LOAD raquet;
 
-WITH area AS (
-    SELECT ST_GeomFromText('POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))') AS geom
-)
-SELECT
-    SUM(ST_RasterSummaryStat(block, band_1, 'sum', metadata)) AS total_pvout
-FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet')
-CROSS JOIN area
-WHERE ST_RasterIntersects(block, area.geom);
+SELECT (ST_RegionStats(
+    band_1, block,
+    'POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))'::GEOMETRY,
+    metadata
+)).*
+FROM read_raquet(
+    'https://storage.googleapis.com/raquet_demo_data/world_solar_pvout.parquet',
+    'POLYGON((-4 40, -3 40, -3 41, -4 41, -4 40))'::GEOMETRY
+);
 ```
 
 ### Time-Series Analysis
@@ -121,16 +117,20 @@ LOAD raquet;
 
 SELECT
     YEAR(time_ts) AS year,
-    AVG(ST_RasterSummaryStat(block, band_1, 'mean', metadata)) AS avg_sst
+    AVG((ST_RasterSummaryStats(band_1, metadata)).mean) AS avg_sst
 FROM read_raquet('https://storage.googleapis.com/raquet_demo_data/cfsr_sst.parquet')
 GROUP BY YEAR(time_ts)
 ORDER BY year;
 ```
 
 **Key functions:**
-- `read_raquet(file)` — Table function that propagates metadata automatically
-- `ST_RasterValue(block, band, geom, metadata)` — Returns pixel value at a POINT
-- `ST_RasterIntersects(block, geom)` — Spatial filter (EPSG:4326)
+- `read_raquet(file)` / `read_raquet_at(file, lon, lat)` — Table functions with metadata propagation and spatial filtering
+- `ST_RasterValue(block, band, point, metadata)` — Returns pixel value at a POINT
+- `ST_RasterSummaryStats(band, metadata)` — Per-tile statistics (count, sum, mean, min, max, stddev)
+- `ST_RegionStats(band, block, geometry, metadata)` — Aggregate statistics within a polygon
+- `ST_Intersects(block, geometry)` — Spatial filter (EPSG:4326)
+- `ST_Clip(band, block, geometry, metadata)` — Extract pixels within a geometry
+- `ST_NormalizedDifference(band1, band2, metadata)` — Band math (e.g., NDVI)
 
 ---
 
