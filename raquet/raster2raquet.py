@@ -710,6 +710,67 @@ def find_zoom(resolution: float, zoom_strategy: ZoomStrategy, block_zoom: int) -
     return int(zoom)
 
 
+def _warp_into_new_tile(
+    driver, web_mercator, src_ds, tile, block_zoom, numpy_module, opts, *, extra_bands
+):
+    """Create a fresh tile destination and warp src_ds into it. Returns the tile_ds."""
+    import osgeo.gdal
+
+    tile_ds = create_tile_ds(
+        driver, web_mercator, src_ds, tile, block_zoom, numpy_module,
+        extra_bands=extra_bands,
+    )
+    osgeo.gdal.Warp(
+        destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts,
+    )
+    return tile_ds
+
+
+def warp_source_into_tile_with_alpha_fallback(
+    driver, web_mercator, src_ds, tile, block_zoom, numpy_module, opts, needs_extra_band,
+):
+    """Warp src_ds into a fresh tile destination, retrying once with an extra
+    alpha band if Warp complained that the destination is missing one.
+
+    GDAL Warp implicitly adds an alpha mask band when the source's photometric
+    metadata is ambiguous (e.g. SamplesPerPixel doesn't match the declared
+    color channels). The destination must have one extra band to receive that
+    mask, otherwise Warp raises:
+        RuntimeError: Destination dataset has N bands, but at least N+1 are needed
+
+    The caller should keep `needs_extra_band` sticky across tiles in the same
+    raster: once one tile has needed the +1 layout, every subsequent tile of
+    the same source will need it too, so we avoid a 2x Warp on every tile.
+
+    Returns (tile_ds, needs_extra_band_now).
+    """
+    import osgeo.gdal
+
+    extras = 1 if needs_extra_band else 0
+    try:
+        tile_ds = _warp_into_new_tile(
+            driver, web_mercator, src_ds, tile, block_zoom, numpy_module, opts,
+            extra_bands=extras,
+        )
+        return tile_ds, needs_extra_band
+    except RuntimeError:
+        if needs_extra_band:
+            # We're already on the +1 path; this is a different problem.
+            raise
+        # Discard the partial /vsimem/ dataset before retrying with one extra band.
+        osgeo.gdal.Unlink(f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif")
+        tile_ds = _warp_into_new_tile(
+            driver, web_mercator, src_ds, tile, block_zoom, numpy_module, opts,
+            extra_bands=1,
+        )
+        logging.info(
+            "Warp required an extra alpha band on tile %s; using +1 layout for "
+            "remaining tiles of this raster.",
+            tile,
+        )
+        return tile_ds, True
+
+
 def create_tile_ds(
     driver: "osgeo.gdal.Driver",  # noqa: F821 (osgeo types safely imported in read_raster)
     web_mercator: "osgeo.osr.SpatialReference",  # noqa: F821 (osgeo types safely imported in read_raster)
@@ -717,14 +778,21 @@ def create_tile_ds(
     tile: mercantile.Tile,
     block_zoom: int,
     numpy_module: "module | None" = None,  # noqa: F821
+    extra_bands: int = 0,
 ) -> "osgeo.gdal.Dataset":  # noqa: F821 (osgeo types safely imported in read_raster)
-    # Initialize warped tile dataset and its bands
+    # Initialize warped tile dataset and its bands.
+    #
+    # extra_bands > 0 reserves space for an alpha mask that GDAL Warp may add
+    # when the source's photometric/extrasamples metadata is ambiguous (e.g.
+    # 4-band Byte rasters where SamplesPerPixel doesn't match the declared
+    # color channels). Without that space Warp raises
+    # `RuntimeError: Destination dataset has N bands, but at least N+1 are needed`.
     tile_size = 2**block_zoom
     tile_ds = driver.Create(
         f"/vsimem/tile-{tile.z}-{tile.x}-{tile.y}.tif",
         tile_size,
         tile_size,
-        ds.RasterCount,
+        ds.RasterCount + extra_bands,
         ds.GetRasterBand(1).DataType,
     )
     tile_ds.SetProjection(web_mercator.ExportToWkt())
@@ -763,16 +831,22 @@ def read_raster_data_stats(
     band_layout: BandLayout = BandLayout.SEQUENTIAL,
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
+    band_count: int | None = None,
 ) -> tuple[list[bytes], list[RasterStats | None]]:
     """Read data and stats from warped bands
 
     For SEQUENTIAL layout: returns list of compressed band data (one per band)
     For INTERLEAVED layout: returns list with single element (all bands interleaved)
+
+    If band_count is provided, only the first band_count bands are read. This
+    is used to skip an alpha mask band that Warp may have added on top of the
+    raster's data bands (see create_tile_ds extra_bands).
     """
     block_data, block_stats = [], []
     raw_bands = []  # Store raw band data for interleaving
 
-    for band_num in range(1, 1 + ds.RasterCount):
+    n_bands = band_count if band_count is not None else ds.RasterCount
+    for band_num in range(1, 1 + n_bands):
         band = ds.GetRasterBand(band_num)
         data = band.ReadRaster(0, 0, band.XSize, band.YSize)
 
@@ -1078,6 +1152,10 @@ def read_raster(
             )
         ]
 
+        # Sticky: once any tile of this raster has needed an extra alpha band,
+        # every subsequent tile from the same source will need it too.
+        needs_extra_band = False
+
         while frames:
             frame = frames.pop()
             tile_ds: osgeo.gdal.Dataset | None = None
@@ -1091,18 +1169,23 @@ def read_raster(
             if frame.tile.z == raster_geometry.zoom:
                 # Read original source pixels at the highest requested zoom
                 logging.info("Warp %s from original dataset", frame.tile)
-                tile_ds = create_tile_ds(*create_args)
-                osgeo.gdal.Warp(
-                    destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts_source
+                tile_ds, needs_extra_band = warp_source_into_tile_with_alpha_fallback(
+                    gtiff_driver, web_mercator, src_ds, frame.tile, block_zoom, numpy_mod,
+                    opts_source, needs_extra_band,
                 )
                 d, s = read_raster_data_stats(
                     tile_ds, gdaltype_bandtypes, do_stats,
-                    band_layout, compression, compression_quality
+                    band_layout, compression, compression_quality,
+                    band_count=src_ds.RasterCount,
                 )
                 pipe.send((frame.tile, d, s))
             elif not frame.inputs:
-                # Build overview tile - either from COG overviews or from child tiles
-                tile_ds = create_tile_ds(*create_args)
+                # Build overview tile - either from COG overviews or from child tiles.
+                # extra_bands matches the native-zoom layout so the pyramid stays
+                # consistent and Warp into this dst doesn't fail for the same reason.
+                tile_ds = create_tile_ds(
+                    *create_args, extra_bands=1 if needs_extra_band else 0
+                )
 
                 # Try to use COG overview if available
                 cog_overview_used = False
@@ -1172,7 +1255,8 @@ def read_raster(
 
                 d, s1 = read_raster_data_stats(
                     tile_ds, gdaltype_bandtypes, do_stats,
-                    band_layout, compression, compression_quality
+                    band_layout, compression, compression_quality,
+                    band_count=src_ds.RasterCount,
                 )
                 s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
                 pipe.send((frame.tile, d, s2))
@@ -1270,18 +1354,22 @@ def _read_raster_worker(
         # Stats zoom for this worker (native zoom, no overviews)
         stats_zoom = max(tiles[0].z + STATS_ZOOM_OFFSET, tiles[0].z)
 
+        # Sticky: once any tile of this raster has needed an extra alpha band,
+        # every subsequent tile from the same source will need it too.
+        needs_extra_band = False
+
         for tile in tiles:
-            create_args = gtiff_driver, web_mercator, src_ds, tile, block_zoom, numpy_mod
             # When tile_stats is enabled, compute stats for every tile
             do_stats = tile_stats or tile.z == stats_zoom
 
-            tile_ds = create_tile_ds(*create_args)
-            osgeo.gdal.Warp(
-                destNameOrDestDS=tile_ds, srcDSOrSrcDSTab=src_ds, options=opts_source
+            tile_ds, needs_extra_band = warp_source_into_tile_with_alpha_fallback(
+                gtiff_driver, web_mercator, src_ds, tile, block_zoom, numpy_mod,
+                opts_source, needs_extra_band,
             )
             d, s = read_raster_data_stats(
                 tile_ds, gdaltype_bandtypes, do_stats,
-                band_layout, compression, compression_quality
+                band_layout, compression, compression_quality,
+                band_count=src_ds.RasterCount,
             )
             queue.put((tile, d, s))
             tile_ds = None
