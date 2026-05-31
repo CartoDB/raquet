@@ -1,5 +1,6 @@
 {
     "compression": "gzip",
+    "tile_matrix_set": "WebMercatorQuad",
     "block_resolution": 13,
     "minresolution": 5,
     "maxresolution": 13,
