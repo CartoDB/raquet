@@ -1,4 +1,4 @@
-# RaQuet Specification v0.5.0
+# RaQuet Specification v0.6.0
 
 ## Overview
 
@@ -183,7 +183,7 @@ The tiling scheme is defined by the following parameters:
 ## File Creation
 
 The file creation process includes:
-1. Reprojecting the raster to the target Coordinate Reference System, Web Mercator (EPSG:3857), at one of the [supported scales](https://learn.microsoft.com/en-us/bingmaps/articles/understanding-scale-and-resolution#calculating-resolution).
+1. Reprojecting the raster to the target [Tile Matrix Set](#supported-tile-matrix-sets)'s Coordinate Reference System, at one of the [supported scales](https://learn.microsoft.com/en-us/bingmaps/articles/understanding-scale-and-resolution#calculating-resolution). For `WebMercatorQuad` this is Web Mercator (EPSG:3857); for `GoogleCRS84Quad` the data stays in EPSG:4326 (CRS84), often avoiding a warp when the source is already WGS84.
 2. Dividing the raster into tiles.
 3. Computing QUADBIN cell IDs for each tile.
 4. Converting tile data (pixel values) to binary format.
@@ -197,9 +197,10 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 9216,
     "height": 7936,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [-19.69, 26.43, 5.63, 44.09],
     "bounds_crs": "EPSG:4326",
@@ -252,13 +253,20 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 - **Format Identification**
   - `file_format`: String identifying this as a RaQuet file. MUST be `"raquet"`.
-  - `version`: String indicating the RaQuet specification version. Current version is "0.5.0".
+  - `version`: String indicating the RaQuet specification version. Current version is "0.6.0".
 
 - **Raster Dimensions**
   - `width`, `height`: Integers specifying full resolution raster dimensions in pixels.
 
+- **Tile Matrix Set** (optional, defaults to `"WebMercatorQuad"`)
+  - `tile_matrix_set`: String identifying the [Tile Matrix Set](#supported-tile-matrix-sets) that defines how QUADBIN cells map to the earth. Accepts the canonical OGC URI or a short alias:
+    - `"WebMercatorQuad"` / `"http://www.opengis.net/def/tilematrixset/OGC/1.0/WebMercatorQuad"` — Web Mercator (EPSG:3857). **This is the default when the field is absent**, so every existing v0.x file remains valid and is interpreted as Web Mercator.
+    - `"GoogleCRS84Quad"` / `"http://www.opengis.net/def/tilematrixset/OGC/1.0/GoogleCRS84Quad"` — CRS84 (EPSG:4326, lon/lat order).
+  - The `crs` is **derived from / validated against** `tile_matrix_set`; it is not set independently.
+  - **Interoperability hazard**: a `block` value is a bare QUADBIN quadkey. The integer alone does **not** encode the CRS — a cell value is only interpretable together with its file's `tile_matrix_set`. The same QUADBIN cell maps to a different ground footprint under `WebMercatorQuad` versus `GoogleCRS84Quad`. Consumers MUST read `tile_matrix_set` before interpreting cell geometry.
+
 - **Coordinate Reference System**
-  - `crs`: String indicating the CRS of the raster data. Always "EPSG:3857" (Web Mercator) for RaQuet.
+  - `crs`: String indicating the CRS of the tile grid; determined by `tile_matrix_set`. `"EPSG:3857"` for `WebMercatorQuad`, `"OGC:CRS84"` for `GoogleCRS84Quad`.
   - `bounds`: Array [west, south, east, north] specifying geographic extent.
   - `bounds_crs`: String indicating the CRS of the bounds. Always "EPSG:4326" (WGS84) for RaQuet.
 
@@ -278,7 +286,7 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 
 - **Tiling Information**
   - `tiling`: Object containing tile/block configuration:
-    - `scheme`: String identifying the tiling scheme. Always "quadbin" for RaQuet.
+    - `scheme`: String identifying the tiling scheme. Always "quadbin" for RaQuet. The geographic mapping of cells is determined by `tile_matrix_set` (default `WebMercatorQuad` if absent).
     - `block_width`, `block_height`: Integers specifying tile dimensions in pixels.
     - `min_zoom`: Integer indicating the minimum zoom level (most zoomed out overview available).
     - `max_zoom`: Integer indicating the maximum zoom level (native resolution).
@@ -377,9 +385,10 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 9216,
     "height": 7936,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [-19.69, 26.43, 5.63, 44.09],
     "bounds_crs": "EPSG:4326",
@@ -419,9 +428,10 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 1024,
     "height": 1024,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [0.0, 40.98, 45.0, 66.51],
     "bounds_crs": "EPSG:4326",
@@ -474,9 +484,10 @@ The metadata is stored as a JSON string in the `metadata` column where `block = 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 10980,
     "height": 10980,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [32.99, 16.19, 34.03, 17.18],
     "bounds_crs": "EPSG:4326",
@@ -524,9 +535,10 @@ This example shows a Sentinel-2 TCI (True Color Image) stored with interleaved b
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 32768,
     "height": 14848,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [-180.0, -60.24, 180.0, 65.37],
     "bounds_crs": "EPSG:4326",
@@ -560,9 +572,10 @@ This example shows a Sentinel-2 TCI (True Color Image) stored with interleaved b
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 1440,
     "height": 721,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [-180.0, -90.0, 180.0, 90.0],
     "bounds_crs": "EPSG:4326",
@@ -610,9 +623,10 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 ```json
 {
     "file_format": "raquet",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "width": 400752,
     "height": 131072,
+    "tile_matrix_set": "WebMercatorQuad",
     "crs": "EPSG:3857",
     "bounds": [-180.0, -27.74, 180.0, 90.0],
     "bounds_crs": "EPSG:4326",
@@ -643,6 +657,45 @@ This example represents 36 years (1980-2015) of monthly sea surface temperature 
 ```
 
 This example shows a large global raster converted without overviews (`min_zoom == max_zoom == 10`). This is suitable for analytics workloads that only query at native resolution and don't need visualization at lower zoom levels. Benefits include faster conversion time, smaller file size, and lower memory requirements during conversion.
+
+7. **WGS84 Source on GoogleCRS84Quad (no reprojection)**
+```json
+{
+    "file_format": "raquet",
+    "version": "0.6.0",
+    "width": 43200,
+    "height": 21600,
+    "tile_matrix_set": "GoogleCRS84Quad",
+    "crs": "OGC:CRS84",
+    "bounds": [-180.0, -90.0, 180.0, 90.0],
+    "bounds_crs": "EPSG:4326",
+    "compression": "gzip",
+    "tiling": {
+        "scheme": "quadbin",
+        "block_width": 256,
+        "block_height": 256,
+        "min_zoom": 0,
+        "max_zoom": 7,
+        "pixel_zoom": 15,
+        "num_blocks": 21845
+    },
+    "bands": [{
+        "name": "band_1",
+        "description": "Land surface temperature",
+        "type": "float32",
+        "nodata": "NaN",
+        "unit": "K",
+        "colorinterp": "undefined",
+        "STATISTICS_MINIMUM": 213.4,
+        "STATISTICS_MAXIMUM": 331.2,
+        "STATISTICS_MEAN": 288.6,
+        "STATISTICS_STDDEV": 18.7,
+        "STATISTICS_VALID_PERCENT": 71.3
+    }]
+}
+```
+
+This example shows a global WGS84/EPSG:4326 source raster stored on the `GoogleCRS84Quad` Tile Matrix Set. Because the source is already CRS84, no reprojection to Web Mercator is needed — the data stays in EPSG:4326. The `block` values are ordinary QUADBIN quadkeys, but they map to the CRS84 grid (full `-180..180 / -90..90` world in one 256×256 root tile, `2^z × 2^z` square grid). The same integer would denote a different ground footprint under `WebMercatorQuad`, so consumers MUST honor `tile_matrix_set`. See [Supported Tile Matrix Sets](#supported-tile-matrix-sets).
 
 ## File Extension
 
@@ -678,7 +731,7 @@ When converting NetCDF files with CF (Climate and Forecast) convention time dime
 2. **One row per time step**: Each spatial tile × time combination becomes a separate row
 3. **CF metadata preserved**: Time units, calendar, and reference date stored in metadata
 
-For other data sources, the converter reprojects to Web Mercator and builds pyramids as needed.
+For other data sources, the converter reprojects to the target Tile Matrix Set's CRS (Web Mercator for `WebMercatorQuad`; CRS84/EPSG:4326 for `GoogleCRS84Quad`, which a WGS84 source already satisfies) and builds pyramids as needed.
 
 ## File Identification
 
@@ -711,7 +764,7 @@ Producers MAY include a `processing` object in the metadata to document how the 
 ```
 
 Fields:
-- `source_crs`: Original CRS before reprojection to EPSG:3857
+- `source_crs`: Original CRS before reprojection to the target Tile Matrix Set's CRS (e.g. EPSG:3857 for `WebMercatorQuad`)
 - `resampling`: Algorithm used for reprojection (e.g., `"near"`, `"bilinear"`, `"cubic"`, `"average"`)
 - `overview_resampling`: Algorithm used for overview generation
 - `created_by`: Tool and version that created the file
@@ -725,7 +778,7 @@ Producers MAY extend the metadata with custom fields. To avoid conflicts with fu
    ```json
    {
        "file_format": "raquet",
-       "version": "0.5.0",
+       "version": "0.6.0",
        "custom": {
            "organization": "ACME Corp",
            "project_id": "climate-2024",
@@ -742,15 +795,42 @@ Readers MUST ignore unrecognized fields to ensure forward compatibility.
 
 This section documents key design decisions and their rationale.
 
-### Why Web Mercator (EPSG:3857)?
+### Supported Tile Matrix Sets
 
-RaQuet enforces Web Mercator projection for several reasons:
+RaQuet cells are addressed with QUADBIN quadkeys, but the geographic meaning of a cell is defined by the file's **Tile Matrix Set** (TMS), declared in the `tile_matrix_set` metadata field. Both supported TMSs are single-root, square-grid, 2×-decimation quadtrees, so the same QUADBIN bit layout applies bit-for-bit to either — only the CRS and the cell→ground mapping differ.
+
+| `tile_matrix_set` | CRS | World extent | Default? |
+|-------------------|-----|--------------|----------|
+| `WebMercatorQuad` | EPSG:3857 (Web Mercator) | clipped to ±85.0511° latitude | **yes** (when field absent) |
+| `GoogleCRS84Quad` | OGC:CRS84 (EPSG:4326, lon/lat) | full `-180..180 / -90..90` | no |
+
+Canonical OGC URIs (short aliases above are accepted):
+- `http://www.opengis.net/def/tilematrixset/OGC/1.0/WebMercatorQuad`
+- `http://www.opengis.net/def/tilematrixset/OGC/1.0/GoogleCRS84Quad`
+
+Both are registered OGC building blocks defined in *OGC Two Dimensional Tile Matrix Set and TileSet Metadata 2.0* (OGC 17-083r4); neither is deprecated.
+
+#### WebMercatorQuad (default)
 
 1. **Universal tiling compatibility**: Web Mercator is the de facto standard for web mapping tiles (Google Maps, OpenStreetMap, Bing Maps). This enables direct visualization without reprojection.
 2. **QUADBIN efficiency**: The QUADBIN spatial index is designed around Web Mercator's power-of-2 tile subdivision.
 3. **Interoperability**: Data can be served directly to web mapping libraries (MapLibre, Leaflet, etc.) without server-side reprojection.
 
 **Trade-offs**: Web Mercator introduces area distortion, particularly at high latitudes, and is not suitable for precise geodetic measurements. For analytics requiring original projection fidelity, consider keeping source data alongside RaQuet exports, or use formats that preserve native projections.
+
+#### GoogleCRS84Quad
+
+`GoogleCRS84Quad` addresses the very common case of WGS84/EPSG:4326 source rasters:
+
+1. **No high-latitude area distortion**: CRS84 does not stretch area toward the poles the way Web Mercator does, and it covers the full `-90..90` latitude range (Web Mercator clips at ±85.0511°).
+2. **Avoids the warp**: Source data that is already in EPSG:4326 stays in EPSG:4326 — no reprojection step, and no resampling artifacts from it.
+3. **QUADBIN bit-compatibility**: Because the grid is a `2^z × 2^z` square quadtree with a single root tile, QUADBIN cells are reused bit-for-bit; the same encoding/decoding code works for both TMSs.
+
+The modern TMS 2.0 definition of `GoogleCRS84Quad` places the entire `-180..180 / -90..90` world in a single 256×256 root tile. Because the world is twice as wide (360°) as it is tall (180°) but the root tile is square, pixels are **2:1 anisotropic**: each pixel spans twice as much longitude as latitude. Pin the exact registry definition when implementing; do not assume isotropic pixels.
+
+#### Cells are TMS-parameterized (interoperability hazard)
+
+A `block` value is a bare QUADBIN integer. **The integer alone does not carry the CRS.** A cell value is only interpretable together with its file's `tile_matrix_set`: the same QUADBIN cell denotes a different ground footprint under `WebMercatorQuad` versus `GoogleCRS84Quad`. Consumers MUST read `tile_matrix_set` (defaulting to `WebMercatorQuad` when absent) before interpreting any cell geometry. A pre-0.6.0 consumer that ignores the field will silently misinterpret a `GoogleCRS84Quad` file as Web Mercator.
 
 ### Why Metadata in a Row vs Parquet File Metadata?
 
@@ -782,3 +862,14 @@ RaQuet is designed for 2D spatial rasters with an optional time dimension (X, Y,
 - Complex hierarchical data structures
 
 For 3D+ scientific data, consider Zarr or NetCDF with RaQuet as an export target for spatial visualization layers.
+
+## Changelog
+
+### 0.6.0
+
+- **Added `tile_matrix_set`** (optional string) to the metadata schema. It identifies the [Tile Matrix Set](#supported-tile-matrix-sets) that defines how QUADBIN cells map to the earth, accepting a canonical OGC URI or a short alias:
+  - `WebMercatorQuad` (EPSG:3857) — today's behavior.
+  - `GoogleCRS84Quad` (OGC:CRS84 / EPSG:4326) — new; lets WGS84 sources be tiled without reprojection and avoids Web Mercator's high-latitude area distortion.
+- **Default when absent → `WebMercatorQuad`.** This is a backward-compatible *additive* optional field: every existing v0.x file stays spec-valid and is interpreted as Web Mercator. Hence a minor bump (0.5.0 → 0.6.0), not a major one.
+- `crs` is now described as **derived from / validated against** `tile_matrix_set` rather than fixed to EPSG:3857.
+- **Interop caveat**: a QUADBIN `block` value does not encode its CRS. A NEW `GoogleCRS84Quad` file read by a pre-0.6.0 consumer (one that does not know the field) is silently misinterpreted as Web Mercator. Consumers MUST honor `tile_matrix_set` before interpreting cell geometry. This is an interoperability note, not a reason to bump the major version — existing Mercator files are unaffected.
