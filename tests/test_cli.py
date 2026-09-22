@@ -508,6 +508,39 @@ class TestValidateCommand:
         assert "is_valid" in output_json
         assert output_json["is_valid"] is True
 
+    def test_validate_named_bands(self, runner, temp_dir):
+        """Band columns may have any name matching the metadata (not only band_*)."""
+        example_file = Path(__file__).parent.parent / "examples" / "europe.parquet"
+        if not example_file.exists():
+            pytest.skip("Example file not found")
+
+        table = pq.read_table(example_file)
+        metadata_idx = table.column_names.index("metadata")
+        rows = table.column("metadata").to_pylist()
+        meta_row = next(i for i, v in enumerate(rows) if v is not None)
+        metadata = json.loads(rows[meta_row])
+        renames = {b["name"]: f"named_{b['name']}" for b in metadata["bands"]}
+        for band in metadata["bands"]:
+            band["name"] = renames[band["name"]]
+        rows[meta_row] = json.dumps(metadata)
+
+        def rename(column):
+            for old, new in renames.items():
+                if column == old or column.startswith(old + "_"):
+                    return new + column[len(old):]
+            return column
+
+        import pyarrow as pa
+
+        table = table.set_column(metadata_idx, "metadata", pa.array(rows, type=pa.string()))
+        table = table.rename_columns([rename(c) for c in table.column_names])
+        renamed = temp_dir / "named.parquet"
+        pq.write_table(table, renamed)
+
+        result = runner.invoke(cli, ["validate", str(renamed), "--json"])
+        output_json = json.loads(result.output)
+        assert output_json["is_valid"] is True, output_json
+
     def test_validate_nonexistent_file(self, runner, temp_dir):
         """Test validate with nonexistent file."""
         result = runner.invoke(cli, ["validate", str(temp_dir / "nonexistent.parquet")])
