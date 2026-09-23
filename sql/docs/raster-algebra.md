@@ -97,7 +97,7 @@ After the review fixes, the same check gives the same result: 0 mismatches, maxi
 - unknown option;
 - chained comparison;
 - multi-band input without a band reference;
-- a RaQuet 0.3.0 input (v0.5.0 is required by default).
+- a RaQuet 0.3.0 input (RaQuet v0.5.0 is required).
 
 **Performance.** The pair is `world_elevation` × `world_solar_pvout`: 7,424 blocks each at z0–z7, 256×256 pixels. About 4,400 blocks are written, since solar only covers land.
 
@@ -127,6 +127,6 @@ Bytes billed are the same in every variant (1.11 GB): the join reads each input'
 
 - **Overviews.** By default (`overviews: 'evaluate'`) the expression is evaluated at every zoom level the inputs share. This adds only about 5% slot time and produces a renderable pyramid immediately. For non-linear expressions (NDVI, thresholds), overview pixels are *f(downsampled inputs)*, not *downsample(f(inputs))*, which is fine for visualization. This is recorded in `processing.overviews`. `overviews: 'none'` computes the native resolution only.
 - **Scale/offset.** Bands with `scale`/`offset` in their metadata are converted to physical values (`value * scale + offset`) before evaluation. Pass `apply_scale_offset: false` to work on the stored (DN) values.
-- **Versions.** Inputs must be RaQuet v0.5.0 or later. `require_version` can lower the gate, e.g. `'0.3.0'` for older files with the same per-band structure. Legacy CARTO rasters (with `block_resolution` metadata) are always rejected.
+- **Versions.** Inputs must be RaQuet v0.5.x (`file_format: raquet`). Older RaQuet versions and legacy CARTO rasters (with `block_resolution` metadata) are rejected, as are rasters with a time dimension or lossy (JPEG/WebP) compression.
 - **Output nodata.** The default output is `float32` with nodata `"NaN"` (Zarr v3 encoding). For unsigned integer outputs the default nodata is the type maximum, so masks such as `if($a > 0, 255, 0)` as `uint8` should set `output_nodata` explicitly (e.g. `254`, or `0` if "false" may be nodata).
 - **Snowflake.** The generated UDF body is about 80 KB with the libraries inlined, and it caches the library on `globalThis`.

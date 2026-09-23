@@ -28,7 +28,7 @@ function tile(type, fill, { gzip = true } = {}) {
     const arr = new Ctor(fill.length);
     fill.forEach((v, i) => { arr[i] = v; });
     const bytes = new Uint8Array(arr.buffer);
-    return gzip ? pako.gzip(bytes) : bytes;
+    return lib.base64Encode(gzip ? pako.gzip(bytes) : bytes);
 }
 
 function decodeOut(result, type = 'float32') {
@@ -80,10 +80,12 @@ test('plan: clear errors', () => {
     assert.throws(() => lib.plan('$a', [four]), /has 4 bands/);
     assert.throws(() => lib.plan('$a + $c', [meta(), meta()]), /references \$c but only 2 input/);
     assert.throws(() => lib.plan('$a', [meta(), meta()]), /\$b are not referenced/);
-    assert.throws(() => lib.plan('$a', [{ block_resolution: 5, bands: [] }]), /not a RaQuet raster/);
-    assert.throws(() => lib.plan('$a', [meta({ version: '0.4.0' })], { require_version: '0.5.0' }), /0.5.0 or later/);
+    assert.throws(() => lib.plan('$a', [{ block_resolution: 5, bands: [] }]), /legacy CARTO raster; RaQuet v0.5.0 is required/);
+    assert.throws(() => lib.plan('$a', [meta({ file_format: undefined })]), /not a RaQuet raster/);
     assert.throws(() => lib.plan('$a', [meta({ time: { count: 3 } })]), /time dimension/);
-    assert.throws(() => lib.plan('$a', [meta({ compression: 'webp' })]), /WebP/);
+    assert.throws(() => lib.plan('$a', [meta({ compression: 'webp' })]), /webp compression/);
+    assert.throws(() => lib.plan('$a', [meta({ compression: 'jpeg' })]), /jpeg compression/);
+    assert.throws(() => lib.plan('x = 5; y = $a', [meta()]), /Output 'x' does not reference any input raster/);
 });
 
 test('plan: grid alignment', () => {
@@ -135,7 +137,7 @@ test('evalBlock: NDVI on a 4-band input, div-by-zero -> nodata', () => {
     const p = lib.plan('($a.band_4 - $a.band_3) / ($a.band_4 + $a.band_3)', [four]);
     const red = range(N, i => i % 100);
     const nir = range(N, i => (i % 100 === 0 ? 0 : 200));
-    const u16 = vals => pako.gzip(new Uint8Array(Uint16Array.from(vals).buffer));
+    const u16 = vals => lib.base64Encode(pako.gzip(new Uint8Array(Uint16Array.from(vals).buffer)));
     const payloads = p.operands.map(o => (o.column === 'band_4' ? u16(nir) : u16(red)));
     const [r] = lib.evalBlock(p, payloads);
     const out = decodeOut(r);
@@ -156,7 +158,7 @@ test('evalBlock: interleaved input decoded once, int16 output clamps to nodata',
     assert.equal(p.operands.every(o => o.column === 'pixels'), true);
     const bip = new Uint8Array(N * 3);
     for (let i = 0; i < N; i++) { bip[i * 3] = i % 40; bip[i * 3 + 1] = 7; bip[i * 3 + 2] = 5; }
-    const payload = pako.gzip(bip);
+    const payload = lib.base64Encode(pako.gzip(bip));
     const [r] = lib.evalBlock(p, p.operands.map(() => payload));
     const out = decodeOut(r, 'int16');
     assert.equal(out[1], 995);
@@ -188,9 +190,12 @@ test('evalBlock: physical values (scale/offset) by default, DN on request', () =
     assert.equal(decodeOut(lib.evalBlock(lib.plan('$a', [m], { apply_scale_offset: false }), [t])[0])[0], 4);
 });
 
-test('plan: RaQuet v0.5.0 is required by default', () => {
-    assert.throws(() => lib.plan('$a', [meta({ version: '0.4.0' })]), /RaQuet 0.4.0; version 0.5.0 or later is required/);
-    assert.ok(lib.plan('$a', [meta({ version: '0.4.0' })], { require_version: '0.3.0' }));
+test('plan: RaQuet v0.5.x inputs are required', () => {
+    assert.ok(lib.plan('$a', [meta({ version: '0.5.1' })]));
+    for (const version of ['0.4.0', '0.5.0-rc1', '0.6.0', '1.0.0']) {
+        assert.throws(() => lib.plan('$a', [meta({ version })]), new RegExp(`RaQuet ${version.replace(/\./g, '\\.')}; RaQuet v0.5.0 is required`));
+    }
+    assert.throws(() => lib.plan('$a', [meta()], { require_version: '0.3.0' }), /Unknown option 'require_version'/);
 });
 
 // --------------------------------------------------------------------------
@@ -223,7 +228,7 @@ test('built IIFE bundle works without require/Buffer (BigQuery/Snowflake-like sa
     vm.runInContext(code, ctx);
     const L = ctx.raquetAlgebraLib;
     const p = L.plan('$a * 2', [JSON.stringify(meta())]);
-    const payload = lib.base64Encode(tile('float32', range(N, i => i)));
+    const payload = tile('float32', range(N, i => i));
     const [r] = L.evalBlock(p, [payload]);
     assert.equal(decodeOut(r)[10], 20);
 });
@@ -243,12 +248,12 @@ test('snowflake: generated UDF body evaluates a block', () => {
     const ctx = vm.createContext({});
     const fn = vm.runInContext(`(function(PLAN, OPERANDS) {\n${udf}\n})`, ctx);
     const p = lib.plan('$a * 2', [meta()]);
-    const payload = lib.base64Encode(tile('float32', range(N, i => i)));
-    const [r] = fn(lib.planToBase64(p), [payload]);
+    const payload = tile('float32', range(N, i => i));
+    const [r] = fn(JSON.stringify(p), [payload]);
     assert.equal(decodeOut(r)[10], 20);
     // second call reuses the cached library
     assert.ok(ctx.__raquetAlgebraLib);
-    assert.equal(decodeOut(fn(lib.planToBase64(p), [payload])[0])[3], 6);
+    assert.equal(decodeOut(fn(JSON.stringify(p), [payload])[0])[3], 6);
 });
 
 test('snowflake: generated procedure drives the expected statements', () => {
@@ -419,13 +424,13 @@ test('review #16: options are validated', () => {
 test('review #17: chained comparisons are rejected; prerelease versions are older', () => {
     assert.throws(() => lib.plan('1 < $a < 3', [meta()]), /Chained comparison/);
     assert.ok(lib.plan('(1 < $a) < 3', [meta()]));
-    assert.throws(() => lib.plan('$a', [meta({ version: '0.5.0-rc1' })], { require_version: '0.5.0' }), /0.5.0 or later/);
+    assert.throws(() => lib.plan('$a', [meta({ version: '0.5.0-rc1' })]), /RaQuet v0.5.0 is required/);
 });
 
 test('review #18: interleaved tile with too few channels is an error, not silent nodata', () => {
     const rgb = meta({ band_layout: 'interleaved', bands: ['r', 'g', 'b'].map(n => ({ name: n, type: 'uint8' })) });
     const p = lib.plan('$a.b', [rgb]);
-    assert.throws(() => lib.evalBlock(p, [pako.gzip(new Uint8Array(N * 2))]), /too short|channel/);
+    assert.throws(() => lib.evalBlock(p, [lib.base64Encode(pako.gzip(new Uint8Array(N * 2)))]), /too short/);
 });
 
 test('min/max do not clobber later arguments when reusing buffers', () => {

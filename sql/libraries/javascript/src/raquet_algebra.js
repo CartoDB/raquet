@@ -1,5 +1,8 @@
 /**
- * Raquet Raster Algebra Library
+ * Raster Algebra library (shared by the BigQuery and Snowflake RASTER_ALGEBRA)
+ *
+ * Mirror of the CARTO Analytics Toolbox raster_algebra library (BigQuery and
+ * Snowflake copies are identical): keep them in sync.
  *
  * Pixel-by-pixel evaluation of user-defined expressions over one or more
  * RaQuet rasters, producing a new RaQuet raster (sequential layout, gzip,
@@ -43,8 +46,6 @@ const refName = name => DOLLAR + name;
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const B64_LOOKUP = new Uint8Array(256).fill(255);
 for (let i = 0; i < B64.length; i++) B64_LOOKUP[B64.charCodeAt(i)] = i;
-B64_LOOKUP['-'.charCodeAt(0)] = 62; // tolerate url-safe
-B64_LOOKUP['_'.charCodeAt(0)] = 63;
 
 function base64Decode(str) {
     let len = str.length;
@@ -83,15 +84,6 @@ function base64Encode(bytes) {
         parts.push(s);
     }
     return parts.join('');
-}
-
-function toBytes(value) {
-    if (value === null || value === undefined) return null;
-    if (typeof value === 'string') return base64Decode(value);
-    if (value instanceof Uint8Array) return value;
-    if (value instanceof ArrayBuffer) return new Uint8Array(value);
-    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    throw new Error('Unsupported operand payload type');
 }
 
 // ---------------------------------------------------------------------------
@@ -230,70 +222,70 @@ function parseExpressionTokens(tokens, start) {
     function parsePrimary() {
         const t = next();
         switch (t.type) {
-            case 'num':
-                return node({ t: 'num', v: t.value });
-            case 'input': {
-                const ref = { t: 'ref', input: t.value, band: null, pos: t.pos };
-                if (peek().type === '.') {
-                    next();
-                    const b = next();
-                    if (b.type !== 'id') {
-                        throw new AlgebraError(`Expected band name after '${refName(t.value)}.' at position ${b.pos}`);
-                    }
-                    ref.band = { name: b.value };
-                } else if (peek().type === '[') {
-                    next();
-                    const b = expect('num');
-                    if (!Number.isInteger(b.value) || b.value < 1) {
-                        throw new AlgebraError(`Band index must be a positive integer at position ${b.pos}`);
-                    }
-                    expect(']');
-                    ref.band = { index: b.value };
+        case 'num':
+            return node({ t: 'num', v: t.value });
+        case 'input': {
+            const ref = { t: 'ref', input: t.value, band: null, pos: t.pos };
+            if (peek().type === '.') {
+                next();
+                const b = next();
+                if (b.type !== 'id') {
+                    throw new AlgebraError(`Expected band name after '${refName(t.value)}.' at position ${b.pos}`);
                 }
-                return node(ref);
+                ref.band = { name: b.value };
+            } else if (peek().type === '[') {
+                next();
+                const b = expect('num');
+                if (!Number.isInteger(b.value) || b.value < 1) {
+                    throw new AlgebraError(`Band index must be a positive integer at position ${b.pos}`);
+                }
+                expect(']');
+                ref.band = { index: b.value };
             }
-            case 'id': {
-                const name = t.value.toLowerCase();
-                if (peek().type === '(') {
-                    if (!Object.prototype.hasOwnProperty.call(FUNCTIONS, name)) {
-                        throw new AlgebraError(`Unknown function '${t.value}' at position ${t.pos}. Allowed: ${Object.keys(FUNCTIONS).join(', ')}`);
-                    }
-                    next();
-                    const args = [];
-                    if (peek().type !== ')') {
-                        args.push(parseBinary(0));
-                        while (peek().type === ',') { next(); args.push(parseBinary(0)); }
-                    }
-                    expect(')');
-                    const [lo, hi] = FUNCTIONS[name];
-                    if (args.length < lo || args.length > hi) {
-                        throw new AlgebraError(`Function '${name}' expects ${lo === hi ? lo : `${lo}-${hi}`} arguments, got ${args.length} (position ${t.pos})`);
-                    }
-                    return node({ t: 'call', fn: name, args });
+            return node(ref);
+        }
+        case 'id': {
+            const name = t.value.toLowerCase();
+            if (peek().type === '(') {
+                if (!Object.prototype.hasOwnProperty.call(FUNCTIONS, name)) {
+                    throw new AlgebraError(`Unknown function '${t.value}' at position ${t.pos}. Allowed: ${Object.keys(FUNCTIONS).join(', ')}`);
                 }
-                if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) {
-                    return node({ t: 'num', v: CONSTANTS[name] });
+                next();
+                const args = [];
+                if (peek().type !== ')') {
+                    args.push(parseBinary(0));
+                    while (peek().type === ',') { next(); args.push(parseBinary(0)); }
                 }
-                throw new AlgebraError(`Unknown identifier '${t.value}' at position ${t.pos}. Reference inputs as ${refName('a')}, ${refName('b')}, ... and bands as ${refName('a')}.band_1`);
-            }
-            case '(': {
-                const e = parseBinary(0);
                 expect(')');
-                e.paren = true;
-                return e;
-            }
-            case 'op':
-                if (t.value === '-' || t.value === '+' || t.value === 'not') {
-                    // unary binds tighter than * but looser than ^  (-x^2 == -(x^2))
-                    const operand = parseBinary(t.value === 'not' ? 3 : 8);
-                    if (t.value === '+') return operand;
-                    return node({ t: 'un', op: t.value === '-' ? 'neg' : 'not', x: operand });
+                const [lo, hi] = FUNCTIONS[name];
+                if (args.length < lo || args.length > hi) {
+                    throw new AlgebraError(`Function '${name}' expects ${lo === hi ? lo : `${lo}-${hi}`} arguments, got ${args.length} (position ${t.pos})`);
                 }
-                throw new AlgebraError(`Unexpected operator '${t.value}' at position ${t.pos}`);
-            case 'eof':
-                throw new AlgebraError('Unexpected end of expression');
-            default:
-                throw new AlgebraError(`Unexpected '${t.type}' at position ${t.pos}`);
+                return node({ t: 'call', fn: name, args });
+            }
+            if (Object.prototype.hasOwnProperty.call(CONSTANTS, name)) {
+                return node({ t: 'num', v: CONSTANTS[name] });
+            }
+            throw new AlgebraError(`Unknown identifier '${t.value}' at position ${t.pos}. Reference inputs as ${refName('a')}, ${refName('b')}, ... and bands as ${refName('a')}.band_1`);
+        }
+        case '(': {
+            const e = parseBinary(0);
+            expect(')');
+            e.paren = true;
+            return e;
+        }
+        case 'op':
+            if (t.value === '-' || t.value === '+' || t.value === 'not') {
+                // unary binds tighter than * but looser than ^  (-x^2 == -(x^2))
+                const operand = parseBinary(t.value === 'not' ? 3 : 8);
+                if (t.value === '+') return operand;
+                return node({ t: 'un', op: t.value === '-' ? 'neg' : 'not', x: operand });
+            }
+            throw new AlgebraError(`Unexpected operator '${t.value}' at position ${t.pos}`);
+        case 'eof':
+            throw new AlgebraError('Unexpected end of expression');
+        default:
+            throw new AlgebraError(`Unexpected '${t.type}' at position ${t.pos}`);
         }
     }
 
@@ -362,34 +354,34 @@ const UNARY_FNS = {
 
 function scalarBinary(op, a, b) {
     switch (op) {
-        case '+': return a + b;
-        case '-': return a - b;
-        case '*': return a * b;
-        case '/': return a / b;
-        case '%': return a % b;
-        case '^': return Math.pow(a, b);
-        case '<': return a < b ? 1 : 0;
-        case '<=': return a <= b ? 1 : 0;
-        case '>': return a > b ? 1 : 0;
-        case '>=': return a >= b ? 1 : 0;
-        case '==': return a === b ? 1 : 0;
-        case '!=': return a !== b ? 1 : 0;
-        case 'and': return (a && b) ? 1 : 0;
-        case 'or': return (a || b) ? 1 : 0;
-        default: throw new AlgebraError(`Unknown operator ${op}`);
+    case '+': return a + b;
+    case '-': return a - b;
+    case '*': return a * b;
+    case '/': return a / b;
+    case '%': return a % b;
+    case '^': return Math.pow(a, b);
+    case '<': return a < b ? 1 : 0;
+    case '<=': return a <= b ? 1 : 0;
+    case '>': return a > b ? 1 : 0;
+    case '>=': return a >= b ? 1 : 0;
+    case '==': return a === b ? 1 : 0;
+    case '!=': return a !== b ? 1 : 0;
+    case 'and': return (a && b) ? 1 : 0;
+    case 'or': return (a || b) ? 1 : 0;
+    default: throw new AlgebraError(`Unknown operator ${op}`);
     }
 }
 
 function scalarCall(fn, args) {
     if (UNARY_FNS[fn]) return UNARY_FNS[fn](args[0]);
     switch (fn) {
-        case 'if': return args[0] ? args[1] : args[2];
-        case 'pow': return Math.pow(args[0], args[1]);
-        case 'atan2': return Math.atan2(args[0], args[1]);
-        case 'clamp': return Math.min(Math.max(args[0], args[1]), args[2]);
-        case 'min': return Math.min(...args);
-        case 'max': return Math.max(...args);
-        default: throw new AlgebraError(`Unknown function ${fn}`);
+    case 'if': return args[0] ? args[1] : args[2];
+    case 'pow': return Math.pow(args[0], args[1]);
+    case 'atan2': return Math.atan2(args[0], args[1]);
+    case 'clamp': return Math.min(Math.max(args[0], args[1]), args[2]);
+    case 'min': return Math.min(...args);
+    case 'max': return Math.max(...args);
+    default: throw new AlgebraError(`Unknown function ${fn}`);
     }
 }
 
@@ -463,9 +455,9 @@ function halfToFloat(bits) {
 function normalizeNodata(value, type) {
     if (value === null || Number.isNaN(value) || !Number.isFinite(value)) return value;
     switch (type) {
-        case 'float32': return Math.fround(value);
-        case 'float16': return halfToFloat(floatToHalf(value));
-        default: return value;
+    case 'float32': return Math.fround(value);
+    case 'float16': return halfToFloat(floatToHalf(value));
+    default: return value;
     }
 }
 
@@ -482,20 +474,8 @@ function parseMeta(meta, label) {
     return m;
 }
 
-function compareVersions(a, b) {
-    const parse = v => {
-        const [core, pre] = String(v).split('-');
-        return { nums: core.split('.').map(Number), pre: pre !== undefined };
-    };
-    const pa = parse(a);
-    const pb = parse(b);
-    for (let i = 0; i < 3; i++) {
-        const d = (pa.nums[i] || 0) - (pb.nums[i] || 0);
-        if (d) return d;
-    }
-    if (pa.pre !== pb.pre) return pa.pre ? -1 : 1; // 0.5.0-rc1 < 0.5.0
-    return 0;
-}
+// v0.5 patch releases keep the v0.5.0 structure; RaQuet 0.x minor releases may break it
+const SUPPORTED_VERSION_RE = /^0\.5\.\d+$/;
 
 // Web Mercator pixel coordinates at a given zoom
 function lonToPixelX(lon, zoom) {
@@ -512,7 +492,7 @@ function latToPixelY(lat, zoom) {
 // ---------------------------------------------------------------------------
 const OPTION_KEYS = [
     'output_type', 'output_nodata', 'overviews', 'apply_scale_offset',
-    'require_version', 'compression', 'compression_level'
+    'compression', 'compression_level'
 ];
 
 function parseOptions(options) {
@@ -546,9 +526,6 @@ function parseOptions(options) {
     }
     if (opts.apply_scale_offset !== undefined && typeof opts.apply_scale_offset !== 'boolean') {
         throw new AlgebraError('apply_scale_offset must be true or false');
-    }
-    if (opts.require_version !== undefined && !/^\d+\.\d+\.\d+$/.test(String(opts.require_version))) {
-        throw new AlgebraError('require_version must be a version like "0.5.0"');
     }
     return opts;
 }
@@ -584,7 +561,6 @@ function astDepth(n) {
  *   overviews:          'evaluate' (default) | 'none'
  *   apply_scale_offset: true (default: bands with scale/offset are converted to
  *                       physical values before evaluating; false = stored DN)
- *   require_version:    minimum RaQuet version accepted (default '0.5.0')
  *   compression:        'gzip' (default) | 'none'
  *   compression_level:  1-9 (default 1: ~20% less CPU than 6 for <1% larger tiles)
  */
@@ -596,19 +572,16 @@ function plan(expression, metadatas, options) {
     if (metadatas.length > 26) throw new AlgebraError('At most 26 input rasters are supported');
 
     const metas = metadatas.map((m, i) => parseMeta(m, inputRef(i)));
-    const minVersion = opts.require_version || '0.5.0';
     const applyScaleOffset = opts.apply_scale_offset !== false;
 
     metas.forEach((m, i) => {
         const label = inputRef(i);
-        // RaQuet < 0.5 has no file_format field; legacy CARTO rasters use block_resolution
-        const isRaquet = m.file_format === 'raquet' ||
-            (m.file_format === undefined && m.tiling && typeof m.tiling === 'object' && m.block_resolution === undefined);
-        if (!isRaquet || !m.tiling) {
-            throw new AlgebraError(`Input ${label} is not a RaQuet raster (legacy CARTO raster format is not supported; re-import it to produce a RaQuet v0.5.0 table)`);
+        if (m.file_format !== 'raquet' || !m.tiling || typeof m.tiling !== 'object') {
+            const format = m.block_resolution !== undefined ? 'a legacy CARTO raster' : 'not a RaQuet raster';
+            throw new AlgebraError(`Input ${label} is ${format}; RaQuet v0.5.0 is required`);
         }
-        if (!m.version || compareVersions(m.version, minVersion) < 0) {
-            throw new AlgebraError(`Input ${label} is RaQuet ${m.version || 'unknown'}; version ${minVersion} or later is required`);
+        if (!SUPPORTED_VERSION_RE.test(String(m.version))) {
+            throw new AlgebraError(`Input ${label} is RaQuet ${m.version || 'with no version'}; RaQuet v0.5.0 is required`);
         }
         if (m.time) {
             throw new AlgebraError(`Input ${label} has a time dimension; multi-temporal raster algebra is not supported`);
@@ -616,11 +589,14 @@ function plan(expression, metadatas, options) {
         if ((m.tiling.scheme || 'quadbin') !== 'quadbin') {
             throw new AlgebraError(`Input ${label} uses unsupported tiling scheme '${m.tiling.scheme}'`);
         }
+        if (![m.tiling.block_width, m.tiling.block_height, m.tiling.max_zoom].every(Number.isInteger)) {
+            throw new AlgebraError(`Input ${label} has invalid tiling metadata: block_width, block_height and max_zoom must be integers`);
+        }
         if (!Array.isArray(m.bands) || m.bands.length === 0) {
             throw new AlgebraError(`Input ${label} has no bands in its metadata`);
         }
-        if (m.compression === 'webp') {
-            throw new AlgebraError(`Input ${label} uses WebP compression, which raster algebra cannot decode in SQL UDFs`);
+        if (m.compression === 'webp' || m.compression === 'jpeg') {
+            throw new AlgebraError(`Input ${label} uses ${m.compression} compression, which raster algebra cannot decode in SQL UDFs`);
         }
     });
 
@@ -733,34 +709,34 @@ function plan(expression, metadatas, options) {
     // Lower to the evaluation program, folding constant subtrees
     function lower(n) {
         switch (n.t) {
-            case 'num': return { t: 'num', v: n.v };
-            case 'ref': return { t: 'op', i: resolveRef(n) };
-            case 'un': {
-                const x = lower(n.x);
-                if (x.t === 'num') {
-                    const v = n.op === 'neg' ? -x.v : (x.v ? 0 : 1);
-                    if (Number.isFinite(v)) return { t: 'num', v };
-                }
-                return { t: 'un', op: n.op, x };
+        case 'num': return { t: 'num', v: n.v };
+        case 'ref': return { t: 'op', i: resolveRef(n) };
+        case 'un': {
+            const x = lower(n.x);
+            if (x.t === 'num') {
+                const v = n.op === 'neg' ? -x.v : (x.v ? 0 : 1);
+                if (Number.isFinite(v)) return { t: 'num', v };
             }
-            case 'bin': {
-                const l = lower(n.l);
-                const r = lower(n.r);
-                if (l.t === 'num' && r.t === 'num') {
-                    const v = scalarBinary(n.op, l.v, r.v);
-                    if (Number.isFinite(v)) return { t: 'num', v };
-                }
-                return { t: 'bin', op: n.op, l, r };
+            return { t: 'un', op: n.op, x };
+        }
+        case 'bin': {
+            const l = lower(n.l);
+            const r = lower(n.r);
+            if (l.t === 'num' && r.t === 'num') {
+                const v = scalarBinary(n.op, l.v, r.v);
+                if (Number.isFinite(v)) return { t: 'num', v };
             }
-            case 'call': {
-                const args = n.args.map(lower);
-                if (args.every(a => a.t === 'num')) {
-                    const v = scalarCall(n.fn, args.map(a => a.v));
-                    if (Number.isFinite(v)) return { t: 'num', v };
-                }
-                return { t: 'call', fn: n.fn, args };
+            return { t: 'bin', op: n.op, l, r };
+        }
+        case 'call': {
+            const args = n.args.map(lower);
+            if (args.every(a => a.t === 'num')) {
+                const v = scalarCall(n.fn, args.map(a => a.v));
+                if (Number.isFinite(v)) return { t: 'num', v };
             }
-            default: throw new AlgebraError('Invalid expression');
+            return { t: 'call', fn: n.fn, args };
+        }
+        default: throw new AlgebraError('Invalid expression');
         }
     }
 
@@ -787,6 +763,7 @@ function plan(expression, metadatas, options) {
         })(program);
         const opList = [...refs].sort((x, y) => x - y);
         const inputs = [...new Set(opList.map(i => operands[i].input))].sort((x, y) => x - y);
+        if (!inputs.length) throw new AlgebraError(`Output '${name}' does not reference any input raster`);
         return { name, program, operands: opList, inputs };
     });
 
@@ -826,7 +803,6 @@ function plan(expression, metadatas, options) {
     const compression = opts.compression === 'none' ? null : 'gzip';
 
     return {
-        version: 1,
         expression,
         block_width: g0.block_width,
         block_height: g0.block_height,
@@ -851,8 +827,6 @@ function plan(expression, metadatas, options) {
 // ---------------------------------------------------------------------------
 // Tile decoding
 // ---------------------------------------------------------------------------
-const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
-
 function readTypedArray(bytes, type, count) {
     const size = TYPE_SIZES[type];
     const needed = count * size;
@@ -862,34 +836,26 @@ function readTypedArray(bytes, type, count) {
     // Copy into an aligned buffer
     const buf = new Uint8Array(needed);
     buf.set(bytes.subarray(0, needed));
-    if (LITTLE_ENDIAN) {
-        switch (type) {
-            case 'uint8': return buf;
-            case 'int8': return new Int8Array(buf.buffer);
-            case 'uint16': return new Uint16Array(buf.buffer);
-            case 'int16': return new Int16Array(buf.buffer);
-            case 'uint32': return new Uint32Array(buf.buffer);
-            case 'int32': return new Int32Array(buf.buffer);
-            case 'float32': return new Float32Array(buf.buffer);
-            case 'float64': return new Float64Array(buf.buffer);
-        }
+    // RaQuet tiles are little-endian, like the hosts BigQuery and Snowflake run on
+    switch (type) {
+    case 'uint8': return buf;
+    case 'int8': return new Int8Array(buf.buffer);
+    case 'uint16': return new Uint16Array(buf.buffer);
+    case 'int16': return new Int16Array(buf.buffer);
+    case 'uint32': return new Uint32Array(buf.buffer);
+    case 'int32': return new Int32Array(buf.buffer);
+    case 'float32': return new Float32Array(buf.buffer);
+    case 'float64': return new Float64Array(buf.buffer);
     }
+    // float16, int64 and uint64 have no native typed array here
     const view = new DataView(buf.buffer);
     const out = new Float64Array(count);
     for (let i = 0; i < count; i++) {
         const o = i * size;
         switch (type) {
-            case 'uint8': out[i] = view.getUint8(o); break;
-            case 'int8': out[i] = view.getInt8(o); break;
-            case 'uint16': out[i] = view.getUint16(o, true); break;
-            case 'int16': out[i] = view.getInt16(o, true); break;
-            case 'uint32': out[i] = view.getUint32(o, true); break;
-            case 'int32': out[i] = view.getInt32(o, true); break;
-            case 'float32': out[i] = view.getFloat32(o, true); break;
-            case 'float64': out[i] = view.getFloat64(o, true); break;
-            case 'float16': out[i] = halfToFloat(view.getUint16(o, true)); break;
-            case 'uint64': out[i] = view.getUint32(o + 4, true) * 4294967296 + view.getUint32(o, true); break;
-            case 'int64': out[i] = view.getInt32(o + 4, true) * 4294967296 + view.getUint32(o, true); break;
+        case 'float16': out[i] = halfToFloat(view.getUint16(o, true)); break;
+        case 'uint64': out[i] = view.getUint32(o + 4, true) * 4294967296 + view.getUint32(o, true); break;
+        case 'int64': out[i] = view.getInt32(o + 4, true) * 4294967296 + view.getUint32(o, true); break;
         }
     }
     return out;
@@ -900,36 +866,19 @@ function readTypedArray(bytes, type, count) {
  * Returns null for a missing/empty payload (treated as all-nodata).
  */
 function decodeOperand(payload, op, pixelCount, cache) {
-    let bytes = toBytes(payload);
-    if (!bytes || bytes.length === 0) return null;
+    if (!payload) return null;
+    let bytes = base64Decode(payload);
 
     // Interleaved tiles referenced by several operands are decoded once
     const cacheKey = op.layout === 'interleaved' ? `${op.input}` : null;
-    let raw = cacheKey && cache ? cache.get(cacheKey) : undefined;
-    const bandCount = op.layout === 'interleaved' ? op.band_count : 1;
-
-    if (raw === undefined) {
-        if (op.compression === 'jpeg') {
-            const jpeg = (typeof jpegDecoderLib !== 'undefined') ? jpegDecoderLib : null; // eslint-disable-line no-undef
-            if (!jpeg) throw new AlgebraError('JPEG-compressed rasters are not supported by raster algebra');
-            const img = jpeg.decode(bytes);
-            raw = { values: img.data, channels: img.channels };
-        } else {
-            if (op.compression === 'gzip') bytes = inflate(bytes);
-            raw = { values: readTypedArray(bytes, op.type, pixelCount * bandCount), channels: bandCount };
-        }
-        if (cacheKey && cache) cache.set(cacheKey, raw);
+    const stride = op.layout === 'interleaved' ? op.band_count : 1;
+    let src = cacheKey && cache ? cache.get(cacheKey) : undefined;
+    if (src === undefined) {
+        if (op.compression === 'gzip') bytes = inflate(bytes);
+        src = readTypedArray(bytes, op.type, pixelCount * stride);
+        if (cacheKey && cache) cache.set(cacheKey, src);
     }
-
-    const src = raw.values;
-    const stride = raw.channels;
     const offset = op.layout === 'interleaved' ? op.band : 0;
-    if (offset >= stride) {
-        throw new AlgebraError(`Tile of ${inputRef(op.input)} has ${stride} channel(s) but band ${op.band + 1} was requested`);
-    }
-    if (src.length < pixelCount * stride) {
-        throw new AlgebraError(`Tile of ${inputRef(op.input)} has ${src.length} values; expected ${pixelCount * stride}`);
-    }
     const values = new Float64Array(pixelCount);
     const valid = new Uint8Array(pixelCount);
     const nodata = parseNodata(op.nodata);
@@ -981,91 +930,91 @@ function evaluate(program, operandValues, n) {
 
     function ev(node) {
         switch (node.t) {
-            case 'num':
-                return constant(node.v);
-            case 'op':
-                return operandValues[node.i];
-            case 'un': {
-                const x = ev(node.x);
-                const out = target(x);
-                if (node.op === 'neg') for (let i = 0; i < n; i++) out[i] = -x[i];
-                else for (let i = 0; i < n; i++) out[i] = x[i] ? 0 : 1;
-                release([x], out);
-                return out;
+        case 'num':
+            return constant(node.v);
+        case 'op':
+            return operandValues[node.i];
+        case 'un': {
+            const x = ev(node.x);
+            const out = target(x);
+            if (node.op === 'neg') for (let i = 0; i < n; i++) out[i] = -x[i];
+            else for (let i = 0; i < n; i++) out[i] = x[i] ? 0 : 1;
+            release([x], out);
+            return out;
+        }
+        case 'bin': {
+            const l = ev(node.l);
+            const r = ev(node.r);
+            const out = target(l, r);
+            switch (node.op) {
+            case '+': for (let i = 0; i < n; i++) out[i] = l[i] + r[i]; break;
+            case '-': for (let i = 0; i < n; i++) out[i] = l[i] - r[i]; break;
+            case '*': for (let i = 0; i < n; i++) out[i] = l[i] * r[i]; break;
+            case '/': for (let i = 0; i < n; i++) out[i] = l[i] / r[i]; break;
+            case '%': for (let i = 0; i < n; i++) out[i] = l[i] % r[i]; break;
+            case '^': for (let i = 0; i < n; i++) out[i] = Math.pow(l[i], r[i]); break;
+            case '<': for (let i = 0; i < n; i++) out[i] = l[i] < r[i] ? 1 : 0; break;
+            case '<=': for (let i = 0; i < n; i++) out[i] = l[i] <= r[i] ? 1 : 0; break;
+            case '>': for (let i = 0; i < n; i++) out[i] = l[i] > r[i] ? 1 : 0; break;
+            case '>=': for (let i = 0; i < n; i++) out[i] = l[i] >= r[i] ? 1 : 0; break;
+            case '==': for (let i = 0; i < n; i++) out[i] = l[i] === r[i] ? 1 : 0; break;
+            case '!=': for (let i = 0; i < n; i++) out[i] = l[i] !== r[i] ? 1 : 0; break;
+            case 'and': for (let i = 0; i < n; i++) out[i] = (l[i] && r[i]) ? 1 : 0; break;
+            case 'or': for (let i = 0; i < n; i++) out[i] = (l[i] || r[i]) ? 1 : 0; break;
+            default: throw new AlgebraError(`Unknown operator ${node.op}`);
             }
-            case 'bin': {
-                const l = ev(node.l);
-                const r = ev(node.r);
-                const out = target(l, r);
-                switch (node.op) {
-                    case '+': for (let i = 0; i < n; i++) out[i] = l[i] + r[i]; break;
-                    case '-': for (let i = 0; i < n; i++) out[i] = l[i] - r[i]; break;
-                    case '*': for (let i = 0; i < n; i++) out[i] = l[i] * r[i]; break;
-                    case '/': for (let i = 0; i < n; i++) out[i] = l[i] / r[i]; break;
-                    case '%': for (let i = 0; i < n; i++) out[i] = l[i] % r[i]; break;
-                    case '^': for (let i = 0; i < n; i++) out[i] = Math.pow(l[i], r[i]); break;
-                    case '<': for (let i = 0; i < n; i++) out[i] = l[i] < r[i] ? 1 : 0; break;
-                    case '<=': for (let i = 0; i < n; i++) out[i] = l[i] <= r[i] ? 1 : 0; break;
-                    case '>': for (let i = 0; i < n; i++) out[i] = l[i] > r[i] ? 1 : 0; break;
-                    case '>=': for (let i = 0; i < n; i++) out[i] = l[i] >= r[i] ? 1 : 0; break;
-                    case '==': for (let i = 0; i < n; i++) out[i] = l[i] === r[i] ? 1 : 0; break;
-                    case '!=': for (let i = 0; i < n; i++) out[i] = l[i] !== r[i] ? 1 : 0; break;
-                    case 'and': for (let i = 0; i < n; i++) out[i] = (l[i] && r[i]) ? 1 : 0; break;
-                    case 'or': for (let i = 0; i < n; i++) out[i] = (l[i] || r[i]) ? 1 : 0; break;
-                    default: throw new AlgebraError(`Unknown operator ${node.op}`);
+            release([l, r], out);
+            return out;
+        }
+        case 'call': {
+            const args = node.args.map(ev);
+            // min/max read later arguments after writing: only the first may be reused
+            const out = (node.fn === 'min' || node.fn === 'max') ? target(args[0]) : target(...args);
+            const f = UNARY_FNS[node.fn];
+            if (f) {
+                const x = args[0];
+                for (let i = 0; i < n; i++) out[i] = f(x[i]);
+            } else {
+                switch (node.fn) {
+                case 'if': {
+                    const [c, a, b] = args;
+                    for (let i = 0; i < n; i++) out[i] = c[i] ? a[i] : b[i];
+                    break;
                 }
-                release([l, r], out);
-                return out;
-            }
-            case 'call': {
-                const args = node.args.map(ev);
-                // min/max read later arguments after writing: only the first may be reused
-                const out = (node.fn === 'min' || node.fn === 'max') ? target(args[0]) : target(...args);
-                const f = UNARY_FNS[node.fn];
-                if (f) {
-                    const x = args[0];
-                    for (let i = 0; i < n; i++) out[i] = f(x[i]);
-                } else {
-                    switch (node.fn) {
-                        case 'if': {
-                            const [c, a, b] = args;
-                            for (let i = 0; i < n; i++) out[i] = c[i] ? a[i] : b[i];
-                            break;
-                        }
-                        case 'pow': {
-                            const [a, b] = args;
-                            for (let i = 0; i < n; i++) out[i] = Math.pow(a[i], b[i]);
-                            break;
-                        }
-                        case 'atan2': {
-                            const [a, b] = args;
-                            for (let i = 0; i < n; i++) out[i] = Math.atan2(a[i], b[i]);
-                            break;
-                        }
-                        case 'clamp': {
-                            const [x, lo, hi] = args;
-                            for (let i = 0; i < n; i++) out[i] = Math.min(Math.max(x[i], lo[i]), hi[i]);
-                            break;
-                        }
-                        case 'min':
-                        case 'max': {
-                            const pick = node.fn === 'min' ? Math.min : Math.max;
-                            const first = args[0];
-                            for (let i = 0; i < n; i++) out[i] = first[i];
-                            for (let k = 1; k < args.length; k++) {
-                                const a = args[k];
-                                for (let i = 0; i < n; i++) out[i] = pick(out[i], a[i]);
-                            }
-                            break;
-                        }
-                        default: throw new AlgebraError(`Unknown function ${node.fn}`);
+                case 'pow': {
+                    const [a, b] = args;
+                    for (let i = 0; i < n; i++) out[i] = Math.pow(a[i], b[i]);
+                    break;
+                }
+                case 'atan2': {
+                    const [a, b] = args;
+                    for (let i = 0; i < n; i++) out[i] = Math.atan2(a[i], b[i]);
+                    break;
+                }
+                case 'clamp': {
+                    const [x, lo, hi] = args;
+                    for (let i = 0; i < n; i++) out[i] = Math.min(Math.max(x[i], lo[i]), hi[i]);
+                    break;
+                }
+                case 'min':
+                case 'max': {
+                    const pick = node.fn === 'min' ? Math.min : Math.max;
+                    const first = args[0];
+                    for (let i = 0; i < n; i++) out[i] = first[i];
+                    for (let k = 1; k < args.length; k++) {
+                        const a = args[k];
+                        for (let i = 0; i < n; i++) out[i] = pick(out[i], a[i]);
                     }
+                    break;
                 }
-                release(args, out);
-                return out;
+                default: throw new AlgebraError(`Unknown function ${node.fn}`);
+                }
             }
-            default:
-                throw new AlgebraError('Invalid program');
+            release(args, out);
+            return out;
+        }
+        default:
+            throw new AlgebraError('Invalid program');
         }
     }
     return ev(program);
@@ -1125,23 +1074,6 @@ function encodeBand(result, valid, output) {
         }
     }
     let bytes = new Uint8Array(typed.buffer, typed.byteOffset, typed.byteLength);
-    if (!LITTLE_ENDIAN && TYPE_SIZES[output.type] > 1) {
-        const le = new Uint8Array(bytes.length);
-        const view = new DataView(le.buffer);
-        const size = TYPE_SIZES[output.type];
-        for (let i = 0; i < n; i++) {
-            const o = i * size;
-            switch (output.type) {
-                case 'uint16': view.setUint16(o, typed[i], true); break;
-                case 'int16': view.setInt16(o, typed[i], true); break;
-                case 'uint32': view.setUint32(o, typed[i], true); break;
-                case 'int32': view.setInt32(o, typed[i], true); break;
-                case 'float32': view.setFloat32(o, typed[i], true); break;
-                case 'float64': view.setFloat64(o, typed[i], true); break;
-            }
-        }
-        bytes = le;
-    }
     // Always honour the declared compression, also for all-nodata bands
     if (output.compression === 'gzip') {
         bytes = gzip(bytes, { level: output.compression_level || 1 });
@@ -1187,12 +1119,11 @@ function loadPlan(planArg) {
 /**
  * Evaluate all output bands for one block.
  * @param {string|object} planArg  plan (JSON or base64 JSON)
- * @param {Array} payloads         one tile payload per plan.operands entry
- * @param {object} [opts]          { encoding: 'base64' | 'bytes' }
+ * @param {Array} payloads         one base64 tile payload per plan.operands entry
  * @returns {Array|null} one {data,count,min,max,sum,mean,stddev} per output
  *          band, or null when every output pixel is nodata (block dropped)
  */
-function evalBlock(planArg, payloads, opts) {
+function evalBlock(planArg, payloads) {
     const p = loadPlan(planArg);
     const n = p.block_width * p.block_height;
     if (!Array.isArray(payloads) || payloads.length !== p.operands.length) {
@@ -1220,9 +1151,8 @@ function evalBlock(planArg, payloads, opts) {
         results.push(enc);
     }
     if (!anyValid) return null;
-    const asBase64 = !opts || opts.encoding !== 'bytes';
     return results.map(r => ({
-        data: asBase64 ? base64Encode(r.data) : r.data,
+        data: base64Encode(r.data),
         count: r.count,
         min: r.min,
         max: r.max,
@@ -1240,9 +1170,9 @@ function evalBlock(planArg, payloads, opts) {
  * @param {string|object} stats  { num_blocks, min_zoom, max_zoom,
  *        bands: [{count, min, max, sum, m2}] }  (native-zoom aggregates;
  *        m2 = sum of squared deviations from the band mean)
- * @param {object} [extra]  { inputs: [table names], created_by }
+ * @param {string[]} inputs  input table names, recorded as provenance
  */
-function buildMetadata(planArg, stats, extra) {
+function buildMetadata(planArg, stats, inputs) {
     const p = loadPlan(planArg);
     const s = (typeof stats === 'string' ? JSON.parse(stats) : stats) || {};
     const pixelZoom = p.max_zoom + Math.round(Math.log2(p.block_width));
@@ -1295,11 +1225,11 @@ function buildMetadata(planArg, stats, extra) {
         tile_statistics_columns: STAT_SUFFIXES,
         bands,
         processing: {
-            created_by: (extra && extra.created_by) || 'RASTER_ALGEBRA',
+            created_by: 'RASTER_ALGEBRA',
             created_at: new Date().toISOString(),
             operation: 'raster_algebra',
             expression: p.expression,
-            inputs: (extra && extra.inputs) || undefined,
+            inputs,
             overviews: p.overviews === 'evaluate' ? 'expression evaluated per zoom level' : 'none',
             apply_scale_offset: p.apply_scale_offset
         }
@@ -1427,12 +1357,9 @@ FROM s CROSS JOIN m CROSS JOIN g`;
 }
 
 /** Single-row INSERT of the metadata row; the JSON travels as a base64 literal. */
-function buildBigQueryMetadataInsertSql(planArg, stats, inputs, outputTable, createdBy) {
+function buildBigQueryMetadataInsertSql(planArg, stats, inputs, outputTable) {
     const out = bigQueryName(outputTable, BQ_TABLE_RE, 'output table');
-    const metadata = buildMetadata(planArg, stats, {
-        inputs: inputs.map(t => String(t).trim().replace(/`/g, '')),
-        created_by: createdBy
-    });
+    const metadata = buildMetadata(planArg, stats, inputs.map(t => String(t).trim().replace(/`/g, '')));
     return `INSERT INTO \`${out}\` (block, metadata)
 VALUES (0, SAFE_CONVERT_BYTES_TO_STRING(FROM_BASE64('${planToBase64(metadata)}')))`;
 }
@@ -1568,17 +1495,11 @@ function buildSnowflakeMetadataInsertSql(outputTable) {
     return `INSERT INTO ${out} ("BLOCK", "METADATA") VALUES (0, ?)`;
 }
 
-function decodeExtra(extra) {
-    if (!extra) return undefined;
-    if (typeof extra === 'object') return extra;
-    return JSON.parse(extra[0] === '{' ? extra : decodeBase64Text(extra));
-}
-
 export default {
     parse,
     plan,
     evalBlock,
-    buildMetadata: (planArg, stats, extra) => buildMetadata(planArg, stats, decodeExtra(extra)),
+    buildMetadata,
     buildBigQuerySql,
     buildBigQueryStatsSql,
     buildBigQueryMetadataInsertSql,
@@ -1587,7 +1508,6 @@ export default {
     buildSnowflakeMetadataInsertSql,
     snowflakeTableName,
     inputRef,
-    planToBase64,
     base64Encode,
     base64Decode,
     AlgebraError

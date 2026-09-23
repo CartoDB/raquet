@@ -20,8 +20,7 @@
 --
 -- Expression syntax: see libraries/javascript/src/raquet_algebra.js.
 -- Options (JSON): output_type, output_nodata, overviews ('evaluate' | 'none'),
---   apply_scale_offset (default true), require_version (default '0.5.0'),
---   compression ('gzip' | 'none'),
+--   apply_scale_offset (default true), compression ('gzip' | 'none'),
 --   compression_level (default 1).
 --
 -- Nodata: an output pixel is nodata when any referenced operand pixel is
@@ -60,7 +59,7 @@ CREATE OR REPLACE FUNCTION `cartobq.raquet.__RASTER_ALGEBRA_BLOCK`(
 )
 RETURNS ARRAY<STRUCT<data BYTES, count FLOAT64, min FLOAT64, max FLOAT64, sum FLOAT64, mean FLOAT64, stddev FLOAT64>>
 LANGUAGE js
-OPTIONS (library = ["gs://cartobq-raquet-libs/raquet_algebra.js", "gs://cartobq-raquet-libs/jpeg_decoder.js"])
+OPTIONS (library = ["gs://cartobq-raquet-libs/raquet_algebra.js"])
 AS r"""
     return raquetAlgebraLib.evalBlock(plan, operands);
 """;

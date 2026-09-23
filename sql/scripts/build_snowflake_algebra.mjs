@@ -27,8 +27,7 @@ function load(file) {
 }
 
 const sql = fs.readFileSync(template, 'utf8')
-    .replaceAll('/*__RAQUET_ALGEBRA_LIB__*/', () => load('raquet_algebra.js'))
-    .replaceAll('/*__JPEG_DECODER_LIB__*/', () => load('jpeg_decoder.js'));
+    .replaceAll('/*__RAQUET_ALGEBRA_LIB__*/', () => load('raquet_algebra.js'));
 
 // Sanity: exactly one opening and one closing $$ per object
 const delimiters = (sql.match(/\$\$/g) || []).length;
