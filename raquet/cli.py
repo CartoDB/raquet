@@ -771,7 +771,7 @@ def convert_earthengine(
     # Lazy import to handle optional dependency
     try:
         from . import earthengine as ee_module
-    except ImportError as e:
+    except ImportError:
         click.echo(
             "Error: Earth Engine support requires additional dependencies.\n"
             "Install with: pip install raquet[earthengine]",
@@ -816,7 +816,7 @@ def convert_earthengine(
             click.echo(f"  Export status: {state} ({elapsed:.0f}s elapsed)")
 
     try:
-        click.echo(f"Converting Earth Engine image to Raquet format...")
+        click.echo("Converting Earth Engine image to Raquet format...")
         click.echo(f"  Image: {image_spec}")
         click.echo(f"  GCS bucket: {gcs_bucket}")
         if bands_list:
@@ -1278,7 +1278,7 @@ def partition_command(
         # Summary
         total_size = sum(f.stat().st_size for f in files_written) / (1024 * 1024)
         orig_size = input_file.stat().st_size / (1024 * 1024)
-        click.echo(f"\nPartition complete:")
+        click.echo("\nPartition complete:")
         click.echo(f"  Original: {orig_size:.1f} MB ({len(blocks)} native tiles)")
         click.echo(f"  Partitioned: {total_size:.1f} MB across {len(files_written)} files")
         if files_written:

@@ -12,7 +12,10 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import ee
 
 logger = logging.getLogger(__name__)
 
@@ -386,7 +389,7 @@ def poll_task_status(
         EarthEngineTaskError: If task fails
         TimeoutError: If timeout exceeded
     """
-    ee = _get_ee()
+    _get_ee()  # fail early if earthengine-api is not installed
 
     start_time = time.time()
 
