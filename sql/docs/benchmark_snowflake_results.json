@@ -1,0 +1,152 @@
+[
+  {
+    "engine": "snowflake",
+    "storage": "imported",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_small_site",
+    "description": "Small candidate site (~0.5 km², 15 tiles)",
+    "median_seconds": 10.43,
+    "all_timings": [10.01, 10.43, 11.62],
+    "result": {
+      "total_pixels": 983040,
+      "mean_slope": 3.7687,
+      "min_slope": 0.001576102222,
+      "max_slope": 60.548530579,
+      "num_tiles": 15
+    }
+  },
+  {
+    "engine": "snowflake",
+    "storage": "imported",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_medium_site",
+    "description": "Medium candidate site (~4 km², 88 tiles)",
+    "median_seconds": 11.99,
+    "all_timings": [11.99, 10.89, 12.09],
+    "result": {
+      "total_pixels": 5767168,
+      "mean_slope": 3.6301,
+      "min_slope": 0.000437132112,
+      "max_slope": 60.548530579,
+      "num_tiles": 88
+    }
+  },
+  {
+    "engine": "snowflake",
+    "storage": "imported",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_large_site",
+    "description": "Large candidate site (~50 km², 1,482 tiles)",
+    "median_seconds": 12.56,
+    "all_timings": [12.56, 12.68, 12.46],
+    "result": {
+      "total_pixels": 96251674,
+      "mean_slope": 6.1417,
+      "min_slope": 0.0,
+      "max_slope": 71.520881653,
+      "num_tiles": 1482
+    }
+  },
+  {
+    "engine": "snowflake",
+    "storage": "imported",
+    "warehouse_size": "Small",
+    "query": "B",
+    "name": "b_full_area",
+    "description": "Full area suitability scan (91,700 tiles, 15,770 non-empty in region)",
+    "median_seconds": 43.78,
+    "all_timings": [42.93, 43.78, 45.34],
+    "result": {
+      "total_cells": 15770,
+      "suitable_cells": 1597,
+      "pct_suitable": 10.1
+    },
+    "notes": "Scans all 91,700 tiles then filters by region. JOIN-based approach crashes on Small warehouse."
+  },
+  {
+    "engine": "snowflake",
+    "storage": "imported",
+    "warehouse_size": "Small",
+    "query": "B",
+    "name": "b_top20",
+    "description": "Top 20 flattest cells in full Loudoun County area",
+    "median_seconds": 43.32,
+    "all_timings": [47.04, 43.32, 41.97],
+    "result": [
+      {"block": "5265697726391910399", "mean_slope": 0.7274, "max_slope": 28.0971, "pixel_count": 65536},
+      {"block": "5265697729605009407", "mean_slope": 0.9152, "max_slope": 20.9002, "pixel_count": 65536},
+      {"block": "5265697728225345535", "mean_slope": 1.0138, "max_slope": 8.3258, "pixel_count": 65536},
+      {"block": "5265697728223772671", "mean_slope": 1.0366, "max_slope": 8.9336, "pixel_count": 65536},
+      {"block": "5265697728222986239", "mean_slope": 1.118, "max_slope": 10.3164, "pixel_count": 65536},
+      {"block": "5265697728222199807", "mean_slope": 1.1534, "max_slope": 11.1041, "pixel_count": 65536},
+      {"block": "5265697728225607679", "mean_slope": 1.159, "max_slope": 12.814, "pixel_count": 65536},
+      {"block": "5265697726346559487", "mean_slope": 1.1673, "max_slope": 27.9547, "pixel_count": 65536},
+      {"block": "5265697728183140351", "mean_slope": 1.1681, "max_slope": 88.1373, "pixel_count": 23835},
+      {"block": "5265697728222724095", "mean_slope": 1.2101, "max_slope": 8.481, "pixel_count": 65536},
+      {"block": "5265697728219840511", "mean_slope": 1.223, "max_slope": 7.7899, "pixel_count": 65536},
+      {"block": "5265697728226131967", "mean_slope": 1.2288, "max_slope": 12.0998, "pixel_count": 65536},
+      {"block": "5265697728218005503", "mean_slope": 1.2969, "max_slope": 9.8336, "pixel_count": 65536},
+      {"block": "5265697728224559103", "mean_slope": 1.3022, "max_slope": 14.1837, "pixel_count": 65536},
+      {"block": "5265697730687926271", "mean_slope": 1.3105, "max_slope": 15.9251, "pixel_count": 65536},
+      {"block": "5265697728117080063", "mean_slope": 1.3118, "max_slope": 9.9894, "pixel_count": 65536},
+      {"block": "5265697728112885759", "mean_slope": 1.3249, "max_slope": 15.6223, "pixel_count": 65536},
+      {"block": "5265697728218529791", "mean_slope": 1.3561, "max_slope": 17.0277, "pixel_count": 65536},
+      {"block": "5265697730686353407", "mean_slope": 1.3616, "max_slope": 6.6195, "pixel_count": 65536},
+      {"block": "5265697725927129087", "mean_slope": 1.3773, "max_slope": 19.5666, "pixel_count": 65536}
+    ]
+  },
+  {
+    "engine": "snowflake",
+    "storage": "external_gcs",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_small_site",
+    "description": "Small candidate site (~0.5 km², 15 tiles)",
+    "median_seconds": 24.55,
+    "all_timings": [24.55, 24.54, 34.46],
+    "result": {
+      "total_pixels": 983040,
+      "mean_slope": 3.7687,
+      "min_slope": 0.001576102222,
+      "max_slope": 60.548530579,
+      "num_tiles": 15
+    }
+  },
+  {
+    "engine": "snowflake",
+    "storage": "external_gcs",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_medium_site",
+    "description": "Medium candidate site (~4 km², 88 tiles)",
+    "median_seconds": 25.0,
+    "all_timings": [25.0, 23.97, 25.05],
+    "result": {
+      "total_pixels": 5767168,
+      "mean_slope": 3.6301,
+      "min_slope": 0.000437132112,
+      "max_slope": 60.548530579,
+      "num_tiles": 88
+    }
+  },
+  {
+    "engine": "snowflake",
+    "storage": "external_gcs",
+    "warehouse_size": "Small",
+    "query": "A",
+    "name": "a_large_site",
+    "description": "Large candidate site (~50 km², 1,482 tiles)",
+    "median_seconds": 34.12,
+    "all_timings": [34.12, 33.94, 34.57],
+    "result": {
+      "total_pixels": 96251674,
+      "mean_slope": 6.1417,
+      "min_slope": 0.0,
+      "max_slope": 71.520881653,
+      "num_tiles": 1482
+    }
+  }
+]
