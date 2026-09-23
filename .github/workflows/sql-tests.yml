@@ -1,0 +1,31 @@
+name: SQL Engines Tests
+
+on:
+  push:
+    branches: [ master ]
+    paths: [ 'sql/**' ]
+  pull_request:
+    paths: [ 'sql/**' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      working-directory: sql/libraries/javascript
+      run: npm ci
+
+    - name: Build and test (also regenerates the Snowflake RASTER_ALGEBRA SQL)
+      working-directory: sql/libraries/javascript
+      run: npm test
+
+    - name: Check the generated Snowflake SQL is up to date
+      run: git diff --exit-code -- sql/platforms/snowflake/functions/RASTER_ALGEBRA.sql

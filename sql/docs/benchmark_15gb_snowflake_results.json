@@ -1,0 +1,53 @@
+[
+  {
+    "name": "a_small",
+    "description": "Query A: Small site (~0.5 km\u00b2)",
+    "median_seconds": 11.69,
+    "all_timings": [
+      12.3,
+      11.69,
+      10.47
+    ],
+    "result": {
+      "TOTAL_PIXELS": "1048576",
+      "MEAN_SLOPE": "1.7118",
+      "MIN_SLOPE": "0.0009850638453",
+      "MAX_SLOPE": "21.253900528",
+      "NUM_TILES": "16"
+    }
+  },
+  {
+    "name": "a_medium",
+    "description": "Query A: Medium site (~25 km\u00b2)",
+    "median_seconds": 13.61,
+    "all_timings": [
+      14.07,
+      13.36,
+      13.61
+    ],
+    "result": {
+      "TOTAL_PIXELS": "96547517",
+      "MEAN_SLOPE": "2.0838",
+      "MIN_SLOPE": "0",
+      "MAX_SLOPE": "64.819839478",
+      "NUM_TILES": "1776"
+    }
+  },
+  {
+    "name": "a_large",
+    "description": "Query A: Large area (~900 km\u00b2)",
+    "median_seconds": 44.97,
+    "all_timings": [
+      45.11,
+      39.56,
+      44.97
+    ],
+    "result": {
+      "TOTAL_PIXELS": "1078680780",
+      "MEAN_SLOPE": "2.5156",
+      "MIN_SLOPE": "0",
+      "MAX_SLOPE": "89.138702393",
+      "NUM_TILES": "60390"
+    }
+  }
+]

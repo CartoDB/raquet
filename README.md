@@ -231,6 +231,14 @@ SELECT * FROM read_parquet('raster.parquet') WHERE block != 0 LIMIT 10;
 SELECT metadata FROM read_parquet('raster.parquet') WHERE block = 0;
 ```
 
+## Querying in BigQuery, Snowflake and Databricks
+
+[`sql/`](sql/) contains standalone SQL UDFs and procedures for querying RaQuet tables inside data warehouses:
+- decoding tiles, reading pixel values, and computing tile and region statistics;
+- band math, plus `RASTER_ALGEBRA`, which computes a new RaQuet raster from an expression over one or more rasters.
+
+The core functions ship for BigQuery, Snowflake and Databricks, with a single deploy script and cross-platform validation tests. `RASTER_ALGEBRA` is available on BigQuery, with an experimental Snowflake port and no Databricks version yet. See [`sql/README.md`](sql/README.md).
+
 ## Online Viewer
 
 Try the **[RaQuet Viewer](https://cartodb.github.io/raquet/viewer.html)** - a client-side viewer powered by DuckDB-WASM that runs entirely in your browser. Load any publicly accessible RaQuet file and explore it interactively.

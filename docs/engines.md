@@ -140,6 +140,8 @@ SELECT metadata FROM read_raquet_metadata('file.parquet');
 
 ---
 
+> Standalone SQL UDFs for BigQuery, Snowflake and Databricks (pixel values, statistics, band math and `RASTER_ALGEBRA`) are available in the [`sql/`](https://github.com/CartoDB/raquet/tree/master/sql) directory of this repository.
+
 ## BigQuery
 
 Query RaQuet files in BigQuery using [CARTO Analytics Toolbox](https://carto.com/analytics-toolbox).

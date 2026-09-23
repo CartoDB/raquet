@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+libraries/javascript/build/
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log

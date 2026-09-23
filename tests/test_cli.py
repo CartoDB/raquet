@@ -2,7 +2,6 @@
 """Tests for the Raquet CLI."""
 
 import json
-import os
 import tempfile
 from pathlib import Path
 
