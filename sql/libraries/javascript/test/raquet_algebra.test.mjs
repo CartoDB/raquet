@@ -181,11 +181,16 @@ test('evalBlock: comparisons, if(), functions', () => {
     assert.deepEqual([...out.slice(0, 4)], [4, 4, 5, 10]);
 });
 
-test('evalBlock: scale/offset opt-in', () => {
+test('evalBlock: physical values (scale/offset) by default, DN on request', () => {
     const m = meta({ bands: [{ name: 'band_1', type: 'int16', nodata: -1, scale: 0.5, offset: 10 }] });
     const t = tile('int16', range(N, () => 4));
-    assert.equal(decodeOut(lib.evalBlock(lib.plan('$a', [m]), [t])[0])[0], 4);
-    assert.equal(decodeOut(lib.evalBlock(lib.plan('$a', [m], { apply_scale_offset: true }), [t])[0])[0], 12);
+    assert.equal(decodeOut(lib.evalBlock(lib.plan('$a', [m]), [t])[0])[0], 12);
+    assert.equal(decodeOut(lib.evalBlock(lib.plan('$a', [m], { apply_scale_offset: false }), [t])[0])[0], 4);
+});
+
+test('plan: RaQuet v0.5.0 is required by default', () => {
+    assert.throws(() => lib.plan('$a', [meta({ version: '0.4.0' })]), /RaQuet 0.4.0; version 0.5.0 or later is required/);
+    assert.ok(lib.plan('$a', [meta({ version: '0.4.0' })], { require_version: '0.3.0' }));
 });
 
 // --------------------------------------------------------------------------

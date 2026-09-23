@@ -582,8 +582,9 @@ function astDepth(n) {
  *   output_type:        'float32' (default) | float64 | int32 | ...
  *   output_nodata:      number | 'NaN' (default NaN for float, type limit for int)
  *   overviews:          'evaluate' (default) | 'none'
- *   apply_scale_offset: false (default: expressions see stored DN values)
- *   require_version:    minimum RaQuet version accepted (default '0.3.0')
+ *   apply_scale_offset: true (default: bands with scale/offset are converted to
+ *                       physical values before evaluating; false = stored DN)
+ *   require_version:    minimum RaQuet version accepted (default '0.5.0')
  *   compression:        'gzip' (default) | 'none'
  *   compression_level:  1-9 (default 1: ~20% less CPU than 6 for <1% larger tiles)
  */
@@ -595,7 +596,8 @@ function plan(expression, metadatas, options) {
     if (metadatas.length > 26) throw new AlgebraError('At most 26 input rasters are supported');
 
     const metas = metadatas.map((m, i) => parseMeta(m, inputRef(i)));
-    const minVersion = opts.require_version || '0.3.0';
+    const minVersion = opts.require_version || '0.5.0';
+    const applyScaleOffset = opts.apply_scale_offset !== false;
 
     metas.forEach((m, i) => {
         const label = inputRef(i);
@@ -721,8 +723,8 @@ function plan(expression, metadatas, options) {
                 layout,
                 band_count: m.bands.length,
                 compression: m.compression || null,
-                scale: opts.apply_scale_offset && band.scale != null ? band.scale : null,
-                offset: opts.apply_scale_offset && band.offset != null ? band.offset : null
+                scale: applyScaleOffset && band.scale != null ? band.scale : null,
+                offset: applyScaleOffset && band.offset != null ? band.offset : null
             });
         }
         return operandKey.get(key);
@@ -841,7 +843,7 @@ function plan(expression, metadatas, options) {
             compression,
             compression_level: opts.compression_level || 1
         },
-        apply_scale_offset: !!opts.apply_scale_offset,
+        apply_scale_offset: applyScaleOffset,
         num_inputs: metas.length
     };
 }

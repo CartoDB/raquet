@@ -20,7 +20,8 @@
 --
 -- Expression syntax: see libraries/javascript/src/raquet_algebra.js.
 -- Options (JSON): output_type, output_nodata, overviews ('evaluate' | 'none'),
---   apply_scale_offset, require_version, compression ('gzip' | 'none'),
+--   apply_scale_offset (default true), require_version (default '0.5.0'),
+--   compression ('gzip' | 'none'),
 --   compression_level (default 1).
 --
 -- Nodata: an output pixel is nodata when any referenced operand pixel is
