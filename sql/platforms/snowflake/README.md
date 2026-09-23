@@ -9,7 +9,7 @@
 ## Deployment
 
 ```bash
-# From repository root
+# From the sql/ directory
 ./deploy.sh snowflake --connection myconn --database MYDB --schema RAQUET
 
 # Or using environment variables
@@ -55,6 +55,7 @@ COPY INTO MY_RASTER FROM @my_stage/raster_partitioned/
 | `ST_NORMALIZEDDIFFERENCE` | ✅ | NDVI/NDWI calculation |
 | `ST_NORMALIZEDDIFFERENCESTATS` | ✅ | Stats for normalized difference |
 | `RAQUET_AGGREGATE_STATS` | ✅ | Aggregate stats across tiles |
+| `RAQUET_BATCH_STATS` | ✅ | Per-tile stats for many tiles in one JS invocation (UDTF) |
 | `RAQUET_PIXEL_GEOGRAPHY` | ✅ | Get GEOGRAPHY for pixel center |
 | `__RAQUET_AUTO_ZOOM` | ✅ | Auto-detect zoom level |
 | `__RAQUET_RESOLVE_ZOOM` | ✅ | Resolve target zoom |

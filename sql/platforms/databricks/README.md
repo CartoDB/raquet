@@ -9,7 +9,7 @@
 ## Deployment
 
 ```bash
-# From repository root
+# From the sql/ directory
 ./deploy.sh databricks --profile myworkspace --catalog main --schema raquet
 
 # Or using environment variables

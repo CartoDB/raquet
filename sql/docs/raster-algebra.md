@@ -69,7 +69,7 @@ The evaluator reuses intermediate buffers, so memory per block is bounded by the
 
 Grid mismatches fail with an actionable message.
 
-**Nodata .** An output pixel is nodata when any operand it references is nodata or NaN, or when the result is not finite (x/0, log of a negative). An integer output that overflows is also nodata.
+**Nodata.** An output pixel is nodata when any operand it references is nodata or NaN, or when the result is not finite (x/0, log of a negative). An integer output that overflows is also nodata.
 
 - Input sentinels are compared in the band's own precision. For example, a float32 band with `nodata: -3.4028235e38` matches the stored pixels, which a double-precision compare would miss.
 - `output_nodata` is stored in the output precision.

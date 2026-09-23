@@ -9,7 +9,10 @@
 ## Deployment
 
 ```bash
-# From repository root
+# From the sql/ directory
+# Build the JavaScript bundles first (not committed; deploy.sh uploads them to the bucket)
+(cd libraries/javascript && npm ci && npm run build)
+
 ./deploy.sh bigquery --bucket gs://your-bucket --dataset yourproject.raquet
 
 # Or using environment variables

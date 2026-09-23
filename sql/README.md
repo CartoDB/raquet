@@ -33,6 +33,7 @@ Raquet is a specification for storing raster data in Apache Parquet format using
 | `ST_NORMALIZEDDIFFERENCESTATS` | ✅ | ✅ | ✅ | Stats for normalized difference |
 | `RASTER_ALGEBRA` (procedure) | ✅ | 🧪 | — | Raster → raster: evaluate an expression over N rasters, write a RaQuet v0.5.0 table ([docs](docs/raster-algebra.md)) |
 | `RAQUET_AGGREGATE_STATS` | ✅ | ✅ | ✅ | Aggregate stats across tiles |
+| `RAQUET_BATCH_STATS` (UDTF) | — | ✅ | — | Per-tile stats for many tiles in one JS invocation |
 | `RAQUET_PIXEL_GEOGRAPHY` | ✅ | ✅ | ✅ | Get GEOGRAPHY/WKT for pixel center |
 | `__RAQUET_RESOLVE_ZOOM` | ✅ | ✅ | ✅ | Resolve flexible resolution parameter |
 | `__RAQUET_AUTO_ZOOM` | ✅ | ✅ | ✅ | Auto-detect zoom level |
@@ -54,8 +55,14 @@ All platforms produce identical results (validated with TCI satellite imagery, 3
 
 ### Deployment
 
+BigQuery loads its UDF code from JavaScript bundles in GCS. The bundles are not committed, so build them before deploying (requires Node.js):
+
 ```bash
-# BigQuery
+(cd libraries/javascript && npm ci && npm run build)
+```
+
+```bash
+# BigQuery (uploads libraries/javascript/build/*.js to the bucket)
 ./deploy.sh bigquery --bucket gs://your-bucket --dataset yourproject.raquet
 
 # Snowflake
@@ -433,10 +440,10 @@ sql/
 ├── deploy.sh                      # Unified deployment script
 ├── platforms/
 │   ├── bigquery/
-│   │   ├── functions/             # BigQuery SQL functions (14)
+│   │   ├── functions/             # BigQuery SQL functions (15)
 │   │   └── README.md
 │   ├── snowflake/
-│   │   ├── functions/             # Snowflake SQL functions (14)
+│   │   ├── functions/             # Snowflake SQL functions (16)
 │   │   └── README.md
 │   └── databricks/
 │       ├── functions/             # Databricks SQL/Python UDFs (14)

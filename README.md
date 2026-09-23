@@ -237,7 +237,7 @@ SELECT metadata FROM read_parquet('raster.parquet') WHERE block = 0;
 - decoding tiles, reading pixel values, and computing tile and region statistics;
 - band math, plus `RASTER_ALGEBRA`, which computes a new RaQuet raster from an expression over one or more rasters.
 
-Each function ships for BigQuery, Snowflake and Databricks, with a single deploy script and cross-platform validation tests. See [`sql/README.md`](sql/README.md).
+The core functions ship for BigQuery, Snowflake and Databricks, with a single deploy script and cross-platform validation tests. `RASTER_ALGEBRA` is available on BigQuery, with an experimental Snowflake port and no Databricks version yet. See [`sql/README.md`](sql/README.md).
 
 ## Online Viewer
 
