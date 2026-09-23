@@ -64,6 +64,26 @@ class ValidationResult:
         return "\n".join(lines)
 
 
+_TILE_STAT_SUFFIXES = ("_count", "_min", "_max", "_sum", "_mean", "_stddev")
+_NON_BAND_COLUMNS = {"block", "metadata", "pixels", "time_cf", "time_ts"}
+
+
+def _band_columns(table: pyarrow.Table, band_names: list[str] | None = None) -> list[str]:
+    """Band columns: metadata band names present in the table, plus any other
+    binary column that is not a reserved or tile statistics column."""
+    names = set(band_names or [])
+    columns = []
+    for c in table.column_names:
+        if c in names:
+            columns.append(c)
+        elif c in _NON_BAND_COLUMNS or any(c.endswith(s) for s in _TILE_STAT_SUFFIXES):
+            continue
+        elif c.startswith("band_") or str(table.schema.field(c).type) in ("binary", "large_binary"):
+            columns.append(c)
+    return columns
+
+
+
 def validate_schema(table: pyarrow.Table) -> tuple[list[str], list[str]]:
     """Validate RaQuet table schema"""
     errors = []
@@ -82,17 +102,12 @@ def validate_schema(table: pyarrow.Table) -> tuple[list[str], list[str]]:
     elif str(table.schema.field("metadata").type) != "string":
         errors.append(f"Column 'metadata' should be string, got {table.schema.field('metadata').type}")
 
-    # Identify tile statistics column suffixes to exclude from band detection
-    _tile_stat_suffixes = ("_count", "_min", "_max", "_sum", "_mean", "_stddev")
-
-    # Check for band columns or interleaved pixels column
-    band_columns = [
-        c for c in column_names
-        if c.startswith("band_") and not any(c.endswith(s) for s in _tile_stat_suffixes)
-    ]
+    # Check for band columns or interleaved pixels column. Band names are free
+    # (the spec only requires the column to match the metadata band name).
+    band_columns = _band_columns(table)
     has_pixels = "pixels" in column_names
     if not band_columns and not has_pixels:
-        errors.append("No band columns found (expected columns starting with 'band_' or 'pixels')")
+        errors.append("No band columns found (expected binary band columns or 'pixels')")
     else:
         for band_col in band_columns:
             if str(table.schema.field(band_col).type) not in ("binary", "large_binary"):
@@ -101,7 +116,7 @@ def validate_schema(table: pyarrow.Table) -> tuple[list[str], list[str]]:
             if str(table.schema.field("pixels").type) not in ("binary", "large_binary"):
                 warnings.append(f"Pixels column is {table.schema.field('pixels').type}, expected binary")
         if band_columns and has_pixels:
-            warnings.append("Found both 'band_*' and 'pixels' columns; expected a single band layout")
+            warnings.append("Found both band columns and a 'pixels' column; expected a single band layout")
 
     return errors, warnings
 
@@ -301,15 +316,9 @@ def validate_band_data(table: pyarrow.Table, metadata: dict) -> tuple[list[str],
     bands = metadata.get("bands", [])
     compression = metadata.get("compression")
 
-    # Get band columns (exclude tile statistics columns)
-    _tile_stat_suffixes = ("_count", "_min", "_max", "_sum", "_mean", "_stddev")
-    band_columns = [
-        c for c in table.column_names
-        if c.startswith("band_") and not any(c.endswith(s) for s in _tile_stat_suffixes)
-    ]
-
     # Check that band columns match metadata
     meta_band_names = [b.get("name") for b in bands]
+    band_columns = _band_columns(table, meta_band_names)
     for band_col in band_columns:
         if band_col not in meta_band_names:
             warnings.append(f"Band column '{band_col}' not found in metadata bands")
