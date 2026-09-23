@@ -66,9 +66,15 @@ deploy_bigquery() {
     log_info "  Bucket: $GCS_BUCKET"
     log_info "  Dataset: $DATASET"
 
-    # Upload JS libraries to GCS
+    # Upload JS libraries to GCS (build output is not committed)
+    local JS_BUILD_DIR="$SCRIPT_DIR/libraries/javascript/build"
+    if ! ls "$JS_BUILD_DIR/"*.js >/dev/null 2>&1; then
+        log_error "JavaScript libraries not built: $JS_BUILD_DIR/*.js not found"
+        log_error "  Run: (cd $SCRIPT_DIR/libraries/javascript && npm ci && npm run build)"
+        exit 1
+    fi
     log_info "Uploading JavaScript libraries to GCS..."
-    gsutil cp "$SCRIPT_DIR/libraries/javascript/build/"*.js "$GCS_BUCKET/"
+    gsutil cp "$JS_BUILD_DIR/"*.js "$GCS_BUCKET/"
 
     # Deploy SQL functions
     SQL_DIR="$SCRIPT_DIR/platforms/bigquery/functions"
@@ -95,12 +101,14 @@ deploy_bigquery() {
     )
 
     for filename in "${DEPLOY_ORDER[@]}"; do
-        if [ -f "$SQL_DIR/$filename" ]; then
-            log_info "  Deploying: $filename"
-            sed -e "s|gs://cartobq-raquet-libs|$GCS_BUCKET|g" \
-                -e "s|cartobq\.raquet|$DATASET|g" \
-                "$SQL_DIR/$filename" | bq query --use_legacy_sql=false
+        if [ ! -f "$SQL_DIR/$filename" ]; then
+            log_error "Missing SQL file: $SQL_DIR/$filename"
+            exit 1
         fi
+        log_info "  Deploying: $filename"
+        sed -e "s|gs://cartobq-raquet-libs|$GCS_BUCKET|g" \
+            -e "s|cartobq\.raquet|$DATASET|g" \
+            "$SQL_DIR/$filename" | bq query --use_legacy_sql=false
     done
 
     log_info "BigQuery deployment complete!"
@@ -132,6 +140,11 @@ deploy_snowflake() {
         exit 1
     fi
 
+    if [ -z "$DATABASE" ]; then
+        log_error "Snowflake requires --database or RAQUET_SF_DATABASE env var"
+        exit 1
+    fi
+
     log_info "  Connection: $CONNECTION"
     log_info "  Database: $DATABASE"
     log_info "  Schema: $SCHEMA"
@@ -140,7 +153,7 @@ deploy_snowflake() {
     SQL_DIR="$SCRIPT_DIR/platforms/snowflake/functions"
 
     # Set context
-    snowsql -c "$CONNECTION" -q "USE DATABASE $DATABASE; USE SCHEMA $SCHEMA;" 2>/dev/null
+    snowsql -c "$CONNECTION" -o exit_on_error=true -q "USE DATABASE $DATABASE; USE SCHEMA $SCHEMA;"
 
     DEPLOY_ORDER=(
         # Core decoding and pixel functions
@@ -154,6 +167,7 @@ deploy_snowflake() {
         "ST_NORMALIZEDDIFFERENCE.sql"
         "ST_NORMALIZEDDIFFERENCESTATS.sql"
         "RAQUET_AGGREGATE_STATS.sql"
+        "RAQUET_BATCH_STATS.sql"
         "RAQUET_PIXEL_GEOGRAPHY.sql"
         # Helper functions (auto_zoom before resolve_zoom)
         "__RAQUET_AUTO_ZOOM.sql"
@@ -165,12 +179,14 @@ deploy_snowflake() {
     )
 
     for filename in "${DEPLOY_ORDER[@]}"; do
-        if [ -f "$SQL_DIR/$filename" ]; then
-            log_info "  Deploying: $filename"
-            # Replace schema/database references if needed
-            sed -e "s|RAQUET_DB\.RAQUET|$DATABASE.$SCHEMA|g" \
-                "$SQL_DIR/$filename" | snowsql -c "$CONNECTION" -o friendly=false 2>/dev/null
+        if [ ! -f "$SQL_DIR/$filename" ]; then
+            log_error "Missing SQL file: $SQL_DIR/$filename"
+            exit 1
         fi
+        log_info "  Deploying: $filename"
+        # Replace schema/database references if needed
+        sed -e "s|RAQUET_DB\.RAQUET|$DATABASE.$SCHEMA|g" \
+            "$SQL_DIR/$filename" | snowsql -c "$CONNECTION" -o friendly=false -o exit_on_error=true
     done
 
     log_info "Snowflake deployment complete!"
