@@ -98,7 +98,7 @@ Create a `cors.json` file:
 Apply with:
 
 ```bash
-gsutil cors set cors.json gs://your-bucket
+gcloud storage buckets update gs://your-bucket --cors-file=cors.json
 ```
 
 ### Amazon S3

@@ -102,17 +102,17 @@ echo ">>> Step 6: Uploading to GCS..."
 
 # Upload single files
 echo "  Uploading single slope file..."
-gsutil -m cp "$DATA_DIR/slope.parquet" "$GCS_BUCKET/slope.parquet"
+gcloud storage cp "$DATA_DIR/slope.parquet" "$GCS_BUCKET/slope.parquet"
 
 echo "  Uploading single elevation file..."
-gsutil -m cp "$DATA_DIR/elevation.parquet" "$GCS_BUCKET/elevation.parquet"
+gcloud storage cp "$DATA_DIR/elevation.parquet" "$GCS_BUCKET/elevation.parquet"
 
 # Upload partitioned files
 echo "  Uploading partitioned slope files..."
-gsutil -m cp "$DATA_DIR/slope_partitioned/"*.parquet "$GCS_BUCKET/slope_partitioned/"
+gcloud storage cp "$DATA_DIR/slope_partitioned/"*.parquet "$GCS_BUCKET/slope_partitioned/"
 
 echo "  Uploading partitioned elevation files..."
-gsutil -m cp "$DATA_DIR/elevation_partitioned/"*.parquet "$GCS_BUCKET/elevation_partitioned/"
+gcloud storage cp "$DATA_DIR/elevation_partitioned/"*.parquet "$GCS_BUCKET/elevation_partitioned/"
 
 # Summary
 echo ""
@@ -129,10 +129,10 @@ echo " files"
 du -sh "$DATA_DIR/slope_partitioned/"
 echo ""
 echo "GCS files:"
-gsutil ls -l "$GCS_BUCKET/"
+gcloud storage ls -l "$GCS_BUCKET/"
 echo ""
 echo "GCS partitioned slope:"
-gsutil ls "$GCS_BUCKET/slope_partitioned/" | wc -l
+gcloud storage ls "$GCS_BUCKET/slope_partitioned/" | wc -l
 echo " files"
 echo ""
 echo "Ready for benchmarking!"
