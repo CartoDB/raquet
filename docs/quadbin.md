@@ -219,6 +219,9 @@ This property enables:
 
 In a RaQuet file, each row's `block` column contains a QUADBIN cell ID:
 
+> **Note — QUADBIN cells are parameterized by the Tile Matrix Set.** A QUADBIN integer encodes `(x, y, z)` tile coordinates, but **not** the coordinate reference system. The mapping from a cell to a ground footprint depends on the file's `tile_matrix_set` metadata field (default `WebMercatorQuad`, EPSG:3857). The same QUADBIN cell denotes a different region under `GoogleCRS84Quad` (CRS84 / EPSG:4326) than under `WebMercatorQuad`. Always read `tile_matrix_set` before interpreting cell geometry — the integer alone is ambiguous. See [Supported Tile Matrix Sets](https://github.com/CartoDB/raquet/blob/master/format-specs/raquet.md#supported-tile-matrix-sets) in the spec.
+
+
 ```sql
 -- Get tile coordinates from a RaQuet file (raw Parquet, manual filtering)
 SELECT
