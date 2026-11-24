@@ -881,6 +881,7 @@ def read_raster(
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
     tile_stats: bool = False,
+    overview_resampling: ResamplingAlgorithm | None = None,
 ):
     """Worker process that accesses a raster file through pipes.
 
@@ -898,6 +899,9 @@ def read_raster(
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
         tile_stats: Always compute per-tile statistics for all tiles
+        overview_resampling: Resampling method for overview (lower zoom) tiles. None keeps the
+            default: reuse the source's own overviews when it is a web mercator COG, otherwise
+            average the child tiles. An explicit value always rebuilds overviews with it.
     """
     # Import osgeo safely in this worker to avoid https://github.com/apache/arrow/issues/44696
     import osgeo.gdal
@@ -964,11 +968,21 @@ def read_raster(
 
         # Check if we can use COG overviews directly (source is web mercator with overviews)
         overview_count = src_bands[0].GetOverviewCount()
-        use_cog_overviews = is_web_mercator(src_sref, web_mercator) and overview_count > 0
+        use_cog_overviews = (
+            is_web_mercator(src_sref, web_mercator)
+            and overview_count > 0
+            and overview_resampling is None
+        )
         if use_cog_overviews:
             logging.info(
                 "Source is web mercator with %d overviews - will use COG overviews directly",
                 overview_count,
+            )
+        elif overview_count > 0 and overview_resampling is not None:
+            logging.info(
+                "Source has %d overviews but --overview-resampling=%s was requested - will rebuild pyramids",
+                overview_count,
+                overview_resampling,
             )
         elif overview_count > 0:
             logging.info(
@@ -1035,10 +1049,11 @@ def read_raster(
             dstNodata=nodata_value,
         )
 
-        # WarpOptions for creating overviews from child tiles
-        # Use Average resampling for better overview quality with nodata handling
+        # WarpOptions for creating overviews from child tiles. Average by default, which handles
+        # nodata well for continuous data; callers can choose e.g. max for hazard intensity,
+        # sum for counts or mode for categorical rasters.
         opts_overview = osgeo.gdal.WarpOptions(
-            resampleAlg=osgeo.gdal.GRA_Average,
+            resampleAlg=resampling_algorithms[overview_resampling or ResamplingAlgorithm.Average],
             srcNodata=nodata_value,
             dstNodata=nodata_value,
         )
@@ -1499,6 +1514,7 @@ def open_raster_in_process(
     compression: CompressionCodec = CompressionCodec.GZIP,
     compression_quality: int = 85,
     tile_stats: bool = False,
+    overview_resampling: ResamplingAlgorithm | None = None,
 ) -> tuple[RasterGeometry, multiprocessing.Pipe]:
     """Opens a bidirectional connection to a raster reader in another process.
 
@@ -1513,6 +1529,9 @@ def open_raster_in_process(
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
         tile_stats: Always compute per-tile statistics for all tiles
+        overview_resampling: Resampling method for overview (lower zoom) tiles. None keeps the
+            default: reuse the source's own overviews when it is a web mercator COG, otherwise
+            average the child tiles. An explicit value always rebuilds overviews with it.
 
     Returns:
         Tuple of (raster_geometry, receive_pipe) for communication
@@ -1533,6 +1552,7 @@ def open_raster_in_process(
         compression,
         compression_quality,
         tile_stats,
+        overview_resampling,
     )
     process = multiprocessing.Process(target=read_raster, args=args)
     process.start()
@@ -1907,6 +1927,7 @@ def main(
     compression_quality: int = 85,
     num_workers: int = 1,
     tile_stats: bool = False,
+    overview_resampling: ResamplingAlgorithm | None = None,
 ):
     """Read raster datasource and write to RaQuet
 
@@ -1924,6 +1945,9 @@ def main(
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
         tile_stats: Include per-tile statistics columns in output
+        overview_resampling: Resampling method for overview (lower zoom) tiles. None keeps the
+            default: reuse the source's own overviews when it is a web mercator COG, otherwise
+            average the child tiles. An explicit value always rebuilds overviews with it.
     """
     if target_size is None:
         raquet_destinations = itertools.repeat((raquet_destination, math.inf))
@@ -1952,6 +1976,7 @@ def main(
         compression_quality,
         num_workers,
         tile_stats,
+        overview_resampling,
     ):
         logging.info("Wrote %s", raquet_filename)
 
@@ -1971,6 +1996,7 @@ def convert_to_raquet_files(
     compression_quality: int = 85,
     num_workers: int = 1,
     tile_stats: bool = False,
+    overview_resampling: ResamplingAlgorithm | None = None,
 ) -> typing.Generator[str, None, None]:
     """Read raster datasource and write to RaQuet files
 
@@ -1988,6 +2014,9 @@ def convert_to_raquet_files(
         compression: Compression codec (gzip, jpeg, webp, none)
         compression_quality: Quality for lossy compression (1-100)
         num_workers: Number of parallel worker processes (default 1, only used with overview_mode=NONE)
+        overview_resampling: Resampling method for overview (lower zoom) tiles. None keeps the
+            default: reuse the source's own overviews when it is a web mercator COG, otherwise
+            average the child tiles. An explicit value always rebuilds overviews with it.
 
     Yields output filenames as they are written.
 
@@ -2036,6 +2065,7 @@ def convert_to_raquet_files(
             compression,
             compression_quality,
             tile_stats,
+            overview_resampling,
         )
         queue = None
         worker_processes = None

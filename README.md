@@ -72,6 +72,7 @@ raquet-io convert geotiff input.tif output.parquet \
 | `--target-size` | Target size for auto zoom calculation |
 | `--overviews` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
 | `--min-zoom` | Minimum zoom level for overviews (overrides auto calculation) |
+| `--overview-resampling` | How overview (lower zoom) tiles aggregate pixels: `average` (default), `max`, `min`, `sum`, `mode`, etc. |
 | `--streaming` | Memory-safe two-pass conversion for large files |
 | `--band-layout` | Band storage: `sequential` (default) or `interleaved` |
 | `--compression` | Compression: `gzip` (default), `jpeg`, `webp`, or `none` |
@@ -108,6 +109,9 @@ raquet-io convert geotiff huge.tif output.parquet --streaming -v
 
 # Limit overview pyramid to zoom 5 and above
 raquet-io convert geotiff input.tif output.parquet --min-zoom 5
+
+# Keep the deepest flood depth when zoomed out, instead of the average
+raquet-io convert geotiff flood_depth.tif flood.parquet --overview-resampling max
 ```
 
 #### From ArcGIS ImageServer

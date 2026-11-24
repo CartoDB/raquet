@@ -59,6 +59,7 @@ raquet-io convert raster INPUT_FILE OUTPUT_FILE [OPTIONS]
 | `--row-group-size` | `200` | Rows per Parquet row group (smaller = better remote pruning) |
 | `--overviews` | `auto` | Overview generation: `auto` (full pyramid) or `none` (native resolution only) |
 | `--min-zoom` | — | Minimum zoom level for overviews (overrides auto calculation) |
+| `--overview-resampling` | `average` | How overview tiles aggregate pixels: `average`, `max`, `min`, `sum`, `mode`, `med`, `q1`, `q3`, `rms`, `near` (see [Overview resampling](#overview-resampling)) |
 | `--streaming` | — | Two-pass streaming mode for memory-safe conversion of large files |
 | `--workers` | `1` | Parallel worker processes (requires `--overviews none`) |
 | `--tile-stats` | — | Include per-tile statistics columns (count, min, max, sum, mean, stddev) |
@@ -66,6 +67,25 @@ raquet-io convert raster INPUT_FILE OUTPUT_FILE [OPTIONS]
 | `--compression` | `gzip` | Compression: `gzip`, `jpeg`, `webp`, or `none` |
 | `--compression-quality` | `85` | Quality for lossy compression (1-100) |
 | `-v, --verbose` | — | Enable verbose output |
+
+### Overview resampling
+
+`--resampling` controls how source pixels are warped into the native-resolution blocks.
+`--overview-resampling` controls how each lower-zoom (overview) block aggregates the four child
+blocks below it. Nodata pixels are ignored by every method. Viewers show these stored overview
+blocks when zoomed out, so the choice decides what a zoomed-out map means.
+
+| Data | Method | Examples |
+|------|--------|----------|
+| Counts, amounts | `sum` | population, buildings, exposed value |
+| Densities, rates, states | `average` | people per km², temperature, NDVI, elevation |
+| Hazard intensity, "any" flags, ordered risk classes | `max` | flood depth, wind gust, hail size, flood zone |
+| Distances, "all" flags | `min` | distance to fire station, travel time |
+| Categories | `mode` | land cover, soil type |
+
+Without the flag, overviews are averaged, or taken from the source's own overviews when the
+input is a web mercator COG that already has them. Passing the flag always rebuilds overviews
+with the chosen method. `sum` needs GDAL 3.8 or later.
 
 ### Examples
 
@@ -90,6 +110,9 @@ raquet-io convert raster huge.tif output.parquet --streaming -v
 
 # Parallel conversion (4 workers, requires --overviews none)
 raquet-io convert raster huge.tif output.parquet --streaming --workers 4 --overviews none -v
+
+# Keep the worst-case value in overviews (hazard intensity: flood depth, wind gust)
+raquet-io convert raster flood_depth.tif flood.parquet --overview-resampling max
 
 # Include per-tile statistics columns for UDF-free analytics
 raquet-io convert raster slope.tif slope.parquet --tile-stats --overviews none -v
