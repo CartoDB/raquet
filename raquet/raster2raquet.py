@@ -756,6 +756,21 @@ def create_tile_ds(
     return tile_ds
 
 
+def release_tile_datasets(datasets: list["osgeo.gdal.Dataset"]) -> None:  # noqa: F821
+    """Close tile datasets made by create_tile_ds() and free their /vsimem files.
+
+    Dropping the Python references closes the datasets but leaves the in-memory files behind,
+    so without an explicit Unlink every tile ever written stays resident until the worker exits.
+    Empties ``datasets`` in place so no caller keeps a handle to a deleted file.
+    """
+    import osgeo.gdal
+
+    paths = [ds.GetDescription() for ds in datasets]
+    datasets.clear()
+    for path in paths:
+        osgeo.gdal.Unlink(path)
+
+
 def read_raster_data_stats(
     ds: "osgeo.gdal.Dataset",  # noqa: F821 (osgeo types safely imported in read_raster)
     gdaltype_bandtypes: dict[int, BandType] | None,
@@ -1176,6 +1191,9 @@ def read_raster(
                 )
                 s2 = [s.scale_by(stats_zoom_diff) if s else None for s in s1]
                 pipe.send((frame.tile, d, s2))
+
+                # Child tiles are no longer needed once their overview exists
+                release_tile_datasets(frame.outputs)
             else:
                 # Descend deeper into tile hierarchy
                 next_tile = frame.inputs.pop()
@@ -1185,6 +1203,10 @@ def read_raster(
             if tile_ds is not None and frames:
                 # Save current output for future overviews
                 frames[-1].outputs.append(tile_ds)
+            elif tile_ds is not None:
+                # Nothing will build an overview from this tile
+                release_tile_datasets([tile_ds])
+            tile_ds = None
     finally:
         # Send a None to signal end of messages
         pipe.send(None)
@@ -1284,6 +1306,7 @@ def _read_raster_worker(
                 band_layout, compression, compression_quality
             )
             queue.put((tile, d, s))
+            release_tile_datasets([tile_ds])
             tile_ds = None
 
         src_ds = None
