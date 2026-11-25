@@ -13,7 +13,6 @@ import subprocess
 import sys
 import textwrap
 
-from click.testing import CliRunner
 
 
 def _run(script: str) -> str:
@@ -58,7 +57,6 @@ def test_conversion_leaves_no_tiles_in_vsimem(tmp_path):
         f"""
         import multiprocessing, os
         from osgeo import gdal, osr
-        import numpy
         from raquet import raster2raquet
 
         gdal.UseExceptions()
@@ -69,7 +67,7 @@ def test_conversion_leaves_no_tiles_in_vsimem(tmp_path):
         ds.SetProjection(srs.ExportToWkt())
         ds.SetGeoTransform((10.0, 0.001, 0.0, 1.0, 0.0, -0.001))
         ds.GetRasterBand(1).SetNoDataValue(-9999)
-        ds.GetRasterBand(1).WriteArray(numpy.ones((1024, 1024), dtype=numpy.float32))
+        ds.GetRasterBand(1).Fill(1.0)  # no numpy: CI installs the package without the [numpy] extra
         ds = None
 
         # Run the worker in this process and drain its pipe, then inspect /vsimem
