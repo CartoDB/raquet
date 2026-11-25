@@ -9,7 +9,8 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-import numpy
+import struct
+
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
@@ -44,13 +45,10 @@ def hazard_geotiff(temp_dir):
     path = temp_dir / "hazard.tif"
     script = textwrap.dedent(
         f"""
-        import numpy
+        import struct
         from osgeo import gdal, osr
         gdal.UseExceptions()
         size = 1024
-        data = numpy.full((size, size), 1.0, dtype=numpy.float32)
-        data[:, : size // 4] = {NODATA}  # dry strip, ignored by every overview method
-        data[600, 700] = {PEAK}
         ds = gdal.GetDriverByName("GTiff").Create({str(path)!r}, size, size, 1, gdal.GDT_Float32)
         srs = osr.SpatialReference()
         srs.ImportFromEPSG(4326)
@@ -58,7 +56,11 @@ def hazard_geotiff(temp_dir):
         ds.SetGeoTransform((10.0, 0.001, 0.0, 1.0, 0.0, -0.001))  # ~110 m pixels near the equator
         band = ds.GetRasterBand(1)
         band.SetNoDataValue({NODATA})
-        band.WriteArray(data)
+        # No numpy (CI installs raquet-io without the [numpy] extra): write raw float32 bytes
+        band.Fill(1.0)
+        strip = size // 4  # dry strip, ignored by every overview method
+        band.WriteRaster(0, 0, strip, size, struct.pack(f"<{{strip * size}}f", *([{NODATA}] * strip * size)))
+        band.WriteRaster(700, 600, 1, 1, struct.pack("<f", {PEAK}))
         ds = None
         """
     )
@@ -76,7 +78,11 @@ def _convert(runner, src, out, *extra):
 
 
 def _values_at_min_zoom(table):
-    """Decode every block at the table's lowest zoom; return valid (non-nodata) pixel values."""
+    """Decode every block at the table's lowest zoom; return valid (non-nodata) pixel values.
+
+    The test raster is float32, so blocks are decoded with ``struct`` (little-endian float32)
+    to keep the tests runnable without the optional numpy extra.
+    """
     metadata = json.loads(
         table.filter(pc.equal(table.column("block"), 0)).column("metadata")[0].as_py()
     )
@@ -90,9 +96,8 @@ def _values_at_min_zoom(table):
             continue
         if metadata.get("compression") == "gzip":
             raw = gzip.decompress(raw)
-        arr = numpy.frombuffer(raw, dtype=numpy.float32)
-        values.append(arr[arr != NODATA])
-    return numpy.concatenate(values)
+        values.extend(v for v in struct.unpack(f"<{len(raw) // 4}f", raw) if v != NODATA)
+    return values
 
 
 class TestOverviewResampling:
@@ -102,7 +107,7 @@ class TestOverviewResampling:
         average = _values_at_min_zoom(
             _convert(runner, hazard_geotiff, temp_dir / "avg.parquet", "--overview-resampling", "average")
         )
-        numpy.testing.assert_array_equal(default, average)
+        assert default == average
 
     def test_max_keeps_peak_average_dilutes_it(self, runner, temp_dir, hazard_geotiff):
         average = _values_at_min_zoom(
@@ -111,17 +116,17 @@ class TestOverviewResampling:
         maximum = _values_at_min_zoom(
             _convert(runner, hazard_geotiff, temp_dir / "max.parquet", "--overview-resampling", "max")
         )
-        assert maximum.max() == pytest.approx(PEAK)
-        assert average.max() < PEAK
+        assert max(maximum) == pytest.approx(PEAK)
+        assert max(average) < PEAK
         # Nodata is ignored either way: no value can fall below the shallow 1.0 depth
-        assert maximum.min() >= 1.0
-        assert average.min() >= 1.0
+        assert min(maximum) >= 1.0
+        assert min(average) >= 1.0
 
     def test_min(self, runner, temp_dir, hazard_geotiff):
         minimum = _values_at_min_zoom(
             _convert(runner, hazard_geotiff, temp_dir / "min.parquet", "--overview-resampling", "min")
         )
-        assert minimum.max() == pytest.approx(1.0)
+        assert max(minimum) == pytest.approx(1.0)
 
     def test_native_zoom_unchanged(self, runner, temp_dir, hazard_geotiff):
         """The flag only affects overviews: native-resolution blocks are byte-identical."""
