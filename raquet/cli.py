@@ -305,6 +305,7 @@ def _convert_raster_impl(
     streaming: bool,
     num_workers: int = 1,
     tile_stats: bool = False,
+    overview_resampling: str | None = None,
 ):
     """Implementation for raster conversion (shared by raster and geotiff commands)."""
     setup_logging(verbose)
@@ -329,6 +330,8 @@ def _convert_raster_impl(
             click.echo(f"  Parallel mode: {num_workers} workers")
         if tile_stats:
             click.echo("  Tile statistics: enabled (per-tile stats columns)")
+        if overview_resampling is not None:
+            click.echo(f"  Overview resampling: {overview_resampling}")
 
         raster2raquet.main(
             str(input_file),
@@ -343,6 +346,11 @@ def _convert_raster_impl(
             streaming,
             num_workers=num_workers,
             tile_stats=tile_stats,
+            overview_resampling=(
+                raster2raquet.ResamplingAlgorithm(overview_resampling)
+                if overview_resampling is not None
+                else None
+            ),
         )
 
         click.echo(f"Successfully created {output_file}")
@@ -401,6 +409,16 @@ def _convert_raster_impl(
     help="Minimum zoom level for overviews (overrides auto calculation)",
 )
 @click.option(
+    "--overview-resampling",
+    type=click.Choice(["average", "max", "min", "sum", "mode", "med", "q1", "q3", "rms", "near"]),
+    default=None,
+    help=(
+        "Resampling for overview (lower zoom) tiles. Default: average, or the source's own "
+        "overviews for web mercator COGs. Use max for hazard intensity (flood depth, wind), "
+        "sum for counts, mode for categories"
+    ),
+)
+@click.option(
     "--streaming",
     is_flag=True,
     help="Use two-pass streaming mode for memory-safe conversion of large files",
@@ -427,6 +445,7 @@ def convert_raster(
     row_group_size: int,
     overviews: str,
     min_zoom: int | None,
+    overview_resampling: str | None,
     streaming: bool,
     workers: int,
     tile_stats: bool,
@@ -445,6 +464,7 @@ def convert_raster(
         --overviews auto    Build full pyramid from min to max zoom (default)
         --overviews none    No overviews, only native resolution tiles (fastest)
         --min-zoom N        Limit overviews to zoom N and above
+        --overview-resampling M  How lower zooms aggregate pixels (average, max, sum, mode, ...)
 
     \b
     Memory options:
@@ -457,11 +477,12 @@ def convert_raster(
         raquet convert raster dem.tif dem.parquet --resampling bilinear
         raquet convert raster large.tif output.parquet --overviews none -v
         raquet convert raster large.tif output.parquet --min-zoom 5 -v
+        raquet convert raster flood_depth.tif flood.parquet --overview-resampling max
         raquet convert raster huge.tif output.parquet --streaming -v
         raquet convert raster huge.tif output.parquet --streaming --workers 4 --overviews none -v
         raquet convert raster slope.tif slope.parquet --tile-stats --overviews none -v
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, workers, tile_stats)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, workers, tile_stats, overview_resampling)
 
 
 @convert_group.command("geotiff")
@@ -510,6 +531,16 @@ def convert_raster(
     help="Minimum zoom level for overviews (overrides auto calculation)",
 )
 @click.option(
+    "--overview-resampling",
+    type=click.Choice(["average", "max", "min", "sum", "mode", "med", "q1", "q3", "rms", "near"]),
+    default=None,
+    help=(
+        "Resampling for overview (lower zoom) tiles. Default: average, or the source's own "
+        "overviews for web mercator COGs. Use max for hazard intensity (flood depth, wind), "
+        "sum for counts, mode for categories"
+    ),
+)
+@click.option(
     "--streaming",
     is_flag=True,
     help="Use two-pass streaming mode for memory-safe conversion of large files",
@@ -525,6 +556,7 @@ def convert_geotiff(
     row_group_size: int,
     overviews: str,
     min_zoom: int | None,
+    overview_resampling: str | None,
     streaming: bool,
     verbose: bool,
 ):
@@ -539,8 +571,9 @@ def convert_geotiff(
         raquet convert geotiff dem.tif dem.parquet --resampling bilinear
         raquet convert geotiff large.tif output.parquet --overviews none
         raquet convert geotiff huge.tif output.parquet --streaming
+        raquet convert geotiff flood_depth.tif flood.parquet --overview-resampling max
     """
-    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, 1)
+    _convert_raster_impl(input_file, output_file, zoom_strategy, resampling, block_size, target_size, row_group_size, verbose, overviews, min_zoom, streaming, 1, overview_resampling=overview_resampling)
 
 
 @convert_group.command("imageserver")
