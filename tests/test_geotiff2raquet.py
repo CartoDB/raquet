@@ -1,6 +1,7 @@
 import glob
 import itertools
 import math
+import multiprocessing
 import os
 import tempfile
 import unittest
@@ -9,6 +10,35 @@ import pyarrow.parquet
 from raquet import geotiff2raquet
 
 PROJDIR = os.path.join(os.path.dirname(__file__), "..")
+
+
+def _build_4band_byte_alpha_mismatch_geotiff(path: str) -> None:
+    """Build a 4-band Byte GeoTIFF with photometric / SamplesPerPixel mismatch.
+
+    Run in a `spawn`'d subprocess only — importing osgeo in the test parent
+    process clashes with pyarrow's filesystem registry (apache/arrow#44696)
+    and would mask the actual failure shape with a different exception.
+    """
+    from osgeo import gdal, osr
+
+    drv = gdal.GetDriverByName("GTiff")
+    ds = drv.Create(path, 1024, 1024, 4, gdal.GDT_Byte, options=["COMPRESS=DEFLATE"])
+    ds.SetGeoTransform([-10.0, 0.02, 0.0, 50.0, 0.0, -0.02])
+    sref = osr.SpatialReference()
+    sref.ImportFromEPSG(4326)
+    ds.SetSpatialRef(sref)
+    color_interps = [
+        gdal.GCI_GrayIndex,
+        gdal.GCI_Undefined,
+        gdal.GCI_Undefined,
+        gdal.GCI_Undefined,
+    ]
+    for i, ci in enumerate(color_interps, start=1):
+        b = ds.GetRasterBand(i)
+        b.SetColorInterpretation(ci)
+        b.SetNoDataValue(255)
+        b.Fill(42 + i)
+    ds.FlushCache()
 
 
 class TestGeotiff2Raquet(unittest.TestCase):
@@ -438,3 +468,53 @@ class TestGeotiff2Raquet(unittest.TestCase):
         self.assertEqual(f"{metadata['bounds'][1]:.3g}", "-85.1")
         self.assertEqual(f"{metadata['bounds'][2]:.3g}", "180")
         self.assertEqual(f"{metadata['bounds'][3]:.3g}", "85.1")
+
+    def test_4band_byte_alpha_mismatch(self):
+        """Regression: 4-band Byte GeoTIFF where photometric metadata makes
+        gdal.Warp implicitly add an alpha mask band. Used to crash with
+        `RuntimeError: Destination dataset has 4 bands, but at least 5 are
+        needed`. Should now convert cleanly with the original 4 data bands
+        in the parquet output (the alpha mask is discarded).
+        """
+        with tempfile.TemporaryDirectory() as tempdir:
+            tif = os.path.join(tempdir, "synth-4band-byte.tif")
+
+            # Build the input in a spawn'd subprocess so osgeo never loads in
+            # this test process — importing both osgeo and pyarrow in the same
+            # process collides on the 'file' filesystem registration.
+            ctx = multiprocessing.get_context("spawn")
+            proc = ctx.Process(
+                target=_build_4band_byte_alpha_mismatch_geotiff, args=(tif,)
+            )
+            proc.start()
+            proc.join(timeout=60)
+            self.assertEqual(proc.exitcode, 0, "GeoTIFF builder subprocess failed")
+
+            raquet_filename = os.path.join(tempdir, "out.parquet")
+            geotiff2raquet.main(
+                tif,
+                raquet_filename,
+                geotiff2raquet.ZoomStrategy.AUTO,
+                geotiff2raquet.ResamplingAlgorithm.NearestNeighbour,
+                9,
+            )
+            table = pyarrow.parquet.read_table(raquet_filename)
+
+        # All four original data bands made it into the output; the implicit
+        # alpha mask Warp may have added is intentionally not persisted.
+        self.assertEqual(
+            table.column_names,
+            ["block", "metadata", "band_1", "band_2", "band_3", "band_4"],
+        )
+        metadata = geotiff2raquet.read_metadata(table)
+        self.assertEqual(len(metadata["bands"]), 4)
+        # Critical: at least one data tile was actually written. Without the
+        # fix, the worker process crashes mid-warp and the parent emits a
+        # parquet with the metadata row but zero data rows — visible only
+        # by checking that the table is more than the metadata header.
+        self.assertGreater(
+            len(table),
+            1,
+            f"Expected at least one data tile in addition to the metadata row; "
+            f"got {len(table)}. Worker likely crashed mid-warp.",
+        )
